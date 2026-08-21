@@ -37,6 +37,19 @@ describe('model routing', () => {
       (await router.choose({ contextTokens: 100, privacy: 'private', offline: true })).modelId,
     ).toBe('local');
   });
+  it('limits automatic selection to authorized model scopes', async () => {
+    const router = new ModelRouter(async () => [
+      { ...model('other', true), scope: 'other-project' },
+      { ...model('local', true), scope: 'project' },
+    ]);
+    const decision = await router.choose({
+      contextTokens: 100,
+      privacy: 'private',
+      offline: true,
+      scopeIds: ['project'],
+    });
+    expect(decision.modelId).toBe('local');
+  });
   it('uses least-cost strategy', async () => {
     const router = new ModelRouter(async () => [model('cloud', false), model('local', true)]);
     const route = entity({

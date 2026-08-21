@@ -11,6 +11,7 @@ export interface RoutingRequest {
   offline: boolean;
   estimatedCostCents?: number;
   estimatedOutputTokens?: number;
+  scopeIds?: ID[];
   allowedModelIds?: ID[];
   preferredModelId?: ID;
   fallbackModelIds?: ID[];
@@ -47,6 +48,7 @@ export class ModelRouter {
       )
       .filter((model) => !request.offline || model.local)
       .filter((model) => request.privacy !== 'private' || model.local)
+      .filter((model) => !request.scopeIds?.length || request.scopeIds.includes(model.scope))
       .filter(
         (model) =>
           !request.allowedModelIds?.length ||

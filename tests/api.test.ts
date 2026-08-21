@@ -98,14 +98,30 @@ describe('API boundary controls', () => {
 
   it('creates and lists validated model routes', async () => {
     const base = await start();
+    const providerResponse = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Route host',
+        providerKind: 'ollama',
+        endpoint: 'http://127.0.0.1:11434/v1',
+      }),
+    });
+    const provider = (await providerResponse.json()) as { id: string };
+    const modelResponse = await fetch(`${base}/api/v1/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: provider.id, modelName: 'route-model', local: true }),
+    });
+    const model = (await modelResponse.json()) as { id: string };
     const createdResponse = await fetch(`${base}/api/v1/model-routes`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         name: 'Private first',
         strategy: 'privacy-first',
-        modelIds: ['local-model'],
-        fallbackModelIds: ['cloud-model'],
+        modelIds: [model.id],
+        fallbackModelIds: [model.id],
         offlineOnly: false,
       }),
     });
@@ -114,8 +130,8 @@ describe('API boundary controls', () => {
       kind: 'model-route',
       name: 'Private first',
       strategy: 'privacy-first',
-      modelIds: ['local-model'],
-      fallbackModelIds: ['cloud-model'],
+      modelIds: [model.id],
+      fallbackModelIds: [model.id],
     });
     const listed = await fetch(`${base}/api/v1/model-routes`);
     expect(await listed.json()).toEqual(
@@ -219,7 +235,7 @@ describe('API boundary controls', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         name: 'Local model host',
-        providerKind: 'openai-compatible',
+        providerKind: 'ollama',
         endpoint: 'http://127.0.0.1:11434/v1',
       }),
     });

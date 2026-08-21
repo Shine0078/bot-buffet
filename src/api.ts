@@ -1264,6 +1264,22 @@ export function createApi(deps: ApiDeps) {
           : [];
         if (!modelIds.length && !fallbackModelIds.length)
           throw new Error('model_route_models_required');
+        const routeScopeIds = [
+          project?.id,
+          project?.workspaceId,
+          agent?.projectId,
+          agent?.scope,
+        ].filter((value): value is string => Boolean(value));
+        for (const modelId of [...new Set([...modelIds, ...fallbackModelIds])]) {
+          const model = await required(
+            actorId,
+            await deps.store.get<Model>(modelId),
+            'read',
+            'model',
+          );
+          if (routeScopeIds.length && !routeScopeIds.includes(model.scope))
+            throw new Error('model_route_model_scope_mismatch');
+        }
         const maxCostCents =
           body.maxCostCents === undefined ? undefined : Number(body.maxCostCents);
         if (
