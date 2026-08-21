@@ -60,7 +60,7 @@ function agentCard(a) {
     );
   const task =
     (state.data.tasks || []).find((x) => x.id === a.currentTaskId) || state.data.tasks?.[0];
-  return `<article class="desk" tabindex="0" data-agent="${esc(a.id)}"><div class="desk-top"><div class="avatar">${esc(a.profile?.avatar || '◈')}</div><div><div class="desk-name">${esc(a.profile?.name || 'Agent')}</div><div class="desk-role">${esc(a.profile?.mission || 'Operator')}</div></div><span class="status ${esc(a.status)}">${esc(a.status)}</span></div><div class="desk-task">${esc(task?.title || 'Waiting for a task')}</div><div class="progress"><span style="width:${run ? Math.min(100, Math.round(((run.stepCount || 0) / (run.maxSteps || 1)) * 100)) : 0}%"></span></div><div class="desk-foot"><span>${esc(run ? `${run.stepCount || 0}/${run.maxSteps} steps` : 'Ready')}</span><span>${run ? '$' + ((run.costCents || 0) / 100).toFixed(2) : 'Local'}</span></div></article>`;
+  return `<article class="desk" role="button" tabindex="0" aria-label="Inspect ${esc(a.profile?.name || 'Agent')}" data-agent="${esc(a.id)}"><div class="desk-top"><div class="avatar" aria-hidden="true">${esc(a.profile?.avatar || '◈')}</div><div><div class="desk-name">${esc(a.profile?.name || 'Agent')}</div><div class="desk-role">${esc(a.profile?.mission || 'Operator')}</div></div><span class="status ${esc(a.status)}">${esc(a.status)}</span></div><div class="desk-task">${esc(task?.title || 'Waiting for a task')}</div><div class="progress" aria-label="Run progress"><span style="width:${run ? Math.min(100, Math.round(((run.stepCount || 0) / (run.maxSteps || 1)) * 100)) : 0}%"></span></div><div class="desk-foot"><span>${esc(run ? `${run.stepCount || 0}/${run.maxSteps} steps` : 'Ready')}</span><span>${run ? '$' + ((run.costCents || 0) / 100).toFixed(2) : 'Local'}</span></div></article>`;
 }
 function runEvent(r) {
   return `<div class="timeline-item"><span class="bar"></span><div><p><strong>${esc(r.status)}</strong> · ${esc(r.mode || 'run')}</p><small>${esc(r.id)} · ${esc(r.agentId)}</small></div><time>${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString() : ''}</time></div>`;
@@ -82,10 +82,10 @@ function table(view) {
     runs: ['Runs', d.runs || [], ['id', 'status', 'stepCount', 'costCents']],
     models: ['Models', d.models || [], ['name', 'modelName', 'local', 'available']],
     audit: ['Audit log', d.audit || [], ['action', 'risk', 'decision', 'createdAt']],
-    files: ['Files', [], ['path', 'size', 'versionLabel']],
-    memory: ['Memory', [], ['namespace', 'text', 'approved']],
-    tools: ['Tools', [], ['name', 'risk', 'enabled']],
-    evaluations: ['Evaluations', [], ['name', 'status']],
+    files: ['Files', d.files || [], ['path', 'size', 'versionLabel']],
+    memory: ['Memory', d.memory || [], ['namespace', 'text', 'approved']],
+    tools: ['Tools', d.tools || [], ['name', 'risk', 'enabled']],
+    evaluations: ['Evaluations', d.evaluations || [], ['name', 'description', 'versionLabel']],
   }[view] || ['Items', [], ['id', 'createdAt']];
   $('#viewTitle').textContent = cfg[0];
   $('#viewSubtitle').textContent = 'Inspect scoped records and evidence.';
@@ -126,6 +126,12 @@ document.addEventListener('click', async (e) => {
       $('#viewSubtitle').textContent = 'A calm view of agents, work, and evidence.';
     } else table(state.view);
   }
+});
+document.addEventListener('keydown', (e) => {
+  const agent = e.target.closest('[data-agent]');
+  if (!agent || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  selectAgent(agent.dataset.agent);
 });
 $('#refresh').onclick = load;
 $('#globalStop').onclick = async () => {

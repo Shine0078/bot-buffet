@@ -35,12 +35,14 @@ import { assertSafeEndpoint, assertWorkspacePath, redactSecrets, fingerprint } f
 import { CredentialVault } from './secrets.js';
 import { AuthorizationService } from './authorization.js';
 import { AuthenticationError, authenticateRequest } from './auth.js';
+import { ToolRegistry } from './tools.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
   orchestrator: Orchestrator;
   uiRoot: string;
   vault: CredentialVault;
+  tools?: ToolRegistry;
   registerProvider?: (provider: ModelProvider) => void;
 }
 const send = (res: ServerResponse, status: number, payload: unknown): void => {
@@ -245,6 +247,19 @@ export function createApi(deps: ApiDeps) {
             await deps.store.list<Plugin>((x) => x.kind === 'plugin'),
           ),
           audit: await visible(actorId, await deps.store.list((x) => x.kind === 'audit-event')),
+          files: await visible(
+            actorId,
+            await deps.store.list<ProjectFile>((x) => x.kind === 'file'),
+          ),
+          memory: await visible(
+            actorId,
+            await deps.store.list<MemoryItem>((x) => x.kind === 'memory'),
+          ),
+          evaluations: await visible(
+            actorId,
+            await deps.store.list<EvaluationDataset>((x) => x.kind === 'evaluation-dataset'),
+          ),
+          tools: deps.tools?.list() ?? [],
         });
       if (path === '/api/v1/projects' && req.method === 'GET')
         return send(

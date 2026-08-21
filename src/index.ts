@@ -194,6 +194,7 @@ const server = createApi({
   orchestrator,
   uiRoot: join(root, 'ui'),
   vault,
+  tools,
   registerProvider: (provider) => providers.set(provider.id, provider),
 });
 const port = Number(process.env.PORT ?? 8787);
