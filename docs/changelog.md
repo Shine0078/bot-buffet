@@ -20,7 +20,7 @@
 - Task state safety pass: added versioned task PATCH transitions with an allowlisted state machine, bounded mutable fields, and stale-write rejection.
 - Model metadata safety pass: model registration now rejects non-finite, negative, or unbounded cost, latency, and routing-weight values.
 - Routing isolation pass: route references are authorization-checked and scope-checked, while automatic selection is constrained to the active project/workspace inventory.
-- Agent profile management pass: added an authenticated, bounded `PATCH /api/v1/agents/:id` profile update with entity/profile versioning, compare-and-swap stale-write rejection, and bounded change history; shared redaction now distinguishes operational token metadata from credentials.
+- Agent profile management pass: added an authenticated, bounded `PATCH /api/v1/agents/:id` profile update with entity/profile versioning, compare-and-swap stale-write rejection, bounded change history, and tamper-evident audit events; shared redaction now distinguishes operational token metadata from credentials.
 - Local registration pass: added an authenticated idempotent loopback provider/model registration endpoint with provider-kind allowlisting and an explicit offline-only response.
 - CI reliability pass: declared the Vitest V8 coverage provider and added non-interactive minimum coverage thresholds so the checked-in coverage job no longer pauses for a missing dependency.
 - Tooling hygiene pass: ignored generated coverage reports in ESLint so CI lint output stays limited to repository source and tests.

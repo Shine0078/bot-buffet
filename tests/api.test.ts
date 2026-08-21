@@ -252,6 +252,23 @@ describe('API boundary controls', () => {
       body: JSON.stringify({ version: agent.version, profile: { name: 'stale' } }),
     });
     expect(staleAgent.status).toBe(400);
+    const auditResponse = await fetch(`${base}/api/v1/audit`);
+    expect(auditResponse.status).toBe(200);
+    const audit = (await auditResponse.json()) as Array<{
+      action: string;
+      resourceId: string;
+      metadata: { entityVersion: number; profileVersion: number; changedFields: string[] };
+    }>;
+    const profileAudit = audit.find(
+      (event) => event.action === 'agent.profile.update' && event.resourceId === agent.id,
+    );
+    expect(profileAudit).toMatchObject({
+      metadata: {
+        entityVersion: agent.version + 1,
+        profileVersion: agent.profile.version + 1,
+        changedFields: ['name', 'tokenLimit'],
+      },
+    });
     const taskResponse = await fetch(`${base}/api/v1/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

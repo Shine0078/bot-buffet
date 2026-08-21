@@ -829,6 +829,24 @@ export function createApi(deps: ApiDeps) {
           { ...agent, profile, version: agent.version } as Agent,
           expectedVersion,
         );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: agent.projectId,
+          actorId,
+          action: 'agent.profile.update',
+          resourceType: 'agent',
+          resourceId: agent.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: {
+            entityVersion: saved.version,
+            profileVersion: saved.profile.version,
+            changedFields: Object.keys(raw)
+              .filter((key) => key !== 'approvalPolicy' && key !== 'verificationPolicy')
+              .slice(0, 64),
+          },
+        });
         return send(res, 200, saved);
       }
       if (path === '/api/v1/tasks' && req.method === 'GET')
