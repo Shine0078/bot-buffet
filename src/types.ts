@@ -541,6 +541,8 @@ export interface AuditEvent extends BaseEntity {
 export interface UsageRecord extends BaseEntity {
   kind: 'usage';
   runId: ID;
+  projectId: ID;
+  agentId: ID;
   modelId: ID;
   tokensIn: number;
   tokensOut: number;
@@ -552,6 +554,7 @@ export interface CostRecord extends BaseEntity {
   kind: 'cost';
   runId: ID;
   projectId: ID;
+  agentId: ID;
   amountCents: number;
   currency: string;
   category: string;
@@ -563,6 +566,19 @@ export interface Alert extends BaseEntity {
   message: string;
   acknowledged: boolean;
   resourceId?: ID;
+}
+export type BudgetPeriod = 'daily' | 'monthly' | 'lifetime';
+export interface Budget extends BaseEntity {
+  kind: 'budget';
+  projectId: ID;
+  agentId?: ID;
+  name: string;
+  period: BudgetPeriod;
+  /** Hard ceiling. Spend at or above this value blocks further model calls. */
+  limitCents: number;
+  /** Fraction of the limit (0-1) that raises a soft warning without blocking. */
+  warnRatio: number;
+  enabled: boolean;
 }
 export interface Schedule extends BaseEntity {
   kind: 'schedule';
@@ -626,6 +642,7 @@ export type Entity =
   | UsageRecord
   | CostRecord
   | Alert
+  | Budget
   | Schedule
   | Webhook;
 

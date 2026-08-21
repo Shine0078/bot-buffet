@@ -4,7 +4,9 @@ import { JsonStateStore } from './store.js';
 import {
   Agent,
   ApprovalRequest,
+  Budget,
   Checkpoint,
+  CostRecord,
   Environment,
   Model,
   ModelRoute,
@@ -12,6 +14,7 @@ import {
   Run,
   RunStep,
   Task,
+  UsageRecord,
   Workspace,
   entity,
   id,
@@ -22,6 +25,7 @@ import { ModelRouter } from './router.js';
 import { ToolContext, ToolRegistry } from './tools.js';
 import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext } from './context.js';
+import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 
 export interface OrchestratorDeps {
   store: JsonStateStore;
@@ -216,6 +220,43 @@ export class Orchestrator extends EventEmitter {
         const model = await this.deps.store.get<Model>(decision.modelId);
         if (!model) throw new Error('model_not_found');
         request.model = model.modelName;
+        const estimatedCostCents = estimateCostCents(
+          model,
+          assembled.estimatedTokens,
+          request.maxTokens ?? 0,
+        );
+        const preflight = await this.evaluateBudgets(
+          run.projectId,
+          run.agentId,
+          estimatedCostCents,
+        );
+        for (const warning of preflight.warnings)
+          this.emit('run', { type: 'budget.warning', runId, budget: warning });
+        if (!preflight.allowed) {
+          await this.updateRun(current, {
+            status: 'blocked',
+            error: 'budget_exceeded',
+            finishedAt: now(),
+          });
+          this.emit('run', { type: 'budget.exceeded', runId, budget: preflight.blockedBy });
+          await this.deps.store.audit({
+            kind: 'audit-event',
+            ownerId: run.ownerId,
+            scope: run.projectId,
+            actorId: run.ownerId,
+            action: 'budget.blocked',
+            resourceType: 'budget',
+            resourceId: preflight.blockedBy?.budgetId ?? run.projectId,
+            risk: 'high',
+            decision: 'denied',
+            metadata: {
+              runId,
+              period: preflight.blockedBy?.period,
+              limitCents: preflight.blockedBy?.limitCents,
+            },
+          });
+          return;
+        }
         const step = entity({
           kind: 'run-step',
           ownerId: run.ownerId,
@@ -238,10 +279,40 @@ export class Orchestrator extends EventEmitter {
           run.projectId,
         );
         const responsePreview = redactSecrets(response.content.slice(0, 1000));
-        const stepCostCents =
-          (response.usage.inputTokens * model.inputCostPerMillionCents +
-            response.usage.outputTokens * model.outputCostPerMillionCents) /
-          1_000_000;
+        const stepCostCents = estimateCostCents(
+          model,
+          response.usage.inputTokens,
+          response.usage.outputTokens,
+        );
+        await this.deps.store.insert(
+          entity({
+            kind: 'usage',
+            ownerId: run.ownerId,
+            scope: run.agentId,
+            runId,
+            projectId: run.projectId,
+            agentId: run.agentId,
+            modelId: model.id,
+            tokensIn: response.usage.inputTokens,
+            tokensOut: response.usage.outputTokens,
+            latencyMs: response.latencyMs,
+            costCents: stepCostCents,
+            recordedAt: now(),
+          }) as UsageRecord,
+        );
+        await this.deps.store.insert(
+          entity({
+            kind: 'cost',
+            ownerId: run.ownerId,
+            scope: run.agentId,
+            runId,
+            projectId: run.projectId,
+            agentId: run.agentId,
+            amountCents: stepCostCents,
+            currency: 'USD',
+            category: 'model',
+          }) as CostRecord,
+        );
         const nextTokensIn = current.tokensIn + response.usage.inputTokens;
         const nextTokensOut = current.tokensOut + response.usage.outputTokens;
         if (
@@ -496,6 +567,27 @@ export class Orchestrator extends EventEmitter {
       }
     }
     throw lastError instanceof Error ? lastError : new Error('model_retry_failed');
+  }
+  /** Aggregate every budget that applies to this project/agent pair and decide admission. */
+  private async evaluateBudgets(
+    projectId: string,
+    agentId: string,
+    additionalCents: number,
+  ): Promise<BudgetDecision> {
+    const budgets = await this.deps.store.list<Budget>(
+      (x) => x.kind === 'budget' && (x as Budget).projectId === projectId,
+    );
+    if (!budgets.length)
+      return { allowed: true, warnings: [], statuses: [] } satisfies BudgetDecision;
+    const usage = await this.deps.store.list<UsageRecord>((x) => x.kind === 'usage');
+    const costs = await this.deps.store.list<CostRecord>((x) => x.kind === 'cost');
+    return evaluateBudgets(
+      budgets,
+      { projectId, agentId },
+      { usage, costs },
+      additionalCents,
+      new Date(),
+    );
   }
   private async updateRun(run: Run, changes: Partial<Run>): Promise<void> {
     const latest = (await this.deps.store.get<Run>(run.id)) ?? run;

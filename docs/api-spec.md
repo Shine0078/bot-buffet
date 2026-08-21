@@ -16,6 +16,12 @@ Core resources include projects, providers, models, memory, plugins, MCP servers
 
 Model registration also rejects non-finite, negative, or unbounded cost, latency, and routing-weight metadata before it reaches the router.
 
+`GET/POST /api/v1/budgets` lists or creates project and agent-scoped spend limits. Creation validates the period (`daily`, `monthly`, `lifetime`), a positive bounded `limitCents`, a `warnRatio` between 0 and 1, and that any `agentId` is readable by the caller and belongs to the same project. The list response attaches a computed status containing spend, projection, remaining cents, and `ok`/`warning`/`exceeded` state for the current window.
+
+`POST /api/v1/budgets/estimate` returns the estimated cost of a model call before it runs, along with the budget decision, soft warnings, and any blocking budget. Token counts are bounded and non-negative, and an optional `agentId` is authorized and project-checked so callers cannot narrow the evaluated budget set to a scope they do not own.
+
+The orchestrator performs the same evaluation before every model call. Estimated cost is charged against applicable budgets; exceeding a hard limit durably blocks the run with `budget_exceeded`, emits a `budget.exceeded` event, and writes a `budget.blocked` audit record. Soft warnings emit `budget.warning` without blocking. Each completed model call writes durable usage and cost records scoped to the project, agent, and run, so budgets reflect real spend across restarts.
+
 Routing only accepts model IDs readable by the actor and within the selected project/agent scope. Automatic routing also filters its inventory to the run's project/workspace scopes before selecting a provider.
 
 `POST /api/v1/local-models/register` registers a discovered loopback model and its local provider in one idempotent operation. Only the six supported local provider kinds and loopback-safe endpoints are accepted; the response is explicitly `offlineOnly: true` and contains no credential material.

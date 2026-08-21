@@ -189,6 +189,134 @@ describe('API boundary controls', () => {
     expect(invalidCost.status).toBe(400);
   });
 
+  it('manages project budgets and estimates cost before execution', async () => {
+    const base = await start();
+    const project = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Budget project' }),
+      })
+    ).json()) as { id: string };
+    const provider = (await (
+      await fetch(`${base}/api/v1/providers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Budget host',
+          providerKind: 'ollama',
+          endpoint: 'http://127.0.0.1:11434/v1',
+        }),
+      })
+    ).json()) as { id: string };
+    const model = (await (
+      await fetch(`${base}/api/v1/models`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          providerId: provider.id,
+          modelName: 'budget-model',
+          local: true,
+          inputCostPerMillionCents: 200,
+          outputCostPerMillionCents: 600,
+        }),
+      })
+    ).json()) as { id: string };
+    const createdResponse = await fetch(`${base}/api/v1/budgets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        name: 'Daily cap',
+        period: 'daily',
+        limitCents: 500,
+        warnRatio: 0.3,
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    await expect(createdResponse.json()).resolves.toMatchObject({
+      kind: 'budget',
+      projectId: project.id,
+      period: 'daily',
+      limitCents: 500,
+      enabled: true,
+    });
+    const listed = (await (await fetch(`${base}/api/v1/budgets`)).json()) as Array<{
+      name: string;
+      status: { state: string; spentCents: number; remainingCents: number };
+    }>;
+    expect(listed[0]).toMatchObject({
+      name: 'Daily cap',
+      status: { state: 'ok', spentCents: 0, remainingCents: 500 },
+    });
+    const estimateResponse = await fetch(`${base}/api/v1/budgets/estimate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        modelId: model.id,
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+      }),
+    });
+    expect(estimateResponse.status).toBe(200);
+    await expect(estimateResponse.json()).resolves.toMatchObject({
+      estimatedCostCents: 200,
+      allowed: true,
+      warnings: [expect.objectContaining({ state: 'warning' })],
+    });
+    const blockedResponse = await fetch(`${base}/api/v1/budgets/estimate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        modelId: model.id,
+        inputTokens: 5_000_000,
+        outputTokens: 0,
+      }),
+    });
+    const blocked = (await blockedResponse.json()) as {
+      allowed: boolean;
+      blockedBy: { state: string; period: string };
+    };
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.blockedBy).toMatchObject({ state: 'exceeded', period: 'daily' });
+    const invalidPeriod = await fetch(`${base}/api/v1/budgets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, period: 'hourly', limitCents: 100 }),
+    });
+    expect(invalidPeriod.status).toBe(400);
+    const invalidLimit = await fetch(`${base}/api/v1/budgets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, period: 'daily', limitCents: -5 }),
+    });
+    expect(invalidLimit.status).toBe(400);
+    const invalidTokens = await fetch(`${base}/api/v1/budgets/estimate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, modelId: model.id, inputTokens: -1 }),
+    });
+    expect(invalidTokens.status).toBe(400);
+    const unknownAgentEstimate = await fetch(`${base}/api/v1/budgets/estimate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        modelId: model.id,
+        inputTokens: 10,
+        outputTokens: 0,
+        agentId: 'agent-does-not-exist',
+      }),
+    });
+    expect(unknownAgentEstimate.status).toBe(400);
+    await expect(unknownAgentEstimate.json()).resolves.toMatchObject({
+      code: 'request_failed',
+      message: 'forbidden_or_not_found',
+    });
+  });
+
   it('creates scoped environments, agents, and tasks with safe defaults', async () => {
     const base = await start();
     const projectResponse = await fetch(`${base}/api/v1/projects`, {

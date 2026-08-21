@@ -7,7 +7,10 @@ import {
   Agent,
   ApprovalRequest,
   BaseEntity,
+  Budget,
+  BudgetPeriod,
   Checkpoint,
+  CostRecord,
   Credential,
   Entity,
   Environment,
@@ -27,6 +30,7 @@ import {
   Schedule,
   Source,
   Task,
+  UsageRecord,
   Webhook,
   Workspace,
   OAuthProviderConfig,
@@ -54,6 +58,7 @@ import {
 } from './oauth.js';
 import { fetchPinned } from './egress.js';
 import { evaluateCases } from './evaluations.js';
+import { budgetStatus, estimateCostCents, evaluateBudgets } from './budgets.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1495,6 +1500,134 @@ export function createApi(deps: ApiDeps) {
         }) as ModelRoute;
         await deps.store.insert(route);
         return send(res, 201, route);
+      }
+      if (path === '/api/v1/budgets' && req.method === 'GET') {
+        const budgets = await visible(
+          actorId,
+          await deps.store.list<Budget>((x) => x.kind === 'budget'),
+        );
+        const usage = await deps.store.list<UsageRecord>((x) => x.kind === 'usage');
+        const costs = await deps.store.list<CostRecord>((x) => x.kind === 'cost');
+        return send(
+          res,
+          200,
+          budgets.map((budget) => ({
+            ...budget,
+            status: budgetStatus(budget, { usage, costs }),
+          })),
+        );
+      }
+      if (path === '/api/v1/budgets' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'write',
+          'project',
+        );
+        const agentId = body.agentId ? String(body.agentId) : undefined;
+        if (agentId) {
+          const agent = await required(
+            actorId,
+            await deps.store.get<Agent>(agentId),
+            'write',
+            'agent',
+          );
+          if (agent.projectId !== project.id) throw new Error('budget_scope_mismatch');
+        }
+        const period = String(body.period ?? 'monthly') as BudgetPeriod;
+        if (!['daily', 'monthly', 'lifetime'].includes(period))
+          throw new Error('budget_period_invalid');
+        const limitCents = Number(body.limitCents);
+        if (!Number.isFinite(limitCents) || limitCents <= 0 || limitCents > 1_000_000_000)
+          throw new Error('budget_limit_invalid');
+        const warnRatio = body.warnRatio === undefined ? 0.8 : Number(body.warnRatio);
+        if (!Number.isFinite(warnRatio) || warnRatio < 0 || warnRatio > 1)
+          throw new Error('budget_warn_ratio_invalid');
+        const budget = entity({
+          kind: 'budget',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          agentId,
+          name: String(body.name ?? 'Budget').slice(0, 200),
+          period,
+          limitCents,
+          warnRatio,
+          enabled: body.enabled === undefined ? true : Boolean(body.enabled),
+        }) as Budget;
+        await deps.store.insert(budget);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: project.id,
+          actorId,
+          action: 'budget.created',
+          resourceType: 'budget',
+          resourceId: budget.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: { period, limitCents, agentScoped: Boolean(agentId) },
+        });
+        return send(res, 201, budget);
+      }
+      if (path === '/api/v1/budgets/estimate' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'read',
+          'project',
+        );
+        const model = await required(
+          actorId,
+          await deps.store.get<Model>(String(body.modelId)),
+          'read',
+          'model',
+        );
+        const inputTokens = Number(body.inputTokens ?? 0);
+        const outputTokens = Number(body.outputTokens ?? 0);
+        if (
+          !Number.isFinite(inputTokens) ||
+          !Number.isFinite(outputTokens) ||
+          inputTokens < 0 ||
+          outputTokens < 0 ||
+          inputTokens > 100_000_000 ||
+          outputTokens > 100_000_000
+        )
+          throw new Error('budget_estimate_tokens_invalid');
+        const agentId = body.agentId ? String(body.agentId) : undefined;
+        const estimatedCostCents = estimateCostCents(model, inputTokens, outputTokens);
+        if (agentId) {
+          const agent = await required(
+            actorId,
+            await deps.store.get<Agent>(agentId),
+            'read',
+            'agent',
+          );
+          if (agent.projectId !== project.id) throw new Error('budget_scope_mismatch');
+        }
+        const budgets = await deps.store.list<Budget>(
+          (x) => x.kind === 'budget' && (x as Budget).projectId === project.id,
+        );
+        const usage = await deps.store.list<UsageRecord>((x) => x.kind === 'usage');
+        const costs = await deps.store.list<CostRecord>((x) => x.kind === 'cost');
+        const decision = evaluateBudgets(
+          budgets,
+          { projectId: project.id, agentId },
+          { usage, costs },
+          estimatedCostCents,
+        );
+        return send(res, 200, {
+          modelId: model.id,
+          inputTokens,
+          outputTokens,
+          estimatedCostCents,
+          allowed: decision.allowed,
+          blockedBy: decision.blockedBy,
+          warnings: decision.warnings,
+          budgets: decision.statuses,
+        });
       }
       if (path === '/api/v1/memory' && req.method === 'GET') {
         const namespace = url.searchParams.get('namespace');
