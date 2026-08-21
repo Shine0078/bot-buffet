@@ -1,5 +1,6 @@
 import { ModelProvider, CapabilitySet, ProviderKind, now } from './types.js';
-import { assertSafeEndpoint, assertSafeEndpointResolved, redactSecrets } from './security.js';
+import { assertSafeEndpoint, redactSecrets } from './security.js';
+import { fetchPinned } from './egress.js';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -69,21 +70,24 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     const signal = request.signal
       ? AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
       : AbortSignal.timeout(30_000);
-    const endpoint = await assertSafeEndpointResolved(this.provider.endpoint, this.localEndpoint());
-    const response = await fetch(`${endpoint.toString().replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers,
-      redirect: 'error',
-      body: JSON.stringify({
-        model: request.model,
-        messages: request.messages,
-        temperature: request.temperature,
-        max_tokens: request.maxTokens,
-        tools: request.tools,
-        response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined,
-      }),
-      signal,
-    });
+    const response = await fetchPinned(
+      `${this.provider.endpoint.replace(/\/$/, '')}/chat/completions`,
+      {
+        method: 'POST',
+        headers,
+        redirect: 'error',
+        body: JSON.stringify({
+          model: request.model,
+          messages: request.messages,
+          temperature: request.temperature,
+          max_tokens: request.maxTokens,
+          tools: request.tools,
+          response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined,
+        }),
+        signal,
+      },
+      this.localEndpoint(),
+    );
     if (!response.ok)
       throw new Error(
         `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
@@ -118,14 +122,14 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
-      const endpoint = await assertSafeEndpointResolved(
-        this.provider.endpoint,
+      const result = await fetchPinned(
+        `${this.provider.endpoint.replace(/\/$/, '')}/models`,
+        {
+          redirect: 'error',
+          signal: AbortSignal.timeout(3000),
+        },
         this.localEndpoint(),
       );
-      const result = await fetch(`${endpoint.toString().replace(/\/$/, '')}/models`, {
-        redirect: 'error',
-        signal: AbortSignal.timeout(3000),
-      });
       return result.ok ? 'healthy' : 'degraded';
     } catch {
       return 'offline';
@@ -133,14 +137,14 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   }
   async listModels(): Promise<string[]> {
     try {
-      const endpoint = await assertSafeEndpointResolved(
-        this.provider.endpoint,
+      const response = await fetchPinned(
+        `${this.provider.endpoint.replace(/\/$/, '')}/models`,
+        {
+          redirect: 'error',
+          signal: AbortSignal.timeout(5000),
+        },
         this.localEndpoint(),
       );
-      const response = await fetch(`${endpoint.toString().replace(/\/$/, '')}/models`, {
-        redirect: 'error',
-        signal: AbortSignal.timeout(5000),
-      });
       if (!response.ok) return [];
       const data = (await response.json()) as { data?: Array<{ id: string }> };
       return data.data?.map((x) => x.id) ?? [];
@@ -164,7 +168,6 @@ export class AnthropicAdapter implements ModelAdapter {
   }
   async complete(request: ModelRequest): Promise<ModelResponse> {
     const started = Date.now();
-    const endpoint = await assertSafeEndpointResolved(this.provider.endpoint);
     const messages = request.messages
       .filter((message) => message.role !== 'system')
       .map((message) => ({
@@ -175,7 +178,7 @@ export class AnthropicAdapter implements ModelAdapter {
       .filter((message) => message.role === 'system')
       .map((message) => message.content)
       .join('\n');
-    const response = await fetch(`${endpoint.toString().replace(/\/$/, '')}/v1/messages`, {
+    const response = await fetchPinned(`${this.provider.endpoint.replace(/\/$/, '')}/v1/messages`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -227,8 +230,7 @@ export class AnthropicAdapter implements ModelAdapter {
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
-      const endpoint = await assertSafeEndpointResolved(this.provider.endpoint);
-      const response = await fetch(`${endpoint.toString().replace(/\/$/, '')}/v1/models`, {
+      const response = await fetchPinned(`${this.provider.endpoint.replace(/\/$/, '')}/v1/models`, {
         headers: this.token ? { 'x-api-key': this.token } : undefined,
         redirect: 'error',
         signal: AbortSignal.timeout(3000),
@@ -240,8 +242,7 @@ export class AnthropicAdapter implements ModelAdapter {
   }
   async listModels(): Promise<string[]> {
     try {
-      const endpoint = await assertSafeEndpointResolved(this.provider.endpoint);
-      const response = await fetch(`${endpoint.toString().replace(/\/$/, '')}/v1/models`, {
+      const response = await fetchPinned(`${this.provider.endpoint.replace(/\/$/, '')}/v1/models`, {
         headers: this.token ? { 'x-api-key': this.token } : undefined,
         redirect: 'error',
         signal: AbortSignal.timeout(5000),
@@ -264,7 +265,6 @@ export class GeminiAdapter implements ModelAdapter {
   }
   async complete(request: ModelRequest): Promise<ModelResponse> {
     const started = Date.now();
-    const endpoint = await assertSafeEndpointResolved(this.provider.endpoint);
     const system = request.messages.find((message) => message.role === 'system')?.content;
     const contents = request.messages
       .filter((message) => message.role !== 'system')
@@ -272,8 +272,8 @@ export class GeminiAdapter implements ModelAdapter {
         role: message.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: message.content }],
       }));
-    const response = await fetch(
-      `${endpoint.toString().replace(/\/$/, '')}/models/${encodeURIComponent(request.model)}:generateContent`,
+    const response = await fetchPinned(
+      `${this.provider.endpoint.replace(/\/$/, '')}/models/${encodeURIComponent(request.model)}:generateContent`,
       {
         method: 'POST',
         headers: {
@@ -334,7 +334,9 @@ export class GeminiAdapter implements ModelAdapter {
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
-      await assertSafeEndpointResolved(this.provider.endpoint);
+      await fetchPinned(`${this.provider.endpoint.replace(/\/$/, '')}/models`, {
+        signal: AbortSignal.timeout(3000),
+      });
       return 'healthy';
     } catch {
       return 'offline';

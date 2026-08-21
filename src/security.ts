@@ -224,10 +224,10 @@ export function assertSafeEndpoint(endpoint: string, allowLocal = false): URL {
   return parsed;
 }
 
-export async function assertSafeEndpointResolved(
+export async function resolveSafeEndpoint(
   endpoint: string,
   allowLocal = false,
-): Promise<URL> {
+): Promise<{ url: URL; address: string }> {
   const parsed = assertSafeEndpoint(endpoint, allowLocal);
   let addresses: Array<{ address: string }>;
   try {
@@ -247,5 +247,12 @@ export async function assertSafeEndpointResolved(
     )
       throw new Error('endpoint_rejected:private_or_metadata');
   }
-  return parsed;
+  return { url: parsed, address: addresses[0]!.address };
+}
+
+export async function assertSafeEndpointResolved(
+  endpoint: string,
+  allowLocal = false,
+): Promise<URL> {
+  return (await resolveSafeEndpoint(endpoint, allowLocal)).url;
 }
