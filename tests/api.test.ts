@@ -317,6 +317,72 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('creates validated workflow graphs and plans ready nodes', async () => {
+    const base = await start();
+    const project = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Workflow project' }),
+      })
+    ).json()) as { id: string };
+    const created = await fetch(`${base}/api/v1/workflows`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        name: 'Release',
+        nodes: [
+          { id: 'plan', kind: 'task', config: {} },
+          { id: 'build', kind: 'task', config: {} },
+          { id: 'approve', kind: 'approval', config: {} },
+        ],
+        edges: [
+          { from: 'plan', to: 'build' },
+          { from: 'build', to: 'approve' },
+        ],
+      }),
+    });
+    expect(created.status).toBe(201);
+    const workflow = (await created.json()) as { id: string; enabled: boolean };
+    expect(workflow.enabled).toBe(false);
+
+    const plan = await fetch(`${base}/api/v1/workflows/${workflow.id}/plan`);
+    expect(plan.status).toBe(200);
+    await expect(plan.json()).resolves.toMatchObject({
+      levels: [['plan'], ['build'], ['approve']],
+      ready: ['plan'],
+    });
+    const advanced = await fetch(`${base}/api/v1/workflows/${workflow.id}/plan?completed=plan`);
+    await expect(advanced.json()).resolves.toMatchObject({ ready: ['build'] });
+    const afterFailure = await fetch(
+      `${base}/api/v1/workflows/${workflow.id}/plan?completed=plan&failed=build`,
+    );
+    await expect(afterFailure.json()).resolves.toMatchObject({ ready: [] });
+    const unknownNode = await fetch(`${base}/api/v1/workflows/${workflow.id}/plan?completed=ghost`);
+    expect(unknownNode.status).toBe(400);
+
+    const cyclic = await fetch(`${base}/api/v1/workflows`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        name: 'Cycle',
+        nodes: [
+          { id: 'a', kind: 'task', config: {} },
+          { id: 'b', kind: 'task', config: {} },
+        ],
+        edges: [
+          { from: 'a', to: 'b' },
+          { from: 'b', to: 'a' },
+        ],
+      }),
+    });
+    expect(cyclic.status).toBe(400);
+    const listed = (await (await fetch(`${base}/api/v1/workflows`)).json()) as unknown[];
+    expect(listed).toHaveLength(1);
+  });
+
   it('reports scoped usage and rejects invalid report parameters', async () => {
     const base = await start();
     const project = (await (

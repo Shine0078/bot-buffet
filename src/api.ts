@@ -33,6 +33,9 @@ import {
   Task,
   UsageRecord,
   Webhook,
+  Workflow,
+  WorkflowEdge,
+  WorkflowNode,
   Workspace,
   OAuthProviderConfig,
   entity,
@@ -61,6 +64,7 @@ import { fetchPinned } from './egress.js';
 import { evaluateCases } from './evaluations.js';
 import { budgetStatus, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { CostGrouping, costReport, forecastCents } from './reporting.js';
+import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1631,6 +1635,59 @@ export function createApi(deps: ApiDeps) {
           budgets: decision.statuses,
         });
       }
+      if (path === '/api/v1/workflows' && req.method === 'GET') {
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Workflow>((x) => x.kind === 'workflow')),
+        );
+      }
+      if (path === '/api/v1/workflows' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'write',
+          'project',
+        );
+        const nodes = Array.isArray(body.nodes) ? (body.nodes as WorkflowNode[]) : [];
+        const edges = Array.isArray(body.edges) ? (body.edges as WorkflowEdge[]) : [];
+        const validation = validateWorkflow(nodes, edges);
+        if (!validation.valid) throw new Error(validation.errors[0] ?? 'workflow_invalid');
+        const workflow = entity({
+          kind: 'workflow',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          name: String(body.name ?? 'Workflow').slice(0, 200),
+          description: String(body.description ?? '').slice(0, 2000),
+          nodes: nodes.map((node) => ({
+            id: String(node.id).slice(0, 120),
+            kind: node.kind,
+            config: (node.config ?? {}) as Record<string, unknown>,
+          })),
+          edges: edges.map((item) => ({
+            from: String(item.from).slice(0, 120),
+            to: String(item.to).slice(0, 120),
+            condition: item.condition ? String(item.condition).slice(0, 500) : undefined,
+          })),
+          enabled: false,
+        }) as Workflow;
+        await deps.store.insert(workflow);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: project.id,
+          actorId,
+          action: 'workflow.created',
+          resourceType: 'workflow',
+          resourceId: workflow.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: { nodes: workflow.nodes.length, edges: workflow.edges.length },
+        });
+        return send(res, 201, { ...workflow, validation });
+      }
       if (path === '/api/v1/usage' && req.method === 'GET') {
         const grouping = (url.searchParams.get('groupBy') ?? 'project') as CostGrouping;
         if (!['project', 'agent', 'model', 'run'].includes(grouping))
@@ -2194,6 +2251,34 @@ export function createApi(deps: ApiDeps) {
           costCents: runs.reduce((sum, run) => sum + run.costCents, 0),
           latencyMs: runs.reduce((sum, run) => sum + run.latencyMs, 0),
           auditValid: (await deps.store.verifyAuditChain()).valid,
+        });
+      }
+      const workflowPlanMatch = path.match(/^\/api\/v1\/workflows\/([^/]+)\/plan$/);
+      if (workflowPlanMatch && req.method === 'GET') {
+        const workflow = await required(
+          actorId,
+          await deps.store.get<Workflow>(workflowPlanMatch[1]!),
+          'read',
+          'workflow',
+        );
+        const idList = (name: string): Set<string> =>
+          new Set(
+            (url.searchParams.get(name) ?? '')
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean),
+          );
+        const completed = idList('completed');
+        const failed = idList('failed');
+        const known = new Set(workflow.nodes.map((node) => node.id));
+        for (const nodeId of [...completed, ...failed])
+          if (!known.has(nodeId)) throw new Error('workflow_node_unknown');
+        return send(res, 200, {
+          workflowId: workflow.id,
+          levels: workflowLevels(workflow.nodes, workflow.edges),
+          ready: readyNodes(workflow, completed, failed),
+          completed: [...completed],
+          failed: [...failed],
         });
       }
       const replayMatch = path.match(/^\/api\/v1\/runs\/([^/]+)\/replay$/);
