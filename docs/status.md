@@ -13,6 +13,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Encrypted credential vault, provider test/revoke endpoints, scoped memory/plugin/file APIs.
 - Budgeted context assembler with freshness/relevance ordering, compaction, redaction, and source-citation carry-through.
 - Research source intake, evaluation dataset/case registration, run replay/export, and aggregated observability summary endpoints.
+- Research foundation captured in `docs/research-foundation.md`, including inspected sources and explicit inaccessible-source owner actions.
 
 ## Evidence
 
