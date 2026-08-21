@@ -1,4 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest';
+import { createSign, generateKeyPairSync } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,11 +11,35 @@ import { Orchestrator } from '../src/orchestrator.js';
 import { entity, Agent, Environment, Project, Run, Task } from '../src/types.js';
 
 const servers: Array<ReturnType<typeof createApi>> = [];
+const oidcKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const oidcPublicJwk = oidcKeys.publicKey.export({ format: 'jwk' });
+const base64Url = (value: string): string => Buffer.from(value).toString('base64url');
+const oidcToken = (claims: Record<string, unknown> = {}): string => {
+  const header = base64Url(JSON.stringify({ alg: 'RS256', kid: 'test-key', typ: 'JWT' }));
+  const payload = base64Url(
+    JSON.stringify({
+      iss: 'https://issuer.example.test',
+      aud: 'bot-buffet-test',
+      sub: 'local-user',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 300,
+      ...claims,
+    }),
+  );
+  const input = `${header}.${payload}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(input);
+  signer.end();
+  return `${input}.${signer.sign(oidcKeys.privateKey).toString('base64url')}`;
+};
 afterEach(async () => {
   for (const server of servers.splice(0))
     await new Promise<void>((resolve) => server.close(() => resolve()));
   delete process.env.BOT_BUFFET_AUTH_MODE;
-  delete process.env.BOT_BUFFET_API_TOKEN;
+  delete process.env.BOT_BUFFET_BOOTSTRAP_TOKEN;
+  delete process.env.BOT_BUFFET_OIDC_ISSUER;
+  delete process.env.BOT_BUFFET_OIDC_AUDIENCE;
+  delete process.env.BOT_BUFFET_OIDC_JWKS_JSON;
 });
 
 async function start(auth = false) {
@@ -31,7 +56,11 @@ async function start(auth = false) {
   if (!address || typeof address === 'string') throw new Error('server_address_missing');
   if (auth) {
     process.env.BOT_BUFFET_AUTH_MODE = 'production';
-    process.env.BOT_BUFFET_API_TOKEN = 'test-token';
+    process.env.BOT_BUFFET_OIDC_ISSUER = 'https://issuer.example.test';
+    process.env.BOT_BUFFET_OIDC_AUDIENCE = 'bot-buffet-test';
+    process.env.BOT_BUFFET_OIDC_JWKS_JSON = JSON.stringify({
+      keys: [{ ...oidcPublicJwk, kid: 'test-key', alg: 'RS256', use: 'sig' }],
+    });
   }
   return `http://127.0.0.1:${address.port}`;
 }
@@ -47,14 +76,32 @@ describe('API boundary controls', () => {
     expect(response.status).toBe(400);
     expect(response.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
   });
-  it('requires production bearer auth before API access', async () => {
+  it('requires verified production OIDC bearer auth before API access', async () => {
     const base = await start(true);
     const response = await fetch(`${base}/api/v1/bootstrap`);
     expect(response.status).toBe(401);
     const authorized = await fetch(`${base}/api/v1/bootstrap`, {
-      headers: { authorization: 'Bearer test-token' },
+      headers: { authorization: `Bearer ${oidcToken()}` },
     });
     expect(authorized.status).toBe(200);
+  });
+  it('fails closed when production OIDC configuration is missing', async () => {
+    const base = await start();
+    process.env.BOT_BUFFET_AUTH_MODE = 'production';
+    const response = await fetch(`${base}/api/v1/bootstrap`, {
+      headers: { authorization: 'Bearer configured-but-unverifiable' },
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: 'oidc_configuration_incomplete' });
+  });
+  it('rejects a bearer with an invalid OIDC signature', async () => {
+    const base = await start(true);
+    const invalid = `${oidcToken().slice(0, -4)}aaaa`;
+    const response = await fetch(`${base}/api/v1/bootstrap`, {
+      headers: { authorization: `Bearer ${invalid}` },
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: 'oidc_signature_invalid' });
   });
   it('rejects static traversal instead of serving outside UI root', async () => {
     const base = await start();

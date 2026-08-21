@@ -1,5 +1,5 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { JsonStateStore } from './store.js';
@@ -34,6 +34,7 @@ import { adapterFor, defaultCapabilities } from './providers.js';
 import { assertSafeEndpoint, assertWorkspacePath, redactSecrets, fingerprint } from './security.js';
 import { CredentialVault } from './secrets.js';
 import { AuthorizationService } from './authorization.js';
+import { AuthenticationError, authenticateRequest } from './auth.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -138,10 +139,6 @@ export function createApi(deps: ApiDeps) {
     }
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname;
-    const actorId =
-      process.env.BOT_BUFFET_AUTH_MODE === 'production'
-        ? String(process.env.BOT_BUFFET_API_SUBJECT ?? 'production-user')
-        : String(req.headers['x-bot-buffet-user'] ?? 'local-user');
     if (path.startsWith('/api/')) {
       const key = req.socket.remoteAddress ?? 'unknown';
       const current = requestBuckets.get(key);
@@ -157,22 +154,17 @@ export function createApi(deps: ApiDeps) {
         for (const [bucketKey, bucket] of requestBuckets)
           if (nowMs - bucket.startedAt >= RATE_WINDOW_MS) requestBuckets.delete(bucketKey);
     }
-    if (process.env.BOT_BUFFET_AUTH_MODE === 'production') {
-      const expected = process.env.BOT_BUFFET_API_TOKEN;
-      const presented = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-      const expectedFingerprint = expected ? Buffer.from(fingerprint(expected)) : Buffer.alloc(0);
-      const presentedFingerprint = Buffer.from(fingerprint(presented));
-      if (
-        !expected ||
-        !presented ||
-        expectedFingerprint.length !== presentedFingerprint.length ||
-        !timingSafeEqual(expectedFingerprint, presentedFingerprint)
-      ) {
-        send(res, 401, { code: 'unauthorized' });
-        return;
-      }
-    }
     try {
+      let actorId: string;
+      try {
+        actorId = await authenticateRequest(req, process.env.BOT_BUFFET_AUTH_MODE ?? 'development');
+      } catch (error) {
+        if (error instanceof AuthenticationError) {
+          send(res, error.status, { code: error.code, requestId });
+          return;
+        }
+        throw error;
+      }
       const idempotencyHeader = String(req.headers['idempotency-key'] ?? '').trim();
       const idempotencyEligible = req.method === 'POST' && path === '/api/v1/runs';
       if (idempotencyEligible && idempotencyHeader) {
