@@ -19,7 +19,9 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 
 ## Evidence
 
-Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 20-test suite exercises redaction, path traversal, shell controls, endpoint SSRF/TLS checks, encrypted credential persistence, context compaction/citations, audit integrity/CAS, locks, offline/private routing, tool contracts, API limits/auth, and checkpoint completion. Local smoke checks cover health/readiness, UI delivery, a completed run, bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration, project export, and observability summary; external provider and deployment evidence is not claimed.
+Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 21-test suite exercises redaction, path traversal, shell controls, endpoint SSRF/TLS checks, encrypted credential persistence and production key validation, context compaction/citations, audit integrity/CAS, locks, offline/private routing, tool contracts, API limits/auth, and checkpoint completion. Local smoke checks cover health/readiness, UI delivery, a completed run, bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration, project export, and observability summary; external provider and deployment evidence is not claimed.
+
+The committed Codex Security standard scan `e4ccf271-c624-48c2-8743-869c267e7197` reviewed 66 inventoried files and produced six source-backed findings (3 high, 2 medium, 1 low). The report is complete; the remaining findings are the documented OIDC principal, DNS-pinned egress, kernel sandbox, development vault, unsigned backup, and CI action pinning owner gates.
 
 ## External owner gates (not claimable locally)
 
