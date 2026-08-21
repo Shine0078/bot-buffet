@@ -135,6 +135,68 @@ describe('API boundary controls', () => {
     expect(invalidCost.status).toBe(400);
   });
 
+  it('creates scoped environments, agents, and tasks with safe defaults', async () => {
+    const base = await start();
+    const projectResponse = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Agent project' }),
+    });
+    const project = (await projectResponse.json()) as { id: string };
+    const environmentResponse = await fetch(`${base}/api/v1/environments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, name: 'Sandbox', network: 'blocked' }),
+    });
+    expect(environmentResponse.status).toBe(201);
+    const environment = (await environmentResponse.json()) as { id: string; network: string };
+    expect(environment.network).toBe('blocked');
+    const agentResponse = await fetch(`${base}/api/v1/agents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, environmentId: environment.id, name: 'Desk' }),
+    });
+    expect(agentResponse.status).toBe(201);
+    const agent = (await agentResponse.json()) as {
+      id: string;
+      projectId: string;
+      profile: {
+        network: string;
+        concurrencyLimit: number;
+        approvalPolicy: { requiredRisks: string[] };
+      };
+    };
+    expect(agent).toMatchObject({
+      projectId: project.id,
+      profile: { network: 'blocked', concurrencyLimit: 1 },
+    });
+    expect(agent.profile.approvalPolicy.requiredRisks).toEqual(['high', 'critical']);
+    const taskResponse = await fetch(`${base}/api/v1/tasks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        environmentId: environment.id,
+        assigneeAgentId: agent.id,
+        title: 'First task',
+        acceptanceCriteria: ['Has evidence'],
+      }),
+    });
+    expect(taskResponse.status).toBe(201);
+    await expect(taskResponse.json()).resolves.toMatchObject({
+      kind: 'task',
+      projectId: project.id,
+      assigneeAgentId: agent.id,
+      status: 'ready',
+    });
+    expect(await (await fetch(`${base}/api/v1/agents`)).json()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: agent.id })]),
+    );
+    expect(await (await fetch(`${base}/api/v1/tasks`)).json()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ title: 'First task' })]),
+    );
+  });
+
   it('adds correlation ids and rejects oversized bodies', async () => {
     const base = await start();
     const response = await fetch(`${base}/api/v1/projects`, {

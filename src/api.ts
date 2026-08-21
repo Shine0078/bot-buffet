@@ -22,6 +22,7 @@ import {
   Plugin,
   Project,
   ProjectFile,
+  Risk,
   Run,
   Schedule,
   Source,
@@ -496,6 +497,251 @@ export function createApi(deps: ApiDeps) {
           metadata: { deletedEntityCount: children.length },
         });
         return send(res, 204, { deleted: true });
+      }
+      if (path === '/api/v1/environments' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(
+            actorId,
+            await deps.store.list<Environment>((x) => x.kind === 'environment'),
+          ),
+        );
+      if (path === '/api/v1/environments' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'write',
+          'project',
+        );
+        const network = ['blocked', 'allowlist', 'open'].includes(String(body.network))
+          ? (String(body.network) as Environment['network'])
+          : 'blocked';
+        const environment = entity({
+          kind: 'environment',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          name: String(body.name ?? 'Environment').slice(0, 200),
+          network,
+          persistent: Boolean(body.persistent),
+          protected: Boolean(body.protected),
+        }) as Environment;
+        await deps.store.insert(environment);
+        return send(res, 201, environment);
+      }
+      if (path === '/api/v1/agents' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Agent>((x) => x.kind === 'agent')),
+        );
+      if (path === '/api/v1/agents' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'write',
+          'project',
+        );
+        const environments = await deps.store.list<Environment>(
+          (x) => x.kind === 'environment' && (x as Environment).projectId === project.id,
+        );
+        const environmentId = String(
+          body.environmentId ?? project.defaultEnvironmentId ?? environments[0]?.id ?? '',
+        );
+        const environment = await required(
+          actorId,
+          await deps.store.get<Environment>(environmentId),
+          'write',
+          'environment',
+        );
+        if (environment.projectId !== project.id) throw new Error('agent_scope_mismatch');
+        const raw =
+          body.profile && typeof body.profile === 'object' && !Array.isArray(body.profile)
+            ? (body.profile as Record<string, unknown>)
+            : {};
+        const strings = (value: unknown, fallback: string[] = [], max = 64) =>
+          (Array.isArray(value) ? value : fallback)
+            .filter((item): item is string => typeof item === 'string')
+            .map((item) => item.slice(0, 1000))
+            .slice(0, max);
+        const bounded = (value: unknown, fallback: number, min: number, max: number) => {
+          const number = Number(value ?? fallback);
+          return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+        };
+        const requiredRisks = strings(
+          raw.approvalPolicy && (raw.approvalPolicy as Record<string, unknown>).requiredRisks,
+          ['high', 'critical'],
+        ).filter((risk): risk is Risk =>
+          ['safe', 'low', 'medium', 'high', 'critical'].includes(risk),
+        );
+        const profile = {
+          name: String(raw.name ?? body.name ?? 'Agent').slice(0, 200),
+          description: String(raw.description ?? '').slice(0, 2000),
+          avatar: String(raw.avatar ?? '').slice(0, 32),
+          mission: String(raw.mission ?? 'Complete tasks with evidence.').slice(0, 4000),
+          systemInstructions: String(
+            raw.systemInstructions ?? 'Be careful, explain actions, and never expose secrets.',
+          ).slice(0, 12000),
+          projectRules: strings(raw.projectRules, ['Stay inside the project workspace.']),
+          skills: strings(raw.skills),
+          allowedModels: strings(raw.allowedModels),
+          preferredModelId: raw.preferredModelId ? String(raw.preferredModelId) : undefined,
+          fallbackModelIds: strings(raw.fallbackModelIds),
+          allowedToolIds: strings(raw.allowedToolIds),
+          allowedPluginIds: strings(raw.allowedPluginIds),
+          allowedPaths: strings(raw.allowedPaths, ['.']),
+          protectedPaths: strings(raw.protectedPaths, ['.env', '.git']),
+          network: ['blocked', 'allowlist', 'open'].includes(String(raw.network))
+            ? (String(raw.network) as 'blocked' | 'allowlist' | 'open')
+            : 'blocked',
+          environmentKeys: strings(raw.environmentKeys),
+          maxSteps: bounded(raw.maxSteps, 20, 1, 1000),
+          timeLimitMs: bounded(raw.timeLimitMs, 900_000, 1000, 86_400_000),
+          tokenLimit: bounded(raw.tokenLimit, 32_000, 128, 1_000_000),
+          costLimitCents: bounded(raw.costLimitCents, 0, 0, 1_000_000_000),
+          concurrencyLimit: bounded(raw.concurrencyLimit, 1, 1, 32),
+          approvalPolicy: {
+            requiredRisks,
+            autoApproveReversible: false,
+            expiryMs: 900_000,
+            delegates: [],
+          },
+          verificationPolicy: {
+            deterministic: [],
+            inferential: [],
+            requireEvidence: true,
+          },
+          memoryPolicy: {
+            readableScopes: ['project'],
+            writableScopes: ['project'],
+            requireApproval: true,
+            retentionDays: 30,
+          },
+          outputFormat: ['text', 'json', 'markdown'].includes(String(raw.outputFormat))
+            ? (String(raw.outputFormat) as 'text' | 'json' | 'markdown')
+            : 'text',
+          escalationPolicy: ['pause', 'retry', 'delegate', 'stop'].includes(
+            String(raw.escalationPolicy),
+          )
+            ? (String(raw.escalationPolicy) as 'pause' | 'retry' | 'delegate' | 'stop')
+            : 'pause',
+          mode: [
+            'plan',
+            'execute',
+            'review',
+            'chat',
+            'supervised',
+            'autonomous',
+            'maintenance',
+            'emergency-stop',
+            'custom',
+          ].includes(String(raw.mode))
+            ? (String(raw.mode) as Agent['profile']['mode'])
+            : 'supervised',
+          version: 1,
+          changelog: [],
+        } satisfies Agent['profile'];
+        const agent = entity({
+          kind: 'agent',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          environmentId: environment.id,
+          status: 'idle',
+          profile,
+        }) as Agent;
+        await deps.store.insert(agent);
+        return send(res, 201, agent);
+      }
+      if (path === '/api/v1/tasks' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Task>((x) => x.kind === 'task')),
+        );
+      if (path === '/api/v1/tasks' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'write',
+          'project',
+        );
+        const environment = await required(
+          actorId,
+          await deps.store.get<Environment>(String(body.environmentId)),
+          'write',
+          'environment',
+        );
+        if (environment.projectId !== project.id) throw new Error('task_scope_mismatch');
+        const assigneeAgentId = body.assigneeAgentId ? String(body.assigneeAgentId) : undefined;
+        if (assigneeAgentId) {
+          const assignee = await required(
+            actorId,
+            await deps.store.get<Agent>(assigneeAgentId),
+            'write',
+            'agent',
+          );
+          if (assignee.projectId !== project.id) throw new Error('task_assignee_scope_mismatch');
+        }
+        const parentTaskId = body.parentTaskId ? String(body.parentTaskId) : undefined;
+        if (parentTaskId) {
+          const parent = await required(
+            actorId,
+            await deps.store.get<Task>(parentTaskId),
+            'write',
+            'task',
+          );
+          if (parent.projectId !== project.id) throw new Error('task_parent_scope_mismatch');
+        }
+        const dependencyIds = Array.isArray(body.dependencyIds)
+          ? body.dependencyIds.map(String).filter(Boolean).slice(0, 64)
+          : [];
+        for (const dependencyId of dependencyIds) {
+          const dependency = await required(
+            actorId,
+            await deps.store.get<Task>(dependencyId),
+            'read',
+            'task',
+          );
+          if (dependency.projectId !== project.id)
+            throw new Error('task_dependency_scope_mismatch');
+        }
+        const status = ['backlog', 'ready', 'blocked'].includes(String(body.status))
+          ? (String(body.status) as Task['status'])
+          : 'ready';
+        const priority = Number(body.priority ?? 0);
+        const task = entity({
+          kind: 'task',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          environmentId: environment.id,
+          title: String(body.title ?? 'Untitled task').slice(0, 500),
+          description: String(body.description ?? '').slice(0, 20_000),
+          acceptanceCriteria: Array.isArray(body.acceptanceCriteria)
+            ? body.acceptanceCriteria
+                .filter((item): item is string => typeof item === 'string')
+                .map((item) => item.slice(0, 2000))
+                .slice(0, 64)
+            : [],
+          status,
+          priority: Number.isFinite(priority) ? Math.min(100, Math.max(-100, priority)) : 0,
+          ...(assigneeAgentId ? { assigneeAgentId } : {}),
+          ...(parentTaskId ? { parentTaskId } : {}),
+          dependencyIds,
+          labels: Array.isArray(body.labels)
+            ? body.labels
+                .filter((item): item is string => typeof item === 'string')
+                .map((item) => item.slice(0, 100))
+                .slice(0, 32)
+            : [],
+        }) as Task;
+        await deps.store.insert(task);
+        return send(res, 201, task);
       }
       if (path === '/api/v1/providers' && req.method === 'GET')
         return send(
