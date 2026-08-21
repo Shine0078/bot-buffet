@@ -212,6 +212,30 @@ describe('API boundary controls', () => {
     );
   });
 
+  it('rejects non-finite model routing metadata', async () => {
+    const base = await start();
+    const providerResponse = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Local model host',
+        providerKind: 'openai-compatible',
+        endpoint: 'http://127.0.0.1:11434/v1',
+      }),
+    });
+    const provider = (await providerResponse.json()) as { id: string };
+    const invalid = await fetch(`${base}/api/v1/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        providerId: provider.id,
+        modelName: 'bad-cost',
+        inputCostPerMillionCents: 'not-a-number',
+      }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
   it('adds correlation ids and rejects oversized bodies', async () => {
     const base = await start();
     const response = await fetch(`${base}/api/v1/projects`, {

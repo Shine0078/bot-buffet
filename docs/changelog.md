@@ -18,6 +18,7 @@
 - Routing enforcement pass: model metadata now carries optional latency/weight signals, route ceilings filter estimated token cost before selection, weighted/lowest-latency strategies are enforced, and orchestrator routing supplies bounded output estimates.
 - Workbench lifecycle pass: added authenticated environment, agent, and task creation/listing APIs with blocked-network agent defaults, bounded profiles, and project-scope validation for assignees, parents, and dependencies.
 - Task state safety pass: added versioned task PATCH transitions with an allowlisted state machine, bounded mutable fields, and stale-write rejection.
+- Model metadata safety pass: model registration now rejects non-finite, negative, or unbounded cost, latency, and routing-weight values.
 - CI reliability pass: declared the Vitest V8 coverage provider and added non-interactive minimum coverage thresholds so the checked-in coverage job no longer pauses for a missing dependency.
 - Tooling hygiene pass: ignored generated coverage reports in ESLint so CI lint output stays limited to repository source and tests.
 - Security reporting pass: the secret scanner now emits a valid `results.sarif` artifact for clean and failing scans, making the pinned CI SARIF upload actionable instead of silently missing its input.

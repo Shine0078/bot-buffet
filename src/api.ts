@@ -1189,6 +1189,22 @@ export function createApi(deps: ApiDeps) {
           'write',
           'model-provider',
         );
+        const inputCostPerMillionCents = Number(body.inputCostPerMillionCents ?? 0);
+        const outputCostPerMillionCents = Number(body.outputCostPerMillionCents ?? 0);
+        const latencyMs = body.latencyMs === undefined ? undefined : Number(body.latencyMs);
+        const routingWeight =
+          body.routingWeight === undefined ? undefined : Number(body.routingWeight);
+        if (
+          !Number.isFinite(inputCostPerMillionCents) ||
+          !Number.isFinite(outputCostPerMillionCents) ||
+          inputCostPerMillionCents < 0 ||
+          outputCostPerMillionCents < 0 ||
+          inputCostPerMillionCents > 1_000_000_000 ||
+          outputCostPerMillionCents > 1_000_000_000 ||
+          (latencyMs !== undefined && (!Number.isFinite(latencyMs) || latencyMs < 0)) ||
+          (routingWeight !== undefined && (!Number.isFinite(routingWeight) || routingWeight < 0))
+        )
+          throw new Error('model_metadata_invalid');
         const model = entity({
           kind: 'model',
           ownerId: actorId,
@@ -1198,11 +1214,10 @@ export function createApi(deps: ApiDeps) {
           modelName: String(body.modelName),
           local: Boolean(body.local),
           capabilities: { ...defaultCapabilities(), ...((body.capabilities as object) ?? {}) },
-          inputCostPerMillionCents: Number(body.inputCostPerMillionCents ?? 0),
-          outputCostPerMillionCents: Number(body.outputCostPerMillionCents ?? 0),
-          latencyMs: body.latencyMs === undefined ? undefined : Math.max(0, Number(body.latencyMs)),
-          routingWeight:
-            body.routingWeight === undefined ? undefined : Math.max(0, Number(body.routingWeight)),
+          inputCostPerMillionCents,
+          outputCostPerMillionCents,
+          ...(latencyMs === undefined ? {} : { latencyMs }),
+          ...(routingWeight === undefined ? {} : { routingWeight }),
           available: true,
         });
         await deps.store.insert(model);
