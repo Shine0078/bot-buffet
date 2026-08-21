@@ -96,6 +96,39 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('creates and lists validated model routes', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/model-routes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Private first',
+        strategy: 'privacy-first',
+        modelIds: ['local-model'],
+        fallbackModelIds: ['cloud-model'],
+        offlineOnly: false,
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    await expect(createdResponse.json()).resolves.toMatchObject({
+      kind: 'model-route',
+      name: 'Private first',
+      strategy: 'privacy-first',
+      modelIds: ['local-model'],
+      fallbackModelIds: ['cloud-model'],
+    });
+    const listed = await fetch(`${base}/api/v1/model-routes`);
+    expect(await listed.json()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'Private first' })]),
+    );
+    const invalid = await fetch(`${base}/api/v1/model-routes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ strategy: 'unknown', modelIds: ['m'] }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
   it('adds correlation ids and rejects oversized bodies', async () => {
     const base = await start();
     const response = await fetch(`${base}/api/v1/projects`, {

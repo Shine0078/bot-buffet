@@ -17,6 +17,7 @@ import {
   MemoryItem,
   MCPServer,
   Model,
+  ModelRoute,
   ModelProvider,
   Plugin,
   Project,
@@ -884,6 +885,65 @@ export function createApi(deps: ApiDeps) {
         });
         await deps.store.insert(model);
         return send(res, 201, model);
+      }
+      if (path === '/api/v1/model-routes' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(
+            actorId,
+            await deps.store.list<ModelRoute>((x) => x.kind === 'model-route'),
+          ),
+        );
+      if (path === '/api/v1/model-routes' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const projectId = body.projectId ? String(body.projectId) : undefined;
+        const agentId = body.agentId ? String(body.agentId) : undefined;
+        const project = projectId
+          ? await required(actorId, await deps.store.get<Project>(projectId), 'write', 'project')
+          : undefined;
+        const agent = agentId
+          ? await required(actorId, await deps.store.get<Agent>(agentId), 'write', 'agent')
+          : undefined;
+        if (project && agent && agent.projectId !== project.id)
+          throw new Error('model_route_scope_mismatch');
+        const strategy = String(body.strategy ?? 'health-first') as ModelRoute['strategy'];
+        if (
+          ![
+            'manual',
+            'weighted',
+            'least-cost',
+            'lowest-latency',
+            'privacy-first',
+            'health-first',
+          ].includes(strategy)
+        )
+          throw new Error('model_route_strategy_invalid');
+        const modelIds = Array.isArray(body.modelIds)
+          ? body.modelIds.map(String).filter(Boolean).slice(0, 64)
+          : [];
+        const fallbackModelIds = Array.isArray(body.fallbackModelIds)
+          ? body.fallbackModelIds.map(String).filter(Boolean).slice(0, 64)
+          : [];
+        if (!modelIds.length && !fallbackModelIds.length)
+          throw new Error('model_route_models_required');
+        const route = entity({
+          kind: 'model-route',
+          ownerId: actorId,
+          scope: project?.id ?? agent?.scope ?? 'workspace_local',
+          projectId,
+          agentId,
+          name: String(body.name ?? 'Model route'),
+          strategy,
+          modelIds,
+          fallbackModelIds,
+          offlineOnly: Boolean(body.offlineOnly),
+          ...(body.maxCostCents === undefined
+            ? {}
+            : { maxCostCents: Math.max(0, Number(body.maxCostCents)) }),
+        }) as ModelRoute;
+        await deps.store.insert(route);
+        return send(res, 201, route);
       }
       if (path === '/api/v1/memory' && req.method === 'GET') {
         const namespace = url.searchParams.get('namespace');

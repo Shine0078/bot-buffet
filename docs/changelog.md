@@ -14,6 +14,7 @@
 - Sandbox hardening pass: built-in filesystem and shell tools now use a runtime abstraction; production refuses the host-process fallback and Docker mode applies a read-only workspace, blocked network, dropped capabilities, `no-new-privileges`, resource limits, and a non-root user. Docker/microVM staging and escape evidence remain release-owner gates.
 - Local model discovery pass: loopback probes now cover all supported local OpenAI-compatible runtimes (Ollama, LM Studio, llama.cpp, LocalAI, vLLM, and Jan) with regression coverage.
 - Local discovery API pass: added the authenticated `GET /api/v1/local-models/discover` endpoint with an explicit offline-only response contract and regression coverage.
+- Routing policy API pass: added validated scoped model-route creation/listing for project/agent primary and fallback chains, strategy selection, offline-only routing, and cost ceilings.
 - CI reliability pass: declared the Vitest V8 coverage provider and added non-interactive minimum coverage thresholds so the checked-in coverage job no longer pauses for a missing dependency.
 - Tooling hygiene pass: ignored generated coverage reports in ESLint so CI lint output stays limited to repository source and tests.
 - Security reporting pass: the secret scanner now emits a valid `results.sarif` artifact for clean and failing scans, making the pinned CI SARIF upload actionable instead of silently missing its input.
