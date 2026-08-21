@@ -44,13 +44,17 @@ afterEach(async () => {
   delete process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN;
 });
 
-async function start(auth = false) {
+async function start(
+  auth = false,
+  discoverLocal: NonNullable<Parameters<typeof createApi>[0]['discoverLocal']> = async () => [],
+) {
   const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));
   const server = createApi({
     store: createStore(dir),
     orchestrator: new EventEmitter() as unknown as Orchestrator,
     uiRoot: dir,
     vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    discoverLocal,
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
@@ -68,6 +72,30 @@ async function start(auth = false) {
 }
 
 describe('API boundary controls', () => {
+  it('exposes authenticated loopback model discovery without cloud fallback', async () => {
+    const base = await start(false, async () => [
+      {
+        providerKind: 'ollama',
+        endpoint: 'http://127.0.0.1:11434/v1',
+        reachable: true,
+        models: ['qwen2.5-coder'],
+      },
+    ]);
+    const response = await fetch(`${base}/api/v1/local-models/discover`);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      providers: [
+        {
+          providerKind: 'ollama',
+          endpoint: 'http://127.0.0.1:11434/v1',
+          reachable: true,
+          models: ['qwen2.5-coder'],
+        },
+      ],
+      offlineOnly: true,
+    });
+  });
+
   it('adds correlation ids and rejects oversized bodies', async () => {
     const base = await start();
     const response = await fetch(`${base}/api/v1/projects`, {

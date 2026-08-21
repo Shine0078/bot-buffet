@@ -32,7 +32,13 @@ import {
   now,
 } from './types.js';
 import { Orchestrator } from './orchestrator.js';
-import { adapterFor, defaultCapabilities, resolveProviderToken } from './providers.js';
+import {
+  adapterFor,
+  defaultCapabilities,
+  discoverLocalEndpoints,
+  LocalDiscoveryResult,
+  resolveProviderToken,
+} from './providers.js';
 import { assertSafeEndpoint, assertWorkspacePath, redactSecrets, fingerprint } from './security.js';
 import { CredentialVault } from './secrets.js';
 import { AuthorizationService } from './authorization.js';
@@ -55,6 +61,7 @@ export interface ApiDeps {
   oauth?: PkceSessionStore;
   device?: DeviceSessionStore;
   registerProvider?: (provider: ModelProvider) => void;
+  discoverLocal?: () => Promise<LocalDiscoveryResult[]>;
 }
 const send = (res: ServerResponse, status: number, payload: unknown): void => {
   res.statusCode = status;
@@ -322,6 +329,11 @@ export function createApi(deps: ApiDeps) {
           status: 'ready',
           storage: 'durable-json',
           auth: process.env.BOT_BUFFET_AUTH_MODE ?? 'development',
+        });
+      if (path === '/api/v1/local-models/discover' && req.method === 'GET')
+        return send(res, 200, {
+          providers: await (deps.discoverLocal ?? discoverLocalEndpoints)(),
+          offlineOnly: true,
         });
       if (path === '/events' && req.method === 'GET') {
         const projectId = url.searchParams.get('projectId') ?? undefined;
