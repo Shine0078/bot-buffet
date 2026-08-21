@@ -7,6 +7,26 @@ import { JsonSchema, Permission, Policy, PolicyRule, Risk } from './types.js';
 
 const SECRET_KEY =
   /(api[_-]?key|token|secret|password|authorization|cookie|private[_-]?key|client[_-]?secret)/i;
+// Token budgets and usage counters are operational metadata, not credentials. Keep these
+// visible in API responses and telemetry while the broader key matcher still protects
+// arbitrary access/refresh tokens and provider credentials.
+const NON_SECRET_OPERATIONAL_KEYS = new Set([
+  'contexttokens',
+  'candidatestokencount',
+  'completiontokens',
+  'estimatedoutputtokens',
+  'inputtokens',
+  'maxtokens',
+  'maxoutputtokens',
+  'outputtokens',
+  'prompttokens',
+  'tokencount',
+  'tokenbudget',
+  'tokenlimit',
+  'tokensin',
+  'tokensout',
+  'totaltokens',
+]);
 const SECRET_VALUE =
   /(sk-[A-Za-z0-9_-]{12,}|AIza[\w-]{20,}|Bearer\s+[A-Za-z0-9._-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{12,})/g;
 
@@ -18,8 +38,13 @@ export function redactSecrets(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactSecrets);
   if (value && typeof value === 'object') {
     const output: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value))
-      output[key] = SECRET_KEY.test(key) ? '[REDACTED]' : redactSecrets(item);
+    for (const [key, item] of Object.entries(value)) {
+      const normalized = key.replace(/[_-]/g, '').toLowerCase();
+      output[key] =
+        SECRET_KEY.test(key) && !NON_SECRET_OPERATIONAL_KEYS.has(normalized)
+          ? '[REDACTED]'
+          : redactSecrets(item);
+    }
     return output;
   }
   return value;

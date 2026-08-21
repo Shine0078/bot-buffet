@@ -722,6 +722,115 @@ export function createApi(deps: ApiDeps) {
         await deps.store.insert(agent);
         return send(res, 201, agent);
       }
+      const agentMatch = path.match(/^\/api\/v1\/agents\/([^/]+)$/);
+      if (agentMatch && req.method === 'PATCH') {
+        const agent = await required(
+          actorId,
+          await deps.store.get<Agent>(agentMatch[1]!),
+          'write',
+          'agent',
+        );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 1)
+          throw new Error('agent_version_required');
+        const raw =
+          body.profile && typeof body.profile === 'object' && !Array.isArray(body.profile)
+            ? (body.profile as Record<string, unknown>)
+            : {};
+        const list = (value: unknown, fallback: string[] = [], max = 64) =>
+          (Array.isArray(value) ? value : fallback)
+            .filter((item): item is string => typeof item === 'string')
+            .map((item) => item.slice(0, 1000))
+            .slice(0, max);
+        const number = (value: unknown, fallback: number, min: number, max: number) => {
+          const parsed = Number(value ?? fallback);
+          return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+        };
+        const current = agent.profile;
+        const profile = {
+          ...current,
+          name: raw.name === undefined ? current.name : String(raw.name).slice(0, 200),
+          description:
+            raw.description === undefined
+              ? current.description
+              : String(raw.description).slice(0, 2000),
+          avatar: raw.avatar === undefined ? current.avatar : String(raw.avatar).slice(0, 32),
+          mission: raw.mission === undefined ? current.mission : String(raw.mission).slice(0, 4000),
+          systemInstructions:
+            raw.systemInstructions === undefined
+              ? current.systemInstructions
+              : String(raw.systemInstructions).slice(0, 12000),
+          projectRules:
+            raw.projectRules === undefined ? current.projectRules : list(raw.projectRules, []),
+          skills: raw.skills === undefined ? current.skills : list(raw.skills, []),
+          allowedModels:
+            raw.allowedModels === undefined ? current.allowedModels : list(raw.allowedModels),
+          preferredModelId:
+            raw.preferredModelId === undefined
+              ? current.preferredModelId
+              : raw.preferredModelId
+                ? String(raw.preferredModelId)
+                : undefined,
+          fallbackModelIds:
+            raw.fallbackModelIds === undefined
+              ? current.fallbackModelIds
+              : list(raw.fallbackModelIds, []),
+          allowedToolIds:
+            raw.allowedToolIds === undefined ? current.allowedToolIds : list(raw.allowedToolIds),
+          allowedPluginIds:
+            raw.allowedPluginIds === undefined
+              ? current.allowedPluginIds
+              : list(raw.allowedPluginIds),
+          allowedPaths:
+            raw.allowedPaths === undefined ? current.allowedPaths : list(raw.allowedPaths, ['.']),
+          protectedPaths:
+            raw.protectedPaths === undefined
+              ? current.protectedPaths
+              : list(raw.protectedPaths, ['.env', '.git']),
+          network: ['blocked', 'allowlist', 'open'].includes(String(raw.network))
+            ? (String(raw.network) as Agent['profile']['network'])
+            : current.network,
+          environmentKeys:
+            raw.environmentKeys === undefined ? current.environmentKeys : list(raw.environmentKeys),
+          maxSteps: number(raw.maxSteps, current.maxSteps, 1, 1000),
+          timeLimitMs: number(raw.timeLimitMs, current.timeLimitMs, 1000, 86_400_000),
+          tokenLimit: number(raw.tokenLimit, current.tokenLimit, 128, 1_000_000),
+          costLimitCents: number(raw.costLimitCents, current.costLimitCents, 0, 1_000_000_000),
+          concurrencyLimit: number(raw.concurrencyLimit, current.concurrencyLimit, 1, 32),
+          outputFormat: ['text', 'json', 'markdown'].includes(String(raw.outputFormat))
+            ? (String(raw.outputFormat) as Agent['profile']['outputFormat'])
+            : current.outputFormat,
+          escalationPolicy: ['pause', 'retry', 'delegate', 'stop'].includes(
+            String(raw.escalationPolicy),
+          )
+            ? (String(raw.escalationPolicy) as Agent['profile']['escalationPolicy'])
+            : current.escalationPolicy,
+          mode: [
+            'plan',
+            'execute',
+            'review',
+            'chat',
+            'supervised',
+            'autonomous',
+            'maintenance',
+            'emergency-stop',
+            'custom',
+          ].includes(String(raw.mode))
+            ? (String(raw.mode) as Agent['profile']['mode'])
+            : current.mode,
+          version: current.version + 1,
+          changelog: [
+            ...current.changelog,
+            String(body.changeSummary ?? 'Profile updated').slice(0, 500),
+          ].slice(-32),
+        } satisfies Agent['profile'];
+        const saved = await deps.store.putIfVersion(
+          { ...agent, profile, version: agent.version } as Agent,
+          expectedVersion,
+        );
+        return send(res, 200, saved);
+      }
       if (path === '/api/v1/tasks' && req.method === 'GET')
         return send(
           res,

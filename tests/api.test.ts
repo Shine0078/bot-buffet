@@ -213,10 +213,12 @@ describe('API boundary controls', () => {
     expect(agentResponse.status).toBe(201);
     const agent = (await agentResponse.json()) as {
       id: string;
+      version: number;
       projectId: string;
       profile: {
         network: string;
         concurrencyLimit: number;
+        version: number;
         approvalPolicy: { requiredRisks: string[] };
       };
     };
@@ -225,6 +227,31 @@ describe('API boundary controls', () => {
       profile: { network: 'blocked', concurrencyLimit: 1 },
     });
     expect(agent.profile.approvalPolicy.requiredRisks).toEqual(['high', 'critical']);
+    const updatedAgentResponse = await fetch(`${base}/api/v1/agents/${agent.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: agent.version,
+        changeSummary: 'Tune profile',
+        profile: { name: 'Desk v2', tokenLimit: 64_000 },
+      }),
+    });
+    expect(updatedAgentResponse.status).toBe(200);
+    const updatedAgent = (await updatedAgentResponse.json()) as {
+      version: number;
+      profile: { name: string; tokenLimit: number; version: number; approvalPolicy: unknown };
+    };
+    expect(updatedAgent).toMatchObject({
+      version: agent.version + 1,
+      profile: { name: 'Desk v2', tokenLimit: 64_000, version: agent.profile.version + 1 },
+    });
+    expect(updatedAgent.profile.approvalPolicy).toEqual(agent.profile.approvalPolicy);
+    const staleAgent = await fetch(`${base}/api/v1/agents/${agent.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: agent.version, profile: { name: 'stale' } }),
+    });
+    expect(staleAgent.status).toBe(400);
     const taskResponse = await fetch(`${base}/api/v1/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

@@ -14,6 +14,25 @@ describe('security boundaries', () => {
       redactSecrets({ apiKey: 'sk-123456789012345', nested: 'Bearer abcdefghijklmnop' }),
     ).toEqual({ apiKey: '[REDACTED]', nested: '[REDACTED]' });
   });
+  it('preserves operational token budgets and usage while redacting credentials', () => {
+    expect(
+      redactSecrets({
+        tokenLimit: 64_000,
+        max_tokens: 256,
+        tokensIn: 12,
+        outputTokens: 34,
+        tokenEndpoint: 'https://issuer.example.test/oauth/token',
+        accessToken: 'opaque-access-token',
+      }),
+    ).toEqual({
+      tokenLimit: 64_000,
+      max_tokens: 256,
+      tokensIn: 12,
+      outputTokens: 34,
+      tokenEndpoint: '[REDACTED]',
+      accessToken: '[REDACTED]',
+    });
+  });
   it('rejects traversal and absolute paths', () => {
     expect(() => assertWorkspacePath('C:\\workspace', '..\\outside')).toThrow('traversal');
     expect(() => assertWorkspacePath('C:\\workspace', 'C:\\outside')).toThrow('absolute_path');
