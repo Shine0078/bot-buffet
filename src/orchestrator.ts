@@ -39,6 +39,7 @@ export interface RunCommand {
 export class Orchestrator extends EventEmitter {
   private readonly controllers = new Map<string, AbortController>();
   private readonly runPromises = new Map<string, Promise<void>>();
+  private readonly activeAgentRuns = new Map<string, number>();
   constructor(private readonly deps: OrchestratorDeps) {
     super();
   }
@@ -78,7 +79,29 @@ export class Orchestrator extends EventEmitter {
 
   async start(runId: string): Promise<void> {
     if (this.runPromises.has(runId)) return;
-    const promise = this.execute(runId).finally(() => this.runPromises.delete(runId));
+    const run = await this.deps.store.get<Run>(runId);
+    if (!run) throw new Error('run_not_found');
+    const agent = await this.deps.store.get<Agent>(run.agentId);
+    const limit = Math.max(1, agent?.profile.concurrencyLimit ?? 1);
+    const active = this.activeAgentRuns.get(run.agentId) ?? 0;
+    if (active >= limit) {
+      const blocked = await this.deps.store.put({
+        ...run,
+        status: 'blocked',
+        error: 'agent_concurrency_limit',
+        finishedAt: now(),
+        version: run.version,
+      } as Run);
+      this.emit('run', { type: 'run.blocked', run: blocked });
+      return;
+    }
+    this.activeAgentRuns.set(run.agentId, active + 1);
+    const promise = this.execute(runId).finally(() => {
+      this.runPromises.delete(runId);
+      const remaining = (this.activeAgentRuns.get(run.agentId) ?? 1) - 1;
+      if (remaining > 0) this.activeAgentRuns.set(run.agentId, remaining);
+      else this.activeAgentRuns.delete(run.agentId);
+    });
     this.runPromises.set(runId, promise);
     await promise;
   }

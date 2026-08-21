@@ -116,24 +116,34 @@ describe('durable orchestration', () => {
     const events: Array<Record<string, unknown>> = [];
     orchestrator.on('run', (event: Record<string, unknown>) => events.push(event));
     const run = await orchestrator.createRun({ ownerId: 'u', project, agent, task });
-    await orchestrator.start(run.id);
+    const concurrentRun = await orchestrator.createRun({ ownerId: 'u', project, agent, task });
+    await Promise.all([orchestrator.start(run.id), orchestrator.start(concurrentRun.id)]);
     const saved = await store.get<typeof run>(run.id);
-    expect(saved?.status).toBe('completed');
-    expect(events.some((event) => event.type === 'model.delta' && event.runId === run.id)).toBe(
-      true,
+    const savedConcurrent = await store.get<typeof concurrentRun>(concurrentRun.id);
+    expect([saved?.status, savedConcurrent?.status]).toEqual(
+      expect.arrayContaining(['completed', 'blocked']),
     );
+    expect([saved?.error, savedConcurrent?.error]).toContain('agent_concurrency_limit');
+    expect(events.some((event) => event.type === 'model.delta')).toBe(true);
+    const completedRun = saved?.status === 'completed' ? saved : savedConcurrent!;
     const checkpoints = await store.list((x) => x.kind === 'checkpoint');
     expect(checkpoints.length).toBeGreaterThan(0);
     const checkpoint = checkpoints[0]!;
     const fork = await orchestrator.command({
-      runId: run.id,
+      runId: completedRun.id,
       type: 'fork',
       checkpointId: checkpoint.id,
     });
-    expect(fork?.parentRunId).toBe(run.id);
+    expect(fork?.parentRunId).toBe(completedRun.id);
     expect(await store.getRunState(fork!.id)).toEqual((checkpoint as unknown as Checkpoint).state);
-    await store.setRunState(run.id, { changed: true });
-    await orchestrator.command({ runId: run.id, type: 'rollback', checkpointId: checkpoint.id });
-    expect(await store.getRunState(run.id)).toEqual((checkpoint as unknown as Checkpoint).state);
+    await store.setRunState(completedRun.id, { changed: true });
+    await orchestrator.command({
+      runId: completedRun.id,
+      type: 'rollback',
+      checkpointId: checkpoint.id,
+    });
+    expect(await store.getRunState(completedRun.id)).toEqual(
+      (checkpoint as unknown as Checkpoint).state,
+    );
   });
 });
