@@ -182,7 +182,11 @@ async function verifyOidc(req: IncomingMessage): Promise<string> {
   if (!headerPart || !payloadPart || !signaturePart) return unauthorized('invalid_bearer');
   const header = parseJsonPart(headerPart);
   const claims = parseJsonPart(payloadPart) as OidcClaims;
-  if (header.alg !== 'RS256' || typeof header.kid !== 'string')
+  if (
+    header.alg !== 'RS256' ||
+    (header.typ !== undefined && header.typ !== 'JWT') ||
+    typeof header.kid !== 'string'
+  )
     unauthorized('oidc_algorithm_rejected');
   const key = (await loadJwks()).find((candidate) => candidate.kid === header.kid);
   if (!key) return unauthorized('oidc_signing_key_not_found');
