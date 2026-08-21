@@ -1,8 +1,32 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 type EncryptedRecord = { iv: string; tag: string; ciphertext: string };
+
+function localMasterKey(filePath: string): Buffer {
+  const keyPath = `${filePath}.key`;
+  try {
+    const key = readFileSync(keyPath);
+    if (key.length !== 32) throw new Error('credential_vault:invalid_local_key');
+    return key;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code !== 'ENOENT') throw error;
+    mkdirSync(dirname(keyPath), { recursive: true });
+    const generated = randomBytes(32);
+    try {
+      writeFileSync(keyPath, generated, { mode: 0o600, flag: 'wx' });
+      return generated;
+    } catch (writeError) {
+      if (!(writeError instanceof Error && 'code' in writeError && writeError.code === 'EEXIST'))
+        throw writeError;
+      const existing = readFileSync(keyPath);
+      if (existing.length !== 32) throw new Error('credential_vault:invalid_local_key');
+      return existing;
+    }
+  }
+}
 
 /** Small local vault. Production should point this contract at a KMS/secret manager. */
 export class CredentialVault {
@@ -18,9 +42,8 @@ export class CredentialVault {
       (!masterKey || masterKey.length < 32 || /replace-with|example|changeme/i.test(masterKey))
     )
       throw new Error('credential_vault:strong_master_key_required');
-    this.key = createHash('sha256')
-      .update(masterKey ?? `dev-only-${process.env.USERNAME ?? 'local'}`)
-      .digest();
+    const keyMaterial = masterKey ?? localMasterKey(filePath);
+    this.key = createHash('sha256').update(keyMaterial).digest();
   }
   private encrypt(value: string): EncryptedRecord {
     const iv = randomBytes(12);

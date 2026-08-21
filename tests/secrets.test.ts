@@ -17,6 +17,17 @@ describe('credential vault', () => {
     await reloaded.revoke('provider-1');
     expect(reloaded.getSync('provider-1')).toBeUndefined();
   });
+  it('generates and reuses a random development key instead of deriving one from the username', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-'));
+    const path = join(dir, 'credentials.enc.json');
+    const vault = new CredentialVault(path);
+    await vault.set('provider-1', 'local-secret');
+    const key = await readFile(`${path}.key`);
+    expect(key).toHaveLength(32);
+    const reloaded = new CredentialVault(path);
+    await reloaded.load();
+    expect(reloaded.getSync('provider-1')).toBe('local-secret');
+  });
   it('rejects weak or placeholder production master keys', () => {
     const previous = process.env.BOT_BUFFET_AUTH_MODE;
     process.env.BOT_BUFFET_AUTH_MODE = 'production';
