@@ -113,10 +113,15 @@ describe('durable orchestration', () => {
       workspaceRoot: () => dir,
       adapters: () => new MockLocalAdapter('m'),
     });
+    const events: Array<Record<string, unknown>> = [];
+    orchestrator.on('run', (event: Record<string, unknown>) => events.push(event));
     const run = await orchestrator.createRun({ ownerId: 'u', project, agent, task });
     await orchestrator.start(run.id);
     const saved = await store.get<typeof run>(run.id);
     expect(saved?.status).toBe('completed');
+    expect(events.some((event) => event.type === 'model.delta' && event.runId === run.id)).toBe(
+      true,
+    );
     const checkpoints = await store.list((x) => x.kind === 'checkpoint');
     expect(checkpoints.length).toBeGreaterThan(0);
     const checkpoint = checkpoints[0]!;

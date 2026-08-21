@@ -17,7 +17,7 @@ import {
   id,
   now,
 } from './types.js';
-import { ModelAdapter, ModelRequest } from './providers.js';
+import { ModelAdapter, ModelRequest, ModelResponse } from './providers.js';
 import { ModelRouter } from './router.js';
 import { ToolContext, ToolRegistry } from './tools.js';
 import { decidePolicy, redactSecrets } from './security.js';
@@ -205,7 +205,13 @@ export class Orchestrator extends EventEmitter {
           redacted: true,
         });
         await this.deps.store.insert(step);
-        const response = await this.completeWithRetry(this.deps.adapters(model), request, 2);
+        const response = await this.completeWithRetry(
+          this.deps.adapters(model),
+          request,
+          2,
+          run.id,
+          run.projectId,
+        );
         const responsePreview = redactSecrets(response.content.slice(0, 1000));
         const stepCostCents =
           (response.usage.inputTokens * model.inputCostPerMillionCents +
@@ -390,11 +396,64 @@ export class Orchestrator extends EventEmitter {
     adapter: ModelAdapter,
     request: ModelRequest,
     maxRetries: number,
-  ): Promise<Awaited<ReturnType<ModelAdapter['complete']>>> {
+    runId: string,
+    projectId: string,
+  ): Promise<ModelResponse> {
     let lastError: unknown;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
       try {
-        return await adapter.complete(request);
+        const started = Date.now();
+        let responseId = `stream_${Date.now()}`;
+        let content = '';
+        let usage: ModelResponse['usage'] = { inputTokens: 0, outputTokens: 0 };
+        const toolArguments = new Map<string, { id: string; name: string; arguments: string }>();
+        let receivedChunk = false;
+        for await (const chunk of adapter.stream(request)) {
+          receivedChunk = true;
+          responseId = chunk.id || responseId;
+          content += chunk.delta;
+          if (chunk.usage) usage = chunk.usage;
+          for (const toolCall of chunk.toolCalls ?? []) {
+            const key = toolCall.id ?? `${toolCall.name ?? 'tool'}:${toolArguments.size}`;
+            const current = toolArguments.get(key) ?? {
+              id: toolCall.id ?? key,
+              name: toolCall.name ?? 'unknown',
+              arguments: '',
+            };
+            if (toolCall.name) current.name = toolCall.name;
+            if (toolCall.arguments) current.arguments += toolCall.arguments;
+            toolArguments.set(key, current);
+          }
+          this.emit('run', {
+            type: 'model.delta',
+            runId,
+            projectId,
+            id: responseId,
+            delta: redactSecrets(chunk.delta),
+            done: chunk.done,
+          });
+        }
+        if (!receivedChunk) throw new Error('model_stream_empty');
+        const toolCalls = [...toolArguments.values()].map((call) => {
+          let parsed: Record<string, unknown> = {};
+          if (call.arguments) {
+            try {
+              const candidate: unknown = JSON.parse(call.arguments);
+              if (candidate && typeof candidate === 'object' && !Array.isArray(candidate))
+                parsed = candidate as Record<string, unknown>;
+            } catch {
+              throw new Error('model_tool_arguments_invalid');
+            }
+          }
+          return { id: call.id, name: call.name, arguments: parsed };
+        });
+        return {
+          id: responseId,
+          content,
+          toolCalls,
+          usage,
+          latencyMs: Date.now() - started,
+        };
       } catch (error) {
         lastError = error;
         if (request.signal?.aborted || attempt === maxRetries) throw error;

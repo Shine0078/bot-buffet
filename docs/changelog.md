@@ -26,3 +26,4 @@
 - Credential-source pass: added validated environment-variable provider references that resolve at adapter-use time without persisting or returning the environment secret.
 - Memory approval pass: added an authenticated, version/CAS-protected memory approval/rejection route with tamper-evident audit events.
 - Streaming transport pass: added a DNS-pinned async response transport with abort and 10 MB caps, so OpenAI-compatible SSE chunks are delivered incrementally rather than buffered.
+- Runtime streaming pass: the orchestrator now forwards redacted model deltas over the live run event stream while preserving durable usage, tool-call, retry, and cancellation semantics.
