@@ -25,3 +25,4 @@
 - Capability normalization pass: added streaming chunk normalization, bounded 32-request batching, OpenAI-compatible SSE parsing, validated OpenAI/Cohere embeddings, and adapter contract coverage across provider families.
 - Credential-source pass: added validated environment-variable provider references that resolve at adapter-use time without persisting or returning the environment secret.
 - Memory approval pass: added an authenticated, version/CAS-protected memory approval/rejection route with tamper-evident audit events.
+- Streaming transport pass: added a DNS-pinned async response transport with abort and 10 MB caps, so OpenAI-compatible SSE chunks are delivered incrementally rather than buffered.

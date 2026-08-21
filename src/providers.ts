@@ -1,7 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { ModelProvider, CapabilitySet, ProviderKind, now } from './types.js';
 import { assertSafeEndpoint, redactSecrets } from './security.js';
-import { fetchPinned } from './egress.js';
+import { fetchPinned, streamPinned } from './egress.js';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -198,7 +198,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     };
   }
   async *stream(request: ModelRequest): AsyncGenerator<ModelStreamChunk> {
-    const response = await fetchPinned(
+    const response = await streamPinned(
       `${this.provider.endpoint.replace(/\/$/u, '')}/chat/completions`,
       {
         method: 'POST',
@@ -219,62 +219,102 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       },
       this.localEndpoint(),
     );
-    if (!response.ok)
-      throw new Error(
-        `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
-      );
-    const text = await response.text();
+    if (response.status < 200 || response.status >= 300)
+      throw new Error(`provider_error:${response.status}`);
+    const decoder = new TextDecoder();
+    let text = '';
     let yielded = false;
     let responseId = `response_${Date.now()}`;
-    for (const line of text.split(/\r?\n/u)) {
-      const dataLine = line.startsWith('data:') ? line.slice(5).trim() : '';
-      if (!dataLine || dataLine === '[DONE]') continue;
-      let payload: {
-        id?: string;
-        choices?: Array<{
-          delta?: {
-            content?: string;
-            tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
+    for await (const chunk of response.body) {
+      text += decoder.decode(chunk, { stream: true });
+      const lines = text.split(/\r?\n/u);
+      text = lines.pop() ?? '';
+      for (const line of lines) {
+        const dataLine = line.startsWith('data:') ? line.slice(5).trim() : '';
+        if (!dataLine || dataLine === '[DONE]') continue;
+        let payload: {
+          id?: string;
+          choices?: Array<{
+            delta?: {
+              content?: string;
+              tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
+            };
+            finish_reason?: string | null;
+          }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
+        };
+        try {
+          payload = JSON.parse(dataLine) as typeof payload;
+        } catch {
+          throw new Error('provider_stream_chunk_invalid');
+        }
+        responseId = payload.id ?? responseId;
+        const choice = payload.choices?.[0];
+        const delta = choice?.delta?.content ?? '';
+        const toolCalls = choice?.delta?.tool_calls?.map((call) => ({
+          id: call.id,
+          name: call.function?.name,
+          arguments: call.function?.arguments,
+        }));
+        if (delta || toolCalls?.length) {
+          yielded = true;
+          yield {
+            id: responseId,
+            delta,
+            ...(toolCalls?.length ? { toolCalls } : {}),
+            done: false,
           };
-          finish_reason?: string | null;
-        }>;
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-      };
-      try {
-        payload = JSON.parse(dataLine) as typeof payload;
-      } catch {
-        throw new Error('provider_stream_chunk_invalid');
+        }
+        if (choice?.finish_reason || payload.usage) {
+          yielded = true;
+          yield {
+            id: responseId,
+            delta: '',
+            done: true,
+            usage: payload.usage
+              ? {
+                  inputTokens: payload.usage.prompt_tokens ?? 0,
+                  outputTokens: payload.usage.completion_tokens ?? 0,
+                }
+              : undefined,
+          };
+        }
       }
-      responseId = payload.id ?? responseId;
-      const choice = payload.choices?.[0];
-      const delta = choice?.delta?.content ?? '';
-      const toolCalls = choice?.delta?.tool_calls?.map((call) => ({
-        id: call.id,
-        name: call.function?.name,
-        arguments: call.function?.arguments,
-      }));
-      if (delta || toolCalls?.length) {
-        yielded = true;
-        yield {
-          id: responseId,
-          delta,
-          ...(toolCalls?.length ? { toolCalls } : {}),
-          done: false,
+    }
+    text += decoder.decode();
+    const trailing = text.trim();
+    if (trailing.startsWith('data:')) {
+      const dataLine = trailing.slice(5).trim();
+      if (dataLine && dataLine !== '[DONE]') {
+        let payload: {
+          id?: string;
+          choices?: Array<{
+            delta?: { content?: string };
+            finish_reason?: string | null;
+          }>;
+          usage?: { prompt_tokens?: number; completion_tokens?: number };
         };
-      }
-      if (choice?.finish_reason || payload.usage) {
-        yielded = true;
-        yield {
-          id: responseId,
-          delta: '',
-          done: true,
-          usage: payload.usage
-            ? {
-                inputTokens: payload.usage.prompt_tokens ?? 0,
-                outputTokens: payload.usage.completion_tokens ?? 0,
-              }
-            : undefined,
-        };
+        try {
+          payload = JSON.parse(dataLine) as typeof payload;
+        } catch {
+          throw new Error('provider_stream_chunk_invalid');
+        }
+        responseId = payload.id ?? responseId;
+        const choice = payload.choices?.[0];
+        if (choice?.delta?.content || choice?.finish_reason || payload.usage) {
+          yielded = true;
+          yield {
+            id: responseId,
+            delta: choice?.delta?.content ?? '',
+            done: Boolean(choice?.finish_reason || payload.usage),
+            usage: payload.usage
+              ? {
+                  inputTokens: payload.usage.prompt_tokens ?? 0,
+                  outputTokens: payload.usage.completion_tokens ?? 0,
+                }
+              : undefined,
+          };
+        }
       }
     }
     if (!yielded) yield { id: responseId, delta: '', done: true };

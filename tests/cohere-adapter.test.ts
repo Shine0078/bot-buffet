@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelProvider, now } from '../src/types.js';
 
 const fetchPinned = vi.hoisted(() => vi.fn());
-vi.mock('../src/egress.js', () => ({ fetchPinned }));
+const streamPinned = vi.hoisted(() => vi.fn());
+vi.mock('../src/egress.js', () => ({ fetchPinned, streamPinned }));
 
 const { AzureOpenAIAdapter, BedrockAdapter, CohereAdapter, OpenAICompatibleAdapter } =
   await import('../src/providers.js');
@@ -154,21 +155,28 @@ describe('native Cohere adapter', () => {
 });
 
 describe('normalized OpenAI-compatible capabilities', () => {
-  beforeEach(() => fetchPinned.mockReset());
+  beforeEach(() => {
+    fetchPinned.mockReset();
+    streamPinned.mockReset();
+  });
 
   it('parses streaming SSE chunks and emits a terminal usage chunk', async () => {
-    fetchPinned.mockResolvedValueOnce(
-      new Response(
-        [
-          'data: {"id":"stream-1","choices":[{"delta":{"content":"Hel"}}]}',
-          'data: {"id":"stream-1","choices":[{"delta":{"content":"lo"}}]}',
-          'data: {"id":"stream-1","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2}}',
-          'data: [DONE]',
-          '',
-        ].join('\n'),
-        { status: 200, headers: { 'content-type': 'text/event-stream' } },
-      ),
-    );
+    streamPinned.mockResolvedValueOnce({
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/event-stream' }),
+      body: (async function* () {
+        yield new TextEncoder().encode(
+          'data: {"id":"stream-1","choices":[{"delta":{"content":"Hel"}}]}\n',
+        );
+        yield new TextEncoder().encode(
+          'data: {"id":"stream-1","choices":[{"delta":{"content":"lo"}}]}\n',
+        );
+        yield new TextEncoder().encode(
+          'data: {"id":"stream-1","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2}}\n',
+        );
+        yield new TextEncoder().encode('data: [DONE]\n');
+      })(),
+    });
     const adapter = new OpenAICompatibleAdapter(
       { ...provider, providerKind: 'openai', endpoint: 'https://api.openai.com/v1' },
       'token',
@@ -190,7 +198,7 @@ describe('normalized OpenAI-compatible capabilities', () => {
       },
     ]);
     expect(
-      JSON.parse(String((fetchPinned.mock.calls[0] as [string, RequestInit])[1].body)),
+      JSON.parse(String((streamPinned.mock.calls[0] as [string, RequestInit])[1].body)),
     ).toMatchObject({
       stream: true,
       model: 'gpt-test',
