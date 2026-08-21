@@ -317,6 +317,36 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('reports scoped usage and rejects invalid report parameters', async () => {
+    const base = await start();
+    const project = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Usage project' }),
+      })
+    ).json()) as { id: string };
+    const empty = await fetch(`${base}/api/v1/usage?groupBy=agent&period=daily`);
+    expect(empty.status).toBe(200);
+    await expect(empty.json()).resolves.toMatchObject({
+      totalCostCents: 0,
+      totalCalls: 0,
+      buckets: [],
+      window: { period: 'daily' },
+    });
+    const scoped = await fetch(`${base}/api/v1/usage?projectId=${project.id}`);
+    expect(scoped.status).toBe(200);
+    const badGrouping = await fetch(`${base}/api/v1/usage?groupBy=everything`);
+    expect(badGrouping.status).toBe(400);
+    const badPeriod = await fetch(`${base}/api/v1/usage?period=hourly`);
+    expect(badPeriod.status).toBe(400);
+    const unknownProject = await fetch(`${base}/api/v1/usage?projectId=missing-project`);
+    expect(unknownProject.status).toBe(400);
+    const alerts = await fetch(`${base}/api/v1/alerts`);
+    expect(alerts.status).toBe(200);
+    await expect(alerts.json()).resolves.toEqual([]);
+  });
+
   it('creates scoped environments, agents, and tasks with safe defaults', async () => {
     const base = await start();
     const projectResponse = await fetch(`${base}/api/v1/projects`, {

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { JsonStateStore } from './store.js';
 import {
   Agent,
+  Alert,
   ApprovalRequest,
   Budget,
   Checkpoint,
@@ -230,8 +231,14 @@ export class Orchestrator extends EventEmitter {
           run.agentId,
           estimatedCostCents,
         );
-        for (const warning of preflight.warnings)
+        for (const warning of preflight.warnings) {
           this.emit('run', { type: 'budget.warning', runId, budget: warning });
+          await this.raiseAlert(run, 'warning', 'Budget warning', warning.budgetId, {
+            budget: warning.name,
+            projectedCents: warning.projectedCents,
+            limitCents: warning.limitCents,
+          });
+        }
         if (!preflight.allowed) {
           await this.updateRun(current, {
             status: 'blocked',
@@ -239,6 +246,17 @@ export class Orchestrator extends EventEmitter {
             finishedAt: now(),
           });
           this.emit('run', { type: 'budget.exceeded', runId, budget: preflight.blockedBy });
+          await this.raiseAlert(
+            run,
+            'critical',
+            'Budget exceeded',
+            preflight.blockedBy?.budgetId ?? run.projectId,
+            {
+              budget: preflight.blockedBy?.name,
+              limitCents: preflight.blockedBy?.limitCents,
+              runId,
+            },
+          );
           await this.deps.store.audit({
             kind: 'audit-event',
             ownerId: run.ownerId,
@@ -567,6 +585,27 @@ export class Orchestrator extends EventEmitter {
       }
     }
     throw lastError instanceof Error ? lastError : new Error('model_retry_failed');
+  }
+  /** Persist an operator-visible alert scoped to the run's project. */
+  private async raiseAlert(
+    run: Run,
+    severity: Alert['severity'],
+    title: string,
+    resourceId: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    await this.deps.store.insert(
+      entity({
+        kind: 'alert',
+        ownerId: run.ownerId,
+        scope: run.projectId,
+        severity,
+        title,
+        message: JSON.stringify(redactSecrets(metadata)).slice(0, 500),
+        acknowledged: false,
+        resourceId,
+      }) as Alert,
+    );
   }
   /** Aggregate every budget that applies to this project/agent pair and decide admission. */
   private async evaluateBudgets(

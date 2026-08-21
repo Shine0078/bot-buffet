@@ -5,6 +5,7 @@ import { extname } from 'node:path';
 import { JsonStateStore } from './store.js';
 import {
   Agent,
+  Alert,
   ApprovalRequest,
   BaseEntity,
   Budget,
@@ -59,6 +60,7 @@ import {
 import { fetchPinned } from './egress.js';
 import { evaluateCases } from './evaluations.js';
 import { budgetStatus, estimateCostCents, evaluateBudgets } from './budgets.js';
+import { CostGrouping, costReport, forecastCents } from './reporting.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1628,6 +1630,43 @@ export function createApi(deps: ApiDeps) {
           warnings: decision.warnings,
           budgets: decision.statuses,
         });
+      }
+      if (path === '/api/v1/usage' && req.method === 'GET') {
+        const grouping = (url.searchParams.get('groupBy') ?? 'project') as CostGrouping;
+        if (!['project', 'agent', 'model', 'run'].includes(grouping))
+          throw new Error('usage_grouping_invalid');
+        const period = url.searchParams.get('period') ?? 'monthly';
+        if (!['daily', 'monthly', 'lifetime'].includes(period))
+          throw new Error('usage_period_invalid');
+        const projectParam = url.searchParams.get('projectId');
+        if (projectParam)
+          await required(actorId, await deps.store.get<Project>(projectParam), 'read', 'project');
+        const visibleProjects = new Set(
+          (await visible(actorId, await deps.store.list<Project>((x) => x.kind === 'project'))).map(
+            (project) => project.id,
+          ),
+        );
+        const usage = (await deps.store.list<UsageRecord>((x) => x.kind === 'usage')).filter(
+          (record) => visibleProjects.has(record.projectId),
+        );
+        const costs = (await deps.store.list<CostRecord>((x) => x.kind === 'cost')).filter(
+          (record) => visibleProjects.has(record.projectId),
+        );
+        const report = costReport(usage, costs, grouping, {
+          period: period as 'daily' | 'monthly' | 'lifetime',
+          projectId: projectParam ?? undefined,
+        });
+        return send(res, 200, {
+          ...report,
+          forecastCents: forecastCents(report.totalCostCents, report.window),
+        });
+      }
+      if (path === '/api/v1/alerts' && req.method === 'GET') {
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Alert>((x) => x.kind === 'alert')),
+        );
       }
       if (path === '/api/v1/memory' && req.method === 'GET') {
         const namespace = url.searchParams.get('namespace');

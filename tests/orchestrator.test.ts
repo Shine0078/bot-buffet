@@ -9,6 +9,7 @@ import { createStore } from '../src/store.js';
 import { createBuiltinTools } from '../src/tools.js';
 import {
   Agent,
+  Alert,
   AuditEvent,
   Budget,
   Checkpoint,
@@ -162,6 +163,8 @@ describe('durable orchestration', () => {
     expect(events.some((event) => event.type === 'budget.exceeded')).toBe(true);
     const audit = await store.list((x) => x.kind === 'audit-event');
     expect(audit.some((event) => (event as AuditEvent).action === 'budget.blocked')).toBe(true);
+    const alerts = await store.list((x) => x.kind === 'alert');
+    expect(alerts.some((alert) => (alert as Alert).severity === 'critical')).toBe(true);
     expect((await store.verifyAuditChain()).valid).toBe(true);
   });
 

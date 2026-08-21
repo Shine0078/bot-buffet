@@ -46,6 +46,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Shared response/event redaction now preserves operational token limits and usage counters while continuing to redact credential-shaped keys and values.
 - Schedule and webhook enable/disable routes now require a compare-and-swap `version` in the request body, so concurrent or replayed toggles cannot silently overwrite newer state.
 - Budgets are now enforced rather than only reported: daily/monthly/lifetime windows, scoped `GET/POST /api/v1/budgets`, pre-execution `POST /api/v1/budgets/estimate`, durable per-call usage/cost records, orchestrator admission control that durably blocks runs on hard limits with a `budget.blocked` audit record, and non-blocking soft warnings. Estimate requests authorize and project-check any supplied `agentId` so budget scope cannot be narrowed by an unauthorized caller.
+- Cost, token, and latency reporting is now queryable: `GET /api/v1/usage` aggregates by project, agent, model, or run over daily/monthly/lifetime windows with authorization-filtered inputs, no double counting between cost and usage records, malformed-number rejection, and run-rate forecasting. `GET /api/v1/alerts` exposes the durable redacted budget alerts the orchestrator raises at warn and hard-limit thresholds.
 
 ## Evidence
 

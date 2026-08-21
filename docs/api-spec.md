@@ -20,6 +20,10 @@ Model registration also rejects non-finite, negative, or unbounded cost, latency
 
 `POST /api/v1/budgets/estimate` returns the estimated cost of a model call before it runs, along with the budget decision, soft warnings, and any blocking budget. Token counts are bounded and non-negative, and an optional `agentId` is authorized and project-checked so callers cannot narrow the evaluated budget set to a scope they do not own.
 
+`GET /api/v1/usage` aggregates spend and token usage for the caller's visible projects. `groupBy` accepts `project`, `agent`, `model`, or `run`; `period` accepts `daily`, `monthly`, or `lifetime`; an optional `projectId` is authorized before use. Cost records are authoritative for money and usage records supply tokens and latency, so a run with a recorded cost is never double-counted. The response includes per-bucket cost, token, latency, and call totals plus a run-rate `forecastCents` for the window.
+
+`GET /api/v1/alerts` lists authorization-filtered operator alerts. The orchestrator raises a `warning` alert when a budget crosses its warn ratio and a `critical` alert when a hard limit blocks a run; alert messages pass through secret redaction and are length-bounded.
+
 The orchestrator performs the same evaluation before every model call. Estimated cost is charged against applicable budgets; exceeding a hard limit durably blocks the run with `budget_exceeded`, emits a `budget.exceeded` event, and writes a `budget.blocked` audit record. Soft warnings emit `budget.warning` without blocking. Each completed model call writes durable usage and cost records scoped to the project, agent, and run, so budgets reflect real spend across restarts.
 
 Routing only accepts model IDs readable by the actor and within the selected project/agent scope. Automatic routing also filters its inventory to the run's project/workspace scopes before selecting a provider.
