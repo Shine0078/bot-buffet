@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adapterFor } from '../src/providers.js';
+import { adapterFor, localDiscoveryCandidates } from '../src/providers.js';
 import { ModelProvider, now } from '../src/types.js';
 
 const provider = (providerKind: ModelProvider['providerKind']): ModelProvider => ({
@@ -36,6 +36,19 @@ describe('provider adapter normalization', () => {
     expect(adapterFor(provider('gemini'), 'token').constructor.name).toBe('GeminiAdapter');
     expect(adapterFor(provider('openai'), 'token').constructor.name).toBe(
       'OpenAICompatibleAdapter',
+    );
+  });
+
+  it('discovers all supported local OpenAI-compatible runtimes', () => {
+    expect(localDiscoveryCandidates()).toEqual(
+      expect.arrayContaining([
+        ['ollama', 'http://127.0.0.1:11434/v1'],
+        ['lmstudio', 'http://127.0.0.1:1234/v1'],
+        ['llamacpp', 'http://127.0.0.1:8080/v1'],
+        ['localai', 'http://127.0.0.1:8080/v1'],
+        ['vllm', 'http://127.0.0.1:8000/v1'],
+        ['jan', 'http://127.0.0.1:1337/v1'],
+      ]),
     );
   });
 });

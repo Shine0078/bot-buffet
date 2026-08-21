@@ -389,15 +389,19 @@ export interface LocalDiscoveryResult {
   reachable: boolean;
   models: string[];
 }
+
+export const localDiscoveryCandidates = (): ReadonlyArray<readonly [ProviderKind, string]> => [
+  ['ollama', 'http://127.0.0.1:11434/v1'],
+  ['lmstudio', 'http://127.0.0.1:1234/v1'],
+  ['localai', 'http://127.0.0.1:8080/v1'],
+  ['llamacpp', 'http://127.0.0.1:8080/v1'],
+  ['vllm', 'http://127.0.0.1:8000/v1'],
+  ['jan', 'http://127.0.0.1:1337/v1'],
+];
+
 export async function discoverLocalEndpoints(): Promise<LocalDiscoveryResult[]> {
-  const candidates: Array<[ProviderKind, string]> = [
-    ['ollama', 'http://127.0.0.1:11434/v1'],
-    ['lmstudio', 'http://127.0.0.1:1234/v1'],
-    ['localai', 'http://127.0.0.1:8080/v1'],
-    ['llamacpp', 'http://127.0.0.1:8080/v1'],
-  ];
   return Promise.all(
-    candidates.map(async ([providerKind, endpoint]) => {
+    localDiscoveryCandidates().map(async ([providerKind, endpoint]) => {
       const provider: ModelProvider = {
         id: 'discovery',
         kind: 'model-provider',
