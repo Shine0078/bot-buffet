@@ -44,6 +44,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Office bootstrap now supplies scoped files, memory, evaluation datasets, and registered tools to the table views; agent desks expose keyboard activation and accessible labels with regression coverage.
 - Agent profiles now support authenticated, versioned `PATCH /api/v1/agents/:id` updates with bounded model/tool/path/resource settings, compare-and-swap stale-write rejection, immutable approval/verification/memory policy subdocuments, bounded change history, and tamper-evident audit events containing only versions and changed field names.
 - Shared response/event redaction now preserves operational token limits and usage counters while continuing to redact credential-shaped keys and values.
+- Schedule and webhook enable/disable routes now require a compare-and-swap `version` in the request body, so concurrent or replayed toggles cannot silently overwrite newer state.
 
 ## Evidence
 

@@ -1770,14 +1770,21 @@ export function createApi(deps: ApiDeps) {
           'write',
           'schedule',
         );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 1)
+          throw new Error('schedule_version_required');
         return send(
           res,
           200,
-          await deps.store.put({
-            ...schedule,
-            enabled: scheduleMatch[2] === 'enable',
-            version: schedule.version,
-          } as Schedule),
+          await deps.store.putIfVersion(
+            {
+              ...schedule,
+              enabled: scheduleMatch[2] === 'enable',
+              version: schedule.version,
+            } as Schedule,
+            expectedVersion,
+          ),
         );
       }
       if (path === '/api/v1/webhooks' && req.method === 'GET')
@@ -1820,14 +1827,21 @@ export function createApi(deps: ApiDeps) {
           'admin',
           'webhook',
         );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 1)
+          throw new Error('webhook_version_required');
         return send(
           res,
           200,
-          await deps.store.put({
-            ...webhook,
-            enabled: webhookMatch[2] === 'enable',
-            version: webhook.version,
-          } as Webhook),
+          await deps.store.putIfVersion(
+            {
+              ...webhook,
+              enabled: webhookMatch[2] === 'enable',
+              version: webhook.version,
+            } as Webhook,
+            expectedVersion,
+          ),
         );
       }
       if (path === '/api/v1/files' && req.method === 'GET') {

@@ -288,6 +288,64 @@ describe('API boundary controls', () => {
       assigneeAgentId: agent.id,
       status: 'ready',
     });
+    const scheduleResponse = await fetch(`${base}/api/v1/schedules`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, taskId: task.id, cron: '0 * * * *' }),
+    });
+    expect(scheduleResponse.status).toBe(201);
+    const schedule = (await scheduleResponse.json()) as { id: string; version: number };
+    const enabledScheduleResponse = await fetch(`${base}/api/v1/schedules/${schedule.id}/enable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: schedule.version }),
+    });
+    expect(enabledScheduleResponse.status).toBe(200);
+    expect(await enabledScheduleResponse.json()).toMatchObject({
+      enabled: true,
+      version: schedule.version + 1,
+    });
+    const staleScheduleResponse = await fetch(`${base}/api/v1/schedules/${schedule.id}/disable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: schedule.version }),
+    });
+    expect(staleScheduleResponse.status).toBe(400);
+    const secret = 'w'.repeat(32);
+    const webhookResponse = await fetch(`${base}/api/v1/webhooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        url: 'https://hooks.example.test/events',
+        secret,
+        events: ['run.completed'],
+      }),
+    });
+    expect(webhookResponse.status).toBe(201);
+    const webhook = (await webhookResponse.json()) as {
+      id: string;
+      version: number;
+      secretFingerprint: string;
+    };
+    expect(webhook.secretFingerprint).toBeTruthy();
+    expect(JSON.stringify(webhook)).not.toContain(secret);
+    const enabledWebhookResponse = await fetch(`${base}/api/v1/webhooks/${webhook.id}/enable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: webhook.version }),
+    });
+    expect(enabledWebhookResponse.status).toBe(200);
+    expect(await enabledWebhookResponse.json()).toMatchObject({
+      enabled: true,
+      version: webhook.version + 1,
+    });
+    const staleWebhookResponse = await fetch(`${base}/api/v1/webhooks/${webhook.id}/disable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: webhook.version }),
+    });
+    expect(staleWebhookResponse.status).toBe(400);
     const transitioned = await fetch(`${base}/api/v1/tasks/${task.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
