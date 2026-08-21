@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.data/
+.data-*/
+.env
+.env.*
+!.env.example
+coverage/
+*.log
+sbom.cyclonedx.json

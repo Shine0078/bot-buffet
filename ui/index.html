@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Bot Buffet agent operations workspace" />
+    <title>Bot Buffet — Operations Office</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">◈</span><span>Bot Buffet</span
+        ><small>Operations Office</small>
+      </div>
+      <label class="select-label"
+        >Workspace
+        <select id="workspaceSelect" aria-label="Workspace"></select
+      ></label>
+      <label class="select-label"
+        >Project
+        <select id="projectSelect" aria-label="Project"></select
+      ></label>
+      <span class="top-spacer"></span><span id="providerHealth" class="status-pill">Local-only</span
+      ><span id="budget" class="budget">$0.00</span>
+      <button id="globalStop" class="danger" type="button">■ Stop all</button>
+    </header>
+    <div class="shell">
+      <nav class="sidebar" aria-label="Primary navigation">
+        <button class="nav-item active" data-view="office">▦ <span>Office floor</span></button>
+        <button class="nav-item" data-view="tasks">✓ <span>Tasks</span></button>
+        <button class="nav-item" data-view="runs">◉ <span>Runs</span></button>
+        <button class="nav-item" data-view="files">▤ <span>Files</span></button>
+        <button class="nav-item" data-view="memory">✦ <span>Memory</span></button>
+        <button class="nav-item" data-view="models">◎ <span>Models</span></button>
+        <button class="nav-item" data-view="tools">⌘ <span>Tools</span></button>
+        <button class="nav-item" data-view="evaluations">◌ <span>Evaluations</span></button>
+        <button class="nav-item" data-view="audit">≡ <span>Audit log</span></button>
+        <button class="nav-item" data-view="settings">⚙ <span>Settings</span></button>
+        <div class="sidebar-footer">
+          <span class="dot online"></span><span>Control plane online</span
+          ><small>v0.1.0 · local</small>
+        </div>
+      </nav>
+      <main id="main" class="main" tabindex="-1">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">CONTROL DESK</p>
+            <h1 id="viewTitle">Office floor</h1>
+            <p id="viewSubtitle">A calm view of agents, work, and evidence.</p>
+          </div>
+          <div class="heading-actions">
+            <button id="refresh" class="secondary">↻ Refresh</button
+            ><button id="newProject" class="primary">＋ New project</button>
+          </div>
+        </div>
+        <section id="officeView" class="view" aria-labelledby="viewTitle">
+          <div class="office-grid">
+            <article class="room control-room">
+              <div class="room-label">CONTROL DESK <span class="live-dot">LIVE</span></div>
+              <div class="control-stats">
+                <div><strong id="agentCount">0</strong><span>agents</span></div>
+                <div><strong id="activeCount">0</strong><span>active runs</span></div>
+                <div><strong id="approvalCount">0</strong><span>approvals</span></div>
+              </div>
+              <div class="control-note">
+                Every action is policy-checked, sandboxed, and recorded.
+              </div>
+            </article>
+            <article class="room whiteboard">
+              <div class="room-label">WHITEBOARD <span>ACCEPTANCE</span></div>
+              <div id="criteria" class="criteria"></div>
+            </article>
+            <div id="agentDesks" class="desk-area" aria-live="polite"></div>
+          </div>
+          <div class="lower-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Live activity</h2>
+                <button class="text-button" id="viewAllRuns">View all</button>
+              </div>
+              <div id="activity" class="timeline"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <h2>Approvals</h2>
+                <span class="muted">Human-in-the-loop</span>
+              </div>
+              <div id="approvals" class="approvals"></div>
+            </section>
+          </div>
+        </section>
+        <section id="tableView" class="view hidden" aria-live="polite">
+          <div class="panel">
+            <div class="panel-heading">
+              <h2 id="tableTitle">Items</h2>
+              <button id="tableAction" class="primary">＋ Add</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead id="tableHead"></thead>
+                <tbody id="tableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+      <aside class="inspector" aria-label="Selected agent details">
+        <div class="inspector-heading">
+          <span>INSPECTOR</span><button id="closeInspector" aria-label="Close inspector">×</button>
+        </div>
+        <div id="inspectorContent" class="inspector-content">
+          <div class="empty-state">
+            <span class="empty-icon">⌁</span>
+            <h2>Select an agent</h2>
+            <p>Choose a desk to inspect status, model, permissions, and recent actions.</p>
+          </div>
+        </div>
+        <div class="chat">
+          <div class="chat-heading">Direct chat <span class="muted">selected agent</span></div>
+          <div id="chatMessages" class="chat-messages">
+            <p class="muted">Messages stay scoped to this project.</p>
+          </div>
+          <form id="chatForm">
+            <label class="sr-only" for="chatInput">Message</label
+            ><input
+              id="chatInput"
+              placeholder="Ask about the current work…"
+              autocomplete="off"
+            /><button aria-label="Send message">↑</button>
+          </form>
+        </div>
+      </aside>
+    </div>
+    <footer class="mobile-nav" aria-label="Mobile navigation">
+      <button data-view="office">Office</button><button data-view="tasks">Tasks</button
+      ><button data-view="runs">Runs</button><button data-view="models">Models</button
+      ><button data-view="audit">Audit</button>
+    </footer>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

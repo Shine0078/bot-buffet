@@ -1,0 +1,35 @@
+{
+  "name": "bot-buffet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bot Buffet: a model-agnostic, user-controlled AI agent control plane.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --ext .ts",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "audit": "npm audit --audit-level=high",
+    "security:scan": "node scripts/security-scan.mjs",
+    "sbom": "node scripts/sbom.mjs",
+    "verify": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}
