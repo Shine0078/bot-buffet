@@ -13,6 +13,7 @@ import {
   Environment,
   EvaluationCase,
   EvaluationDataset,
+  EvaluationRun,
   MemoryItem,
   MCPServer,
   Model,
@@ -39,6 +40,7 @@ import { AuthenticationError, authenticateRequest } from './auth.js';
 import { ToolRegistry } from './tools.js';
 import { PkceSessionStore } from './oauth.js';
 import { fetchPinned } from './egress.js';
+import { evaluateCases } from './evaluations.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1054,6 +1056,63 @@ export function createApi(deps: ApiDeps) {
             version: dataset.version,
           } as EvaluationDataset);
         return send(res, 201, evaluationCase);
+      }
+      if (path === '/api/v1/evaluations/runs' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(
+            actorId,
+            await deps.store.list<EvaluationRun>((x) => x.kind === 'evaluation-run'),
+          ),
+        );
+      if (path === '/api/v1/evaluations/runs' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const dataset = await required(
+          actorId,
+          await deps.store.get<EvaluationDataset>(String(body.datasetId)),
+          'read',
+          'evaluation-dataset',
+        );
+        const cases = await visible(
+          actorId,
+          await deps.store.list<EvaluationCase>(
+            (x) => x.kind === 'evaluation-case' && x.datasetId === dataset.id,
+          ),
+        );
+        if (body.modelId)
+          await required(
+            actorId,
+            await deps.store.get<Model>(String(body.modelId)),
+            'read',
+            'model',
+          );
+        if (body.agentId)
+          await required(
+            actorId,
+            await deps.store.get<Agent>(String(body.agentId)),
+            'read',
+            'agent',
+          );
+        const outputs =
+          body.outputs && typeof body.outputs === 'object' && !Array.isArray(body.outputs)
+            ? (body.outputs as Record<string, unknown>)
+            : {};
+        const startedAt = now();
+        const evaluationRun = entity({
+          kind: 'evaluation-run',
+          ownerId: actorId,
+          scope: dataset.scope,
+          datasetId: dataset.id,
+          modelId: body.modelId ? String(body.modelId) : undefined,
+          agentId: body.agentId ? String(body.agentId) : undefined,
+          status: 'completed' as const,
+          results: evaluateCases(cases, outputs),
+          startedAt,
+          finishedAt: now(),
+        }) as EvaluationRun;
+        await deps.store.insert(evaluationRun);
+        return send(res, 201, evaluationRun);
       }
       if (path === '/api/v1/observability/summary' && req.method === 'GET') {
         const runs = await visible(

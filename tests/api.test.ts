@@ -203,6 +203,45 @@ describe('API boundary controls', () => {
     expect((await fetch(callback)).status).toBe(400);
     expect((await fetch(callback)).status).toBe(400);
   });
+  it('runs scoped deterministic evaluations and persists evidence without outputs', async () => {
+    const base = await start();
+    const datasetResponse = await fetch(`${base}/api/v1/evaluations/datasets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Smoke evaluations' }),
+    });
+    expect(datasetResponse.status).toBe(201);
+    const dataset = (await datasetResponse.json()) as { id: string };
+    const caseResponse = await fetch(`${base}/api/v1/evaluations/cases`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        datasetId: dataset.id,
+        name: 'Exact response',
+        expected: { answer: 'ok' },
+        graders: ['exact-match'],
+      }),
+    });
+    expect(caseResponse.status).toBe(201);
+    const evaluationCase = (await caseResponse.json()) as { id: string };
+    const runResponse = await fetch(`${base}/api/v1/evaluations/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        datasetId: dataset.id,
+        outputs: { [evaluationCase.id]: { answer: 'ok' } },
+      }),
+    });
+    expect(runResponse.status).toBe(201);
+    const run = (await runResponse.json()) as {
+      status: string;
+      results: Array<{ passed: boolean; evidence: string[] }>;
+    };
+    expect(run.status).toBe('completed');
+    expect(run.results[0]).toMatchObject({ passed: true });
+    expect(JSON.stringify(run)).not.toContain('apiKey');
+    expect((await fetch(`${base}/api/v1/evaluations/runs`)).status).toBe(200);
+  });
   it('replays a run create response for the same idempotency key', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));
     const store = createStore(dir);
