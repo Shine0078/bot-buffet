@@ -15,6 +15,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Research source intake, evaluation dataset/case registration, run replay/export, and aggregated observability summary endpoints.
 - Research foundation captured in `docs/research-foundation.md`, including inspected sources and explicit inaccessible-source owner actions.
 - Portable backup/restore scripts verify SHA-256 manifests and restore into a separate target directory by default.
+- Multi-agent coordination helpers provide structured handoff packets, evidence comparison, and bounded parallel execution.
 
 ## Evidence
 
