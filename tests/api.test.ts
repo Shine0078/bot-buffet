@@ -183,12 +183,27 @@ describe('API boundary controls', () => {
       }),
     });
     expect(taskResponse.status).toBe(201);
-    await expect(taskResponse.json()).resolves.toMatchObject({
+    const task = (await taskResponse.json()) as { id: string; version: number };
+    expect(task).toMatchObject({
       kind: 'task',
       projectId: project.id,
       assigneeAgentId: agent.id,
       status: 'ready',
     });
+    const transitioned = await fetch(`${base}/api/v1/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: task.version, status: 'running' }),
+    });
+    expect(transitioned.status).toBe(200);
+    const running = (await transitioned.json()) as { version: number; status: string };
+    expect(running).toMatchObject({ status: 'running', version: task.version + 1 });
+    const stale = await fetch(`${base}/api/v1/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: task.version, status: 'done' }),
+    });
+    expect(stale.status).toBe(400);
     expect(await (await fetch(`${base}/api/v1/agents`)).json()).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: agent.id })]),
     );

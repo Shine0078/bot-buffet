@@ -743,6 +743,79 @@ export function createApi(deps: ApiDeps) {
         await deps.store.insert(task);
         return send(res, 201, task);
       }
+      const taskMatch = path.match(/^\/api\/v1\/tasks\/([^/]+)$/);
+      if (taskMatch && req.method === 'PATCH') {
+        const task = await required(
+          actorId,
+          await deps.store.get<Task>(taskMatch[1]!),
+          'write',
+          'task',
+        );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 1)
+          throw new Error('task_version_required');
+        const nextStatus = body.status === undefined ? task.status : String(body.status);
+        const allowed: Record<Task['status'], Task['status'][]> = {
+          backlog: ['backlog', 'ready', 'cancelled'],
+          ready: ['ready', 'running', 'blocked', 'cancelled'],
+          running: ['running', 'done', 'blocked', 'cancelled'],
+          blocked: ['blocked', 'ready', 'cancelled'],
+          done: ['done'],
+          cancelled: ['cancelled'],
+        };
+        if (
+          !Object.hasOwn(allowed, nextStatus) ||
+          !allowed[task.status].includes(nextStatus as Task['status'])
+        )
+          throw new Error('task_transition_invalid');
+        let assigneeAgentId = task.assigneeAgentId;
+        if (Object.hasOwn(body, 'assigneeAgentId')) {
+          assigneeAgentId = body.assigneeAgentId ? String(body.assigneeAgentId) : undefined;
+          if (assigneeAgentId) {
+            const assignee = await required(
+              actorId,
+              await deps.store.get<Agent>(assigneeAgentId),
+              'write',
+              'agent',
+            );
+            if (assignee.projectId !== task.projectId)
+              throw new Error('task_assignee_scope_mismatch');
+          }
+        }
+        const saved = await deps.store.putIfVersion(
+          {
+            ...task,
+            status: nextStatus as Task['status'],
+            title: body.title === undefined ? task.title : String(body.title).slice(0, 500),
+            description:
+              body.description === undefined
+                ? task.description
+                : String(body.description).slice(0, 20_000),
+            acceptanceCriteria: Array.isArray(body.acceptanceCriteria)
+              ? body.acceptanceCriteria
+                  .filter((item): item is string => typeof item === 'string')
+                  .map((item) => item.slice(0, 2000))
+                  .slice(0, 64)
+              : task.acceptanceCriteria,
+            priority:
+              body.priority === undefined
+                ? task.priority
+                : Number.isFinite(Number(body.priority))
+                  ? Math.min(100, Math.max(-100, Number(body.priority)))
+                  : task.priority,
+            labels: Array.isArray(body.labels)
+              ? body.labels
+                  .filter((item): item is string => typeof item === 'string')
+                  .map((item) => item.slice(0, 100))
+                  .slice(0, 32)
+              : task.labels,
+            ...(assigneeAgentId ? { assigneeAgentId } : { assigneeAgentId: undefined }),
+          } as Task,
+          expectedVersion,
+        );
+        return send(res, 200, saved);
+      }
       if (path === '/api/v1/providers' && req.method === 'GET')
         return send(
           res,
