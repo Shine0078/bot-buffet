@@ -12,10 +12,11 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Unit/security/integration tests, CI, container, SBOM, and operations documents.
 - Encrypted credential vault, provider test/revoke endpoints, scoped memory/plugin/file APIs.
 - Budgeted context assembler with freshness/relevance ordering, compaction, redaction, and source-citation carry-through.
+- Research source intake, evaluation dataset/case registration, run replay/export, and aggregated observability summary endpoints.
 
 ## Evidence
 
-Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 15-test suite exercises redaction, path traversal, shell controls, endpoint SSRF checks, encrypted credential persistence, context compaction/citations, audit integrity, locks, offline routing, tool contracts, and checkpoint completion. Live smoke checks also verified health/readiness, UI delivery, a completed run, production bearer auth, provider credential redaction, scoped memory, and plugin enablement.
+Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 15-test suite exercises redaction, path traversal, shell controls, endpoint SSRF checks, encrypted credential persistence, context compaction/citations, audit integrity, locks, offline routing, tool contracts, and checkpoint completion. Live smoke checks also verified health/readiness, UI delivery, a completed run, production bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration, project export, and observability summary.
 
 ## External owner gates (not claimable locally)
 

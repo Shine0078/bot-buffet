@@ -22,6 +22,7 @@ Open <http://127.0.0.1:8787>. The first run creates a local workspace, a project
 - Encrypted local credential vault with fingerprints-only metadata, provider health testing, and revocation.
 - Typed tool registry with schemas, policy decisions, path confinement, protected paths, command controls, output caps, and redaction.
 - Scoped memory, plugin lifecycle, credential, and file registry API surfaces.
+- Research-source intake (visible pending state), evaluation datasets/cases, run replay/export, and observability summaries.
 - Supervised orchestrator loop with approvals, deterministic evidence checks, usage/cost counters, retries-by-resume, and SSE events.
 - Accessible responsive Office UI with a list/table alternative, reduced-motion mode, keyboard focus, and global stop.
 - Health/readiness APIs, Docker hardening, CI checks, SBOM generation, and operational documentation.

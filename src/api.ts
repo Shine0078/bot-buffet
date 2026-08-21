@@ -5,7 +5,10 @@ import { JsonStateStore } from './store.js';
 import {
   Agent,
   ApprovalRequest,
+  Checkpoint,
   Credential,
+  EvaluationCase,
+  EvaluationDataset,
   MemoryItem,
   Model,
   ModelProvider,
@@ -13,6 +16,7 @@ import {
   Project,
   ProjectFile,
   Run,
+  Source,
   Task,
   Workspace,
   entity,
@@ -114,6 +118,7 @@ export function createApi(deps: ApiDeps) {
             (x) => x.kind === 'approval-request' && (x as ApprovalRequest).status === 'pending',
           ),
           plugins: await deps.store.list<Plugin>((x) => x.kind === 'plugin'),
+          audit: await deps.store.list((x) => x.kind === 'audit-event'),
         });
       if (path === '/api/v1/projects' && req.method === 'GET')
         return send(res, 200, await deps.store.list<Project>((x) => x.kind === 'project'));
@@ -352,6 +357,107 @@ export function createApi(deps: ApiDeps) {
             (x) => x.kind === 'file' && (!projectId || (x as ProjectFile).projectId === projectId),
           ),
         );
+      }
+      if (path === '/api/v1/sources' && req.method === 'GET')
+        return send(res, 200, await deps.store.list<Source>((x) => x.kind === 'source'));
+      if (path === '/api/v1/sources' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const uri = String(body.uri ?? '');
+        assertSafeEndpoint(uri);
+        const source = entity({
+          kind: 'source',
+          ownerId: actorId,
+          scope: String(body.projectId ?? 'project_local'),
+          projectId: String(body.projectId ?? 'project_local'),
+          uri,
+          title: body.title ? String(body.title) : undefined,
+          status: 'pending' as const,
+          quality: 'unknown' as const,
+        }) as Source;
+        await deps.store.insert(source);
+        return send(res, 201, source);
+      }
+      if (path === '/api/v1/evaluations/datasets' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await deps.store.list<EvaluationDataset>((x) => x.kind === 'evaluation-dataset'),
+        );
+      if (path === '/api/v1/evaluations/datasets' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const dataset = entity({
+          kind: 'evaluation-dataset',
+          ownerId: actorId,
+          scope: String(body.scope ?? 'workspace_local'),
+          name: String(body.name ?? 'Untitled dataset'),
+          description: String(body.description ?? ''),
+          caseIds: [],
+          versionLabel: '1.0.0',
+        }) as EvaluationDataset;
+        await deps.store.insert(dataset);
+        return send(res, 201, dataset);
+      }
+      if (path === '/api/v1/evaluations/cases' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const evaluationCase = entity({
+          kind: 'evaluation-case',
+          ownerId: actorId,
+          scope: String(body.datasetId ?? 'dataset_local'),
+          datasetId: String(body.datasetId ?? 'dataset_local'),
+          name: String(body.name ?? 'Case'),
+          input: body.input,
+          expected: body.expected,
+          graders: Array.isArray(body.graders) ? body.graders.map(String) : [],
+          tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
+        }) as EvaluationCase;
+        await deps.store.insert(evaluationCase);
+        const dataset = await deps.store.get<EvaluationDataset>(evaluationCase.datasetId);
+        if (dataset)
+          await deps.store.put({
+            ...dataset,
+            caseIds: [...dataset.caseIds, evaluationCase.id],
+            version: dataset.version,
+          } as EvaluationDataset);
+        return send(res, 201, evaluationCase);
+      }
+      if (path === '/api/v1/observability/summary' && req.method === 'GET') {
+        const runs = await deps.store.list<Run>((x) => x.kind === 'run');
+        return send(res, 200, {
+          runs: runs.length,
+          active: runs.filter((run) =>
+            ['queued', 'running', 'waiting_approval', 'paused', 'retrying'].includes(run.status),
+          ).length,
+          completed: runs.filter((run) => run.status === 'completed').length,
+          failed: runs.filter((run) => ['failed', 'blocked', 'cancelled'].includes(run.status))
+            .length,
+          tokensIn: runs.reduce((sum, run) => sum + run.tokensIn, 0),
+          tokensOut: runs.reduce((sum, run) => sum + run.tokensOut, 0),
+          costCents: runs.reduce((sum, run) => sum + run.costCents, 0),
+          latencyMs: runs.reduce((sum, run) => sum + run.latencyMs, 0),
+          auditValid: (await deps.store.verifyAuditChain()).valid,
+        });
+      }
+      const replayMatch = path.match(/^\/api\/v1\/runs\/([^/]+)\/replay$/);
+      if (replayMatch && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await deps.store.list<Checkpoint>(
+            (x) => x.kind === 'checkpoint' && (x as Checkpoint).runId === replayMatch[1]!,
+          ),
+        );
+      const exportMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/export$/);
+      if (exportMatch && req.method === 'GET') {
+        const snapshot = await deps.store.snapshot();
+        const scoped = Object.values(snapshot.entities).filter(
+          (item) => item.scope === exportMatch[1] || item.id === exportMatch[1],
+        );
+        return send(res, 200, {
+          schemaVersion: snapshot.schemaVersion,
+          projectId: exportMatch[1],
+          exportedAt: now(),
+          entities: scoped,
+        });
       }
       if (path === '/api/v1/runs' && req.method === 'POST') {
         const body = await parseBody(req);
