@@ -188,6 +188,10 @@ export interface ModelProvider extends BaseEntity {
   health: 'unknown' | 'healthy' | 'degraded' | 'offline';
   capabilities: CapabilitySet;
   oauth?: OAuthProviderConfig;
+  credentialSource?: {
+    authType: 'env';
+    environmentVariable: string;
+  };
 }
 export interface OAuthProviderConfig {
   authorizationEndpoint: string;

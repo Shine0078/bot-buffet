@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adapterFor, localDiscoveryCandidates } from '../src/providers.js';
+import { adapterFor, localDiscoveryCandidates, resolveProviderToken } from '../src/providers.js';
 import { ModelProvider, now } from '../src/types.js';
 
 const provider = (providerKind: ModelProvider['providerKind']): ModelProvider => ({
@@ -31,6 +31,37 @@ const provider = (providerKind: ModelProvider['providerKind']): ModelProvider =>
 });
 
 describe('provider adapter normalization', () => {
+  it('resolves environment credentials at use time without falling back to vault data', () => {
+    const previous = process.env.BOT_BUFFET_PROVIDER_TEST_TOKEN;
+    process.env.BOT_BUFFET_PROVIDER_TEST_TOKEN = 'runtime-secret';
+    try {
+      expect(
+        resolveProviderToken(
+          {
+            ...provider('openai'),
+            credentialSource: {
+              authType: 'env',
+              environmentVariable: 'BOT_BUFFET_PROVIDER_TEST_TOKEN',
+            },
+          },
+          'stale-vault-secret',
+        ),
+      ).toBe('runtime-secret');
+      expect(() =>
+        resolveProviderToken(
+          {
+            ...provider('openai'),
+            credentialSource: { authType: 'env', environmentVariable: 'NOT-VALID' },
+          },
+          'vault-secret',
+        ),
+      ).toThrow('provider_environment_variable_invalid');
+    } finally {
+      if (previous === undefined) delete process.env.BOT_BUFFET_PROVIDER_TEST_TOKEN;
+      else process.env.BOT_BUFFET_PROVIDER_TEST_TOKEN = previous;
+    }
+  });
+
   it('uses provider-specific wire adapters when semantics differ', () => {
     expect(adapterFor(provider('anthropic'), 'token').constructor.name).toBe('AnthropicAdapter');
     expect(adapterFor(provider('gemini'), 'token').constructor.name).toBe('GeminiAdapter');

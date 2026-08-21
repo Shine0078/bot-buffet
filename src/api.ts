@@ -32,7 +32,7 @@ import {
   now,
 } from './types.js';
 import { Orchestrator } from './orchestrator.js';
-import { adapterFor, defaultCapabilities } from './providers.js';
+import { adapterFor, defaultCapabilities, resolveProviderToken } from './providers.js';
 import { assertSafeEndpoint, assertWorkspacePath, redactSecrets, fingerprint } from './security.js';
 import { CredentialVault } from './secrets.js';
 import { AuthorizationService } from './authorization.js';
@@ -503,6 +503,13 @@ export function createApi(deps: ApiDeps) {
         const providerKind = String(
           body.providerKind ?? 'openai-compatible',
         ) as ModelProvider['providerKind'];
+        const authType = String(body.authType ?? 'api-key');
+        if (!['api-key', 'env'].includes(authType)) throw new Error('provider_auth_type_invalid');
+        const environmentVariable = String(body.environmentVariable ?? '');
+        if (authType === 'env' && !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(environmentVariable))
+          throw new Error('provider_environment_variable_invalid');
+        if (authType === 'env' && body.token !== undefined)
+          throw new Error('provider_environment_secret_must_not_be_submitted');
         assertSafeEndpoint(
           String(body.endpoint ?? 'http://127.0.0.1:11434/v1'),
           ['ollama', 'lmstudio', 'llamacpp', 'localai', 'vllm', 'jan'].includes(providerKind),
@@ -516,13 +523,50 @@ export function createApi(deps: ApiDeps) {
           endpoint: String(body.endpoint ?? 'http://127.0.0.1:11434/v1'),
           credentialId: undefined,
           oauth: parseOAuthConfig(body.oauth),
+          ...(authType === 'env'
+            ? { credentialSource: { authType: 'env' as const, environmentVariable } }
+            : {}),
           enabled: true,
           health: 'unknown',
           capabilities: defaultCapabilities(),
         }) as ModelProvider;
         await deps.store.insert(provider);
         deps.registerProvider?.(provider);
-        if (body.token) {
+        if (authType === 'env') {
+          const credential = entity({
+            kind: 'credential',
+            ownerId: actorId,
+            scope: provider.scope,
+            metadata: {
+              providerId: provider.id,
+              label: `${provider.name} environment credential`,
+              authType: 'env' as const,
+              scopes: [],
+              disabled: false,
+              fingerprint: 'environment-reference',
+            },
+            secretRef: `env:${environmentVariable}`,
+          }) as Credential;
+          await deps.store.insert(credential);
+          provider = await deps.store.put({
+            ...provider,
+            credentialId: credential.id,
+            version: provider.version,
+          } as ModelProvider);
+          deps.registerProvider?.(provider);
+          await deps.store.audit({
+            kind: 'audit-event',
+            ownerId: actorId,
+            scope: provider.scope,
+            actorId,
+            action: 'credential.connected',
+            resourceType: 'model-provider',
+            resourceId: provider.id,
+            risk: 'critical',
+            decision: 'executed',
+            metadata: { authType: 'env', environmentVariable },
+          });
+        } else if (body.token) {
           await deps.vault.set(provider.id, String(body.token));
           const credential = entity({
             kind: 'credential',
@@ -756,7 +800,10 @@ export function createApi(deps: ApiDeps) {
           'write',
           'model-provider',
         );
-        const health = await adapterFor(provider, deps.vault.getSync(provider.id)).health();
+        const health = await adapterFor(
+          provider,
+          resolveProviderToken(provider, deps.vault.getSync(provider.id)),
+        ).health();
         const saved = await deps.store.put({
           ...provider,
           health,

@@ -66,6 +66,20 @@ export interface ModelAdapter {
   listModels(): Promise<string[]>;
 }
 
+const ENVIRONMENT_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
+
+/** Resolve a configured provider credential without persisting environment secrets. */
+export const resolveProviderToken = (
+  provider: ModelProvider,
+  vaultToken: string | undefined,
+): string | undefined => {
+  const source = provider.credentialSource;
+  if (!source) return vaultToken;
+  if (!ENVIRONMENT_VARIABLE.test(source.environmentVariable))
+    throw new Error('provider_environment_variable_invalid');
+  return process.env[source.environmentVariable];
+};
+
 const singleResponseStream = async function* (
   response: Promise<ModelResponse>,
 ): AsyncGenerator<ModelStreamChunk> {

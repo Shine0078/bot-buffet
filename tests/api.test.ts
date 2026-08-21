@@ -41,6 +41,7 @@ afterEach(async () => {
   delete process.env.BOT_BUFFET_OIDC_ISSUER;
   delete process.env.BOT_BUFFET_OIDC_AUDIENCE;
   delete process.env.BOT_BUFFET_OIDC_JWKS_JSON;
+  delete process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN;
 });
 
 async function start(auth = false) {
@@ -147,6 +148,43 @@ describe('API boundary controls', () => {
       method: 'DELETE',
     });
     expect(deletedResponse.status).toBe(204);
+  });
+  it('records an environment credential reference without persisting or accepting its secret', async () => {
+    process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN = 'env-secret-that-must-not-cross-the-api';
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Environment Provider',
+        providerKind: 'openai',
+        endpoint: 'https://api.example.test/v1',
+        authType: 'env',
+        environmentVariable: 'BOT_BUFFET_TEST_PROVIDER_TOKEN',
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const payload = (await createdResponse.json()) as {
+      credentialSource?: { authType: string; environmentVariable: string };
+    };
+    expect(payload.credentialSource).toEqual({
+      authType: 'env',
+      environmentVariable: 'BOT_BUFFET_TEST_PROVIDER_TOKEN',
+    });
+    expect(JSON.stringify(payload)).not.toContain('env-secret-that-must-not-cross-the-api');
+    const rejected = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Invalid Environment Provider',
+        providerKind: 'openai',
+        endpoint: 'https://api.example.test/v1',
+        authType: 'env',
+        environmentVariable: 'BOT_BUFFET_TEST_PROVIDER_TOKEN',
+        token: 'submitted-secret',
+      }),
+    });
+    expect(rejected.status).toBe(400);
   });
   it('starts an actor-bound OAuth PKCE flow without returning the verifier', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));
