@@ -9,6 +9,7 @@ import {
   BaseEntity,
   Checkpoint,
   Credential,
+  Entity,
   Environment,
   EvaluationCase,
   EvaluationDataset,
@@ -20,8 +21,10 @@ import {
   Project,
   ProjectFile,
   Run,
+  Schedule,
   Source,
   Task,
+  Webhook,
   Workspace,
   entity,
   now,
@@ -298,6 +301,48 @@ export function createApi(deps: ApiDeps) {
           version: project.version,
         } as Project);
         return send(res, 200, saved);
+      }
+      if (projectMatch && req.method === 'DELETE') {
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(projectMatch[1]!),
+          'admin',
+          'project',
+        );
+        const activeRuns = await deps.store.list<Run>(
+          (x) =>
+            x.kind === 'run' &&
+            (x as Run).projectId === project.id &&
+            ['queued', 'running', 'waiting_approval', 'paused', 'retrying'].includes(
+              (x as Run).status,
+            ),
+        );
+        if (activeRuns.length) throw new Error('project_delete_active_runs');
+        const children = await deps.store.list<Entity>(
+          (x) =>
+            x.id === project.id ||
+            x.scope === project.id ||
+            (x as BaseEntity & { projectId?: string }).projectId === project.id,
+        );
+        for (const child of children)
+          if (child.kind !== 'audit-event') {
+            if (child.kind === 'credential') await deps.vault.revoke(child.id);
+            if (child.kind === 'webhook') await deps.vault.revoke(`webhook:${child.id}`);
+            await deps.store.delete(child.id);
+          }
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: project.workspaceId,
+          actorId,
+          action: 'project.deleted',
+          resourceType: 'project',
+          resourceId: project.id,
+          risk: 'critical',
+          decision: 'executed',
+          metadata: { deletedEntityCount: children.length },
+        });
+        return send(res, 204, { deleted: true });
       }
       if (path === '/api/v1/providers' && req.method === 'GET')
         return send(
@@ -652,6 +697,110 @@ export function createApi(deps: ApiDeps) {
           version: serverEntity.version,
         } as MCPServer);
         return send(res, 200, saved);
+      }
+      if (path === '/api/v1/schedules' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Schedule>((x) => x.kind === 'schedule')),
+        );
+      if (path === '/api/v1/schedules' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'write',
+          'project',
+        );
+        const task = await required(
+          actorId,
+          await deps.store.get<Task>(String(body.taskId)),
+          'write',
+          'task',
+        );
+        if (task.projectId !== project.id) throw new Error('schedule_project_mismatch');
+        const cron = String(body.cron ?? '');
+        if (cron.length > 128 || !cron.trim()) throw new Error('schedule_cron_invalid');
+        const schedule = entity({
+          kind: 'schedule',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          cron,
+          taskId: task.id,
+          enabled: false,
+          timezone: String(body.timezone ?? 'UTC'),
+        }) as Schedule;
+        await deps.store.insert(schedule);
+        return send(res, 201, schedule);
+      }
+      const scheduleMatch = path.match(/^\/api\/v1\/schedules\/([^/]+)\/(enable|disable)$/);
+      if (scheduleMatch && req.method === 'POST') {
+        const schedule = await required(
+          actorId,
+          await deps.store.get<Schedule>(scheduleMatch[1]!),
+          'write',
+          'schedule',
+        );
+        return send(
+          res,
+          200,
+          await deps.store.put({
+            ...schedule,
+            enabled: scheduleMatch[2] === 'enable',
+            version: schedule.version,
+          } as Schedule),
+        );
+      }
+      if (path === '/api/v1/webhooks' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Webhook>((x) => x.kind === 'webhook')),
+        );
+      if (path === '/api/v1/webhooks' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'admin',
+          'project',
+        );
+        const url = String(body.url ?? '');
+        assertSafeEndpoint(url);
+        const secret = String(body.secret ?? '');
+        if (secret.length < 32) throw new Error('webhook_secret_required');
+        const webhook = entity({
+          kind: 'webhook',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          url,
+          events: Array.isArray(body.events) ? body.events.map(String).slice(0, 50) : [],
+          secretFingerprint: fingerprint(secret),
+          enabled: false,
+        }) as Webhook;
+        await deps.vault.set(`webhook:${webhook.id}`, secret);
+        await deps.store.insert(webhook);
+        return send(res, 201, webhook);
+      }
+      const webhookMatch = path.match(/^\/api\/v1\/webhooks\/([^/]+)\/(enable|disable)$/);
+      if (webhookMatch && req.method === 'POST') {
+        const webhook = await required(
+          actorId,
+          await deps.store.get<Webhook>(webhookMatch[1]!),
+          'admin',
+          'webhook',
+        );
+        return send(
+          res,
+          200,
+          await deps.store.put({
+            ...webhook,
+            enabled: webhookMatch[2] === 'enable',
+            version: webhook.version,
+          } as Webhook),
+        );
       }
       if (path === '/api/v1/files' && req.method === 'GET') {
         const projectId = url.searchParams.get('projectId');

@@ -61,6 +61,24 @@ describe('API boundary controls', () => {
     const response = await fetch(`${base}/../package.json`);
     expect(response.status).not.toBe(200);
   });
+  it('deletes an inactive project through the scoped lifecycle route', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Disposable' }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as { id: string };
+    const deletedResponse = await fetch(`${base}/api/v1/projects/${created.id}`, {
+      method: 'DELETE',
+    });
+    expect(deletedResponse.status).toBe(204);
+    const listed = await fetch(`${base}/api/v1/projects`);
+    expect(await listed.json()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: created.id })]),
+    );
+  });
   it('keeps plugin updates disabled and supports integrity-pinned rollback/delete', async () => {
     const base = await start();
     const createdResponse = await fetch(`${base}/api/v1/plugins`, {
