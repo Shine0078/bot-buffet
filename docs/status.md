@@ -19,7 +19,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Multi-agent coordination helpers provide structured handoff packets, evidence comparison, and bounded parallel execution.
 - Durable idempotency replay, run time/token/cost guards with model retry backoff, MCP server metadata, integrity-pinned disabled plugin lifecycle operations, security headers, and API/plugin regression coverage.
 - Safe project deletion with child credential revocation, disabled schedule bindings, and HTTPS/secret-protected webhook metadata routes.
-- CI now pins third-party action SHAs and emits an unsigned commit/artifact provenance manifest; signed OIDC attestation remains a release-owner gate. The latest provenance run covers 36 artifacts at commit `c7afedbb43d8fbd269fc2afb51ba950c0aaf2770`.
+- CI now pins third-party action SHAs and emits an unsigned commit/artifact provenance manifest; signed OIDC attestation remains a release-owner gate. The recorded provenance evidence covers 36 artifacts at commit `c7afedbb43d8fbd269fc2afb51ba950c0aaf2770`; a final local provenance rerun also passed at the docs-only follow-up revision.
 - Anthropic and Gemini now use native provider adapters instead of being routed through the OpenAI-compatible wire format.
 - Cohere now uses a native v2 chat/model adapter with normalized content, tool calls, usage, health, and model discovery; Azure OpenAI uses deployment-scoped `api-key` requests; and Bedrock uses SigV4-signed Converse requests with region-aware model probes.
 - The production entrypoint now uses the same provider adapter factory as the API/control-plane registry, so native adapter selection is effective at runtime.
