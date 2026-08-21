@@ -18,12 +18,13 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Multi-agent coordination helpers provide structured handoff packets, evidence comparison, and bounded parallel execution.
 - Durable idempotency replay, run time/token/cost guards with model retry backoff, MCP server metadata, integrity-pinned disabled plugin lifecycle operations, security headers, and API/plugin regression coverage.
 - Safe project deletion with child credential revocation, disabled schedule bindings, and HTTPS/secret-protected webhook metadata routes.
+- CI now pins third-party action SHAs and emits an unsigned commit/artifact provenance manifest; signed OIDC attestation remains a release-owner gate.
 
 ## Evidence
 
 Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 27-test suite exercises redaction, path traversal, shell controls, endpoint SSRF/TLS checks, encrypted credential persistence and production key validation, context compaction/citations, audit integrity/CAS, locks, idempotency claims and API replay, offline/private routing, tool contracts and timeout caps, API limits/auth, project deletion, plugin lifecycle, and checkpoint state recovery. Local smoke checks cover health/readiness, UI delivery, a completed run, bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration, project export, and observability summary; external provider and deployment evidence is not claimed.
 
-The committed Codex Security standard scan `6b5fd55c-929f-4785-a6dc-711f13d265f7` reviewed 71 inventoried files at revision `362047a` and produced five source-backed findings (3 high, 1 medium, 1 low). The report is complete; the remaining findings are the documented OIDC principal, DNS-pinned egress, kernel sandbox, development vault fallback, and CI action pinning gates. Local backup manifests now support HMAC authentication; production encryption, external key custody, immutable retention, and restore drills remain owner gates.
+The committed Codex Security standard scan `42c0e5f8-9a60-4a5e-8229-3c9027b15dfa` reviewed 71 inventoried files at revision `cf397c4` and produced five source-backed findings (3 high, 1 medium, 1 low). The report is complete; the remaining findings are the documented OIDC principal, DNS-pinned egress, kernel sandbox, development vault fallback, and CI action pinning gates. Local backup manifests now support HMAC authentication; production encryption, external key custody, immutable retention, webhook delivery signing, and restore drills remain owner gates.
 
 ## External owner gates (not claimable locally)
 

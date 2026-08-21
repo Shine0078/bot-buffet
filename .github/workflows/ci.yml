@@ -8,8 +8,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - run: npm run format:check
@@ -19,8 +19,9 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm run security:scan
       - run: npm run build
+      - run: npm run provenance
       - run: npm run sbom
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@0fa1882f994fbd81a47ab0804f93354f5ea40147
         if: always()
         continue-on-error: true
         with: { sarif_file: results.sarif }
@@ -28,7 +29,7 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - run: docker build --tag bot-buffet:${{ github.sha }} .
       - run: docker run --detach --name bot-buffet -p 8787:8787 bot-buffet:${{ github.sha }}
       - run: for i in {1..20}; do curl --fail http://127.0.0.1:8787/readyz && exit 0 || sleep 1; done; exit 1

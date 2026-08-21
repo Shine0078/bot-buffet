@@ -20,6 +20,7 @@
     "audit": "npm audit --audit-level=high",
     "security:scan": "node scripts/security-scan.mjs",
     "sbom": "node scripts/sbom.mjs",
+    "provenance": "node scripts/provenance.mjs",
     "backup": "node scripts/backup.mjs",
     "restore": "node scripts/restore.mjs",
     "verify": "npm run typecheck && npm test && npm run build"
