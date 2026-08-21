@@ -34,9 +34,23 @@ describe('provider adapter normalization', () => {
   it('uses provider-specific wire adapters when semantics differ', () => {
     expect(adapterFor(provider('anthropic'), 'token').constructor.name).toBe('AnthropicAdapter');
     expect(adapterFor(provider('gemini'), 'token').constructor.name).toBe('GeminiAdapter');
+    expect(adapterFor(provider('cohere'), 'token').constructor.name).toBe('CohereAdapter');
     expect(adapterFor(provider('openai'), 'token').constructor.name).toBe(
       'OpenAICompatibleAdapter',
     );
+    expect(adapterFor(provider('azure-openai'), 'token').constructor.name).toBe(
+      'AzureOpenAIAdapter',
+    );
+    expect(
+      adapterFor(
+        { ...provider('bedrock'), endpoint: 'https://bedrock-runtime.us-east-1.amazonaws.com' },
+        JSON.stringify({
+          accessKeyId: 'AKIAEXAMPLE',
+          secretAccessKey: 'secret',
+          region: 'us-east-1',
+        }),
+      ).constructor.name,
+    ).toBe('BedrockAdapter');
   });
 
   it('discovers all supported local OpenAI-compatible runtimes', () => {

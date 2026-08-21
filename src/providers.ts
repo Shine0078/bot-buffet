@@ -1,3 +1,4 @@
+import { createHash, createHmac } from 'node:crypto';
 import { ModelProvider, CapabilitySet, ProviderKind, now } from './types.js';
 import { assertSafeEndpoint, redactSecrets } from './security.js';
 import { fetchPinned } from './egress.js';
@@ -6,6 +7,7 @@ export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   name?: string;
+  toolCallId?: string;
 }
 export interface ToolCall {
   id: string;
@@ -63,10 +65,13 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       this.provider.providerKind,
     );
   }
-  async complete(request: ModelRequest): Promise<ModelResponse> {
-    const started = Date.now();
+  private headers(): Record<string, string> {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (this.token) headers.authorization = `Bearer ${this.token}`;
+    return headers;
+  }
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    const started = Date.now();
     const signal = request.signal
       ? AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
       : AbortSignal.timeout(30_000);
@@ -74,7 +79,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       `${this.provider.endpoint.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
-        headers,
+        headers: this.headers(),
         redirect: 'error',
         body: JSON.stringify({
           model: request.model,
@@ -125,6 +130,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       const result = await fetchPinned(
         `${this.provider.endpoint.replace(/\/$/, '')}/models`,
         {
+          headers: this.token ? { authorization: `Bearer ${this.token}` } : undefined,
           redirect: 'error',
           signal: AbortSignal.timeout(3000),
         },
@@ -140,6 +146,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       const response = await fetchPinned(
         `${this.provider.endpoint.replace(/\/$/, '')}/models`,
         {
+          headers: this.token ? { authorization: `Bearer ${this.token}` } : undefined,
           redirect: 'error',
           signal: AbortSignal.timeout(5000),
         },
@@ -347,6 +354,513 @@ export class GeminiAdapter implements ModelAdapter {
   }
 }
 
+/** Azure OpenAI uses deployment-scoped paths and an `api-key` header rather than Bearer auth. */
+export class AzureOpenAIAdapter implements ModelAdapter {
+  constructor(
+    private readonly provider: ModelProvider,
+    private readonly token?: string,
+  ) {
+    assertSafeEndpoint(provider.endpoint);
+  }
+  private baseUrl(): string {
+    const parsed = new URL(this.provider.endpoint);
+    return `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}`;
+  }
+  private apiVersion(): string {
+    const parsed = new URL(this.provider.endpoint);
+    return parsed.searchParams.get('api-version') ?? '2024-10-21';
+  }
+  private headers(): Record<string, string> {
+    return {
+      'content-type': 'application/json',
+      ...(this.token ? { 'api-key': this.token } : {}),
+    };
+  }
+  private deploymentsUrl(): string {
+    return `${this.baseUrl()}/openai/deployments?api-version=${encodeURIComponent(this.apiVersion())}`;
+  }
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    const started = Date.now();
+    const response = await fetchPinned(
+      `${this.baseUrl()}/openai/deployments/${encodeURIComponent(request.model)}/chat/completions?api-version=${encodeURIComponent(this.apiVersion())}`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        redirect: 'error',
+        body: JSON.stringify({
+          messages: request.messages,
+          temperature: request.temperature,
+          max_tokens: request.maxTokens,
+          tools: request.tools,
+          response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined,
+        }),
+        signal: providerSignal(request),
+      },
+    );
+    if (!response.ok)
+      throw new Error(
+        `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
+      );
+    const data = (await response.json()) as {
+      id?: string;
+      choices?: Array<{
+        message?: {
+          content?: string;
+          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+        };
+      }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    const message = data.choices?.[0]?.message;
+    return {
+      id: data.id ?? `azure_openai_${Date.now()}`,
+      content: message?.content ?? '',
+      toolCalls: (message?.tool_calls ?? []).map((call) => ({
+        id: call.id,
+        name: call.function.name,
+        arguments: JSON.parse(call.function.arguments) as Record<string, unknown>,
+      })),
+      usage: {
+        inputTokens: data.usage?.prompt_tokens ?? 0,
+        outputTokens: data.usage?.completion_tokens ?? 0,
+      },
+      latencyMs: Date.now() - started,
+      raw: redactSecrets(data),
+    };
+  }
+  async health(): Promise<'healthy' | 'degraded' | 'offline'> {
+    try {
+      const response = await fetchPinned(this.deploymentsUrl(), {
+        headers: this.token ? { 'api-key': this.token } : undefined,
+        redirect: 'error',
+        signal: AbortSignal.timeout(3000),
+      });
+      return response.ok ? 'healthy' : 'degraded';
+    } catch {
+      return 'offline';
+    }
+  }
+  async listModels(): Promise<string[]> {
+    try {
+      const response = await fetchPinned(this.deploymentsUrl(), {
+        headers: this.token ? { 'api-key': this.token } : undefined,
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) return [];
+      const data = (await response.json()) as {
+        data?: Array<{ id?: string; model?: string }>;
+      };
+      return (
+        data.data?.flatMap((deployment) => {
+          const name = deployment.id ?? deployment.model;
+          return name ? [name] : [];
+        }) ?? []
+      );
+    } catch {
+      return [];
+    }
+  }
+}
+
+interface CohereToolCallPayload {
+  id?: string;
+  type?: string;
+  function?: { name?: string; arguments?: string | Record<string, unknown> };
+}
+
+interface CohereResponsePayload {
+  id?: string;
+  message?: {
+    content?: string | Array<{ type?: string; text?: string }>;
+    tool_calls?: CohereToolCallPayload[];
+  };
+  usage?: {
+    tokens?: { input_tokens?: number; output_tokens?: number };
+    billed_units?: { input_tokens?: number; output_tokens?: number };
+  };
+}
+
+const cohereContent = (
+  content: string | Array<{ type?: string; text?: string }> | undefined,
+): string => {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((part) => part.type === 'text' || part.type === undefined)
+    .map((part) => part.text ?? '')
+    .join('');
+};
+
+const cohereArguments = (
+  value: string | Record<string, unknown> | undefined,
+): Record<string, unknown> => {
+  if (value === undefined) return {};
+  if (typeof value !== 'string') return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      throw new Error('provider_tool_arguments_invalid');
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'provider_tool_arguments_invalid') throw error;
+    throw new Error('provider_tool_arguments_invalid');
+  }
+};
+
+/** Native Cohere v2 adapter. Cohere's chat and model-listing routes are not OpenAI wire-compatible. */
+export class CohereAdapter implements ModelAdapter {
+  constructor(
+    private readonly provider: ModelProvider,
+    private readonly token?: string,
+  ) {
+    assertSafeEndpoint(provider.endpoint);
+  }
+  private baseUrl(): string {
+    return this.provider.endpoint.replace(/\/$/, '');
+  }
+  private headers(): Record<string, string> {
+    return {
+      'content-type': 'application/json',
+      ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+    };
+  }
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    const started = Date.now();
+    const tools = request.tools?.length ? request.tools : undefined;
+    const response = await fetchPinned(`${this.baseUrl()}/v2/chat`, {
+      method: 'POST',
+      headers: this.headers(),
+      redirect: 'error',
+      body: JSON.stringify({
+        stream: false,
+        model: request.model,
+        messages: request.messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+          ...(message.name ? { name: message.name } : {}),
+          ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
+        })),
+        tools,
+        max_tokens: request.maxTokens,
+        temperature: request.temperature,
+        // Cohere rejects response_format together with tools; preserve the
+        // normalized contract while avoiding a provider-side invalid request.
+        response_format:
+          request.responseFormat === 'json' && !tools ? { type: 'json_object' } : undefined,
+      }),
+      signal: providerSignal(request),
+    });
+    if (!response.ok)
+      throw new Error(
+        `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
+      );
+    const data = (await response.json()) as CohereResponsePayload;
+    const calls = (data.message?.tool_calls ?? []).map((call) => {
+      if (!call.id || !call.function?.name) throw new Error('provider_tool_call_invalid');
+      return {
+        id: call.id,
+        name: call.function.name,
+        arguments: cohereArguments(call.function.arguments),
+      };
+    });
+    const usage = data.usage?.tokens ?? data.usage?.billed_units;
+    return {
+      id: data.id ?? `cohere_${Date.now()}`,
+      content: cohereContent(data.message?.content),
+      toolCalls: calls,
+      usage: {
+        inputTokens: usage?.input_tokens ?? 0,
+        outputTokens: usage?.output_tokens ?? 0,
+      },
+      latencyMs: Date.now() - started,
+      raw: redactSecrets(data),
+    };
+  }
+  async health(): Promise<'healthy' | 'degraded' | 'offline'> {
+    try {
+      const response = await fetchPinned(`${this.baseUrl()}/v1/models`, {
+        headers: this.token ? { authorization: `Bearer ${this.token}` } : undefined,
+        redirect: 'error',
+        signal: AbortSignal.timeout(3000),
+      });
+      return response.ok ? 'healthy' : 'degraded';
+    } catch {
+      return 'offline';
+    }
+  }
+  async listModels(): Promise<string[]> {
+    try {
+      const response = await fetchPinned(`${this.baseUrl()}/v1/models`, {
+        headers: this.token ? { authorization: `Bearer ${this.token}` } : undefined,
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) return [];
+      const data = (await response.json()) as {
+        models?: Array<{ name?: string; id?: string }>;
+      };
+      return (
+        data.models
+          ?.map((model) => model.name ?? model.id)
+          .filter((name): name is string => Boolean(name)) ?? []
+      );
+    } catch {
+      return [];
+    }
+  }
+}
+
+interface BedrockCredentials {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  region: string;
+}
+
+interface BedrockTool {
+  toolSpec: {
+    name: string;
+    description?: string;
+    inputSchema: { json: object };
+  };
+}
+
+const awsEncode = (value: string): string =>
+  encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+
+const awsHash = (value: string): string => createHash('sha256').update(value).digest('hex');
+
+const awsHmac = (key: string | Buffer, value: string): Buffer =>
+  createHmac('sha256', key).update(value).digest();
+
+const bedrockCredentials = (token: string | undefined, endpoint: URL): BedrockCredentials => {
+  let parsed: Partial<BedrockCredentials> = {};
+  if (token) {
+    try {
+      const value: unknown = JSON.parse(token);
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('bedrock_credentials_json_required');
+      parsed = value as Partial<BedrockCredentials>;
+    } catch {
+      throw new Error('bedrock_credentials_json_required');
+    }
+  }
+  const configuredString = (value: unknown, name: string): string | undefined => {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'string' || !value.trim() || value.length > 4096)
+      throw new Error(`bedrock_${name}_invalid`);
+    return value;
+  };
+  const region =
+    configuredString(parsed.region, 'region') ??
+    configuredString(process.env.AWS_REGION, 'region') ??
+    endpoint.hostname.match(/^bedrock-runtime[.-]([a-z0-9-]+)\.amazonaws\.com$/i)?.[1];
+  const accessKeyId =
+    configuredString(parsed.accessKeyId, 'access_key_id') ??
+    configuredString(process.env.AWS_ACCESS_KEY_ID, 'access_key_id');
+  const secretAccessKey =
+    configuredString(parsed.secretAccessKey, 'secret_access_key') ??
+    configuredString(process.env.AWS_SECRET_ACCESS_KEY, 'secret_access_key');
+  const sessionToken =
+    configuredString(parsed.sessionToken, 'session_token') ??
+    configuredString(process.env.AWS_SESSION_TOKEN, 'session_token');
+  if (!region || !accessKeyId || !secretAccessKey) throw new Error('bedrock_credentials_required');
+  return { accessKeyId, secretAccessKey, sessionToken, region };
+};
+
+/** Amazon Bedrock Converse adapter with AWS Signature Version 4 request signing. */
+export class BedrockAdapter implements ModelAdapter {
+  private readonly endpoint: URL;
+  private readonly credentials: BedrockCredentials;
+  constructor(provider: ModelProvider, token?: string) {
+    this.endpoint = assertSafeEndpoint(provider.endpoint);
+    this.credentials = bedrockCredentials(token, this.endpoint);
+  }
+  private runtimeUrl(pathname: string): string {
+    return `${this.endpoint.origin}${pathname}`;
+  }
+  private controlPlaneUrl(pathname: string): string {
+    const hostname = this.endpoint.hostname.replace(/^bedrock-runtime\./i, 'bedrock.');
+    return `${this.endpoint.protocol}//${hostname}${pathname}`;
+  }
+  private sign(
+    urlString: string,
+    method: string,
+    body: string,
+    service: 'bedrock' = 'bedrock',
+  ): Record<string, string> {
+    const url = new URL(urlString);
+    const nowDate = new Date();
+    const amzDate = nowDate.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.slice(0, 8);
+    const payloadHash = awsHash(body);
+    const host = url.host;
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      host,
+      'x-amz-date': amzDate,
+      ...(this.credentials.sessionToken
+        ? { 'x-amz-security-token': this.credentials.sessionToken }
+        : {}),
+    };
+    const canonicalHeaders = Object.entries(headers)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => `${name.toLowerCase()}:${value.trim()}\n`)
+      .join('');
+    const signedHeaders = Object.keys(headers)
+      .map((name) => name.toLowerCase())
+      .sort()
+      .join(';');
+    const canonicalUri =
+      url.pathname
+        .split('/')
+        .map((segment) => awsEncode(segment))
+        .join('/') || '/';
+    const canonicalQuery = [...url.searchParams.entries()]
+      .map(([name, value]) => [awsEncode(name), awsEncode(value)] as const)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => `${name}=${value}`)
+      .join('&');
+    const canonicalRequest = `${method}\n${canonicalUri}\n${canonicalQuery}\n${canonicalHeaders}\n${signedHeaders}\n${payloadHash}`;
+    const scope = `${dateStamp}/${this.credentials.region}/${service}/aws4_request`;
+    const stringToSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${awsHash(canonicalRequest)}`;
+    const dateKey = awsHmac(`AWS4${this.credentials.secretAccessKey}`, dateStamp);
+    const regionKey = awsHmac(dateKey, this.credentials.region);
+    const serviceKey = awsHmac(regionKey, service);
+    const signingKey = awsHmac(serviceKey, 'aws4_request');
+    const signature = createHmac('sha256', signingKey).update(stringToSign).digest('hex');
+    return {
+      ...headers,
+      authorization: `AWS4-HMAC-SHA256 Credential=${this.credentials.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    };
+  }
+  private requestBody(request: ModelRequest): Record<string, unknown> {
+    const system = request.messages
+      .filter((message) => message.role === 'system')
+      .map((message) => ({ text: message.content }));
+    const messages = request.messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => ({
+        role: message.role === 'assistant' ? 'assistant' : 'user',
+        content: [{ text: message.content }],
+      }));
+    const tools = request.tools
+      ?.map((tool): BedrockTool | undefined => {
+        const record = tool && typeof tool === 'object' ? (tool as Record<string, unknown>) : {};
+        const fn =
+          record.function && typeof record.function === 'object'
+            ? (record.function as Record<string, unknown>)
+            : record;
+        if (typeof fn.name !== 'string') return undefined;
+        return {
+          toolSpec: {
+            name: fn.name,
+            ...(typeof fn.description === 'string' ? { description: fn.description } : {}),
+            inputSchema: {
+              json:
+                fn.parameters && typeof fn.parameters === 'object'
+                  ? fn.parameters
+                  : { type: 'object' },
+            },
+          },
+        };
+      })
+      .filter((tool): tool is BedrockTool => Boolean(tool));
+    return {
+      messages,
+      system: system.length ? system : undefined,
+      inferenceConfig: {
+        maxTokens: request.maxTokens,
+        temperature: request.temperature,
+      },
+      toolConfig: tools?.length ? { tools } : undefined,
+    };
+  }
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    const started = Date.now();
+    const body = JSON.stringify(this.requestBody(request));
+    const path = `/model/${awsEncode(request.model)}/converse`;
+    const response = await fetchPinned(this.runtimeUrl(path), {
+      method: 'POST',
+      headers: this.sign(this.runtimeUrl(path), 'POST', body),
+      redirect: 'error',
+      body,
+      signal: providerSignal(request),
+    });
+    if (!response.ok)
+      throw new Error(
+        `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
+      );
+    const data = (await response.json()) as {
+      output?: {
+        message?: {
+          content?: Array<{
+            text?: string;
+            toolUse?: { toolUseId?: string; name?: string; input?: Record<string, unknown> };
+          }>;
+        };
+      };
+      usage?: { inputTokens?: number; outputTokens?: number };
+    };
+    const blocks = data.output?.message?.content ?? [];
+    return {
+      id: `bedrock_${Date.now()}`,
+      content: blocks.map((block) => block.text ?? '').join(''),
+      toolCalls: blocks.flatMap((block) =>
+        block.toolUse?.toolUseId && block.toolUse.name
+          ? [
+              {
+                id: block.toolUse.toolUseId,
+                name: block.toolUse.name,
+                arguments: block.toolUse.input ?? {},
+              },
+            ]
+          : [],
+      ),
+      usage: {
+        inputTokens: data.usage?.inputTokens ?? 0,
+        outputTokens: data.usage?.outputTokens ?? 0,
+      },
+      latencyMs: Date.now() - started,
+      raw: redactSecrets(data),
+    };
+  }
+  async health(): Promise<'healthy' | 'degraded' | 'offline'> {
+    try {
+      const url = this.controlPlaneUrl('/foundation-models?byOutputModality=TEXT');
+      const response = await fetchPinned(url, {
+        headers: this.sign(url, 'GET', ''),
+        redirect: 'error',
+        signal: AbortSignal.timeout(3000),
+      });
+      return response.ok ? 'healthy' : 'degraded';
+    } catch {
+      return 'offline';
+    }
+  }
+  async listModels(): Promise<string[]> {
+    try {
+      const url = this.controlPlaneUrl('/foundation-models?byOutputModality=TEXT');
+      const response = await fetchPinned(url, {
+        headers: this.sign(url, 'GET', ''),
+        redirect: 'error',
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) return [];
+      const data = (await response.json()) as {
+        modelSummaries?: Array<{ modelId?: string }>;
+      };
+      return data.modelSummaries?.flatMap((model) => (model.modelId ? [model.modelId] : [])) ?? [];
+    } catch {
+      return [];
+    }
+  }
+}
+
 export class MockLocalAdapter implements ModelAdapter {
   constructor(private readonly name: string) {}
   async complete(request: ModelRequest): Promise<ModelResponse> {
@@ -380,6 +894,9 @@ export class MockLocalAdapter implements ModelAdapter {
 export const adapterFor = (provider: ModelProvider, token?: string): ModelAdapter => {
   if (provider.providerKind === 'anthropic') return new AnthropicAdapter(provider, token);
   if (provider.providerKind === 'gemini') return new GeminiAdapter(provider, token);
+  if (provider.providerKind === 'azure-openai') return new AzureOpenAIAdapter(provider, token);
+  if (provider.providerKind === 'cohere') return new CohereAdapter(provider, token);
+  if (provider.providerKind === 'bedrock') return new BedrockAdapter(provider, token);
   return new OpenAICompatibleAdapter(provider, token);
 };
 
