@@ -17,3 +17,4 @@
 - Tooling hygiene pass: ignored generated coverage reports in ESLint so CI lint output stays limited to repository source and tests.
 - Security reporting pass: the secret scanner now emits a valid `results.sarif` artifact for clean and failing scans, making the pinned CI SARIF upload actionable instead of silently missing its input.
 - Office accessibility/data pass: bootstrap now feeds scoped files, memory, evaluation datasets, and tools into the UI tables, while generated agent desks support Enter/Space activation and accessible labels with static regression coverage.
+- Backup/restore verification pass: added integration coverage for signed manifests, deliberate vault-key exclusion, verified restoration, and tamper rejection before promotion.
