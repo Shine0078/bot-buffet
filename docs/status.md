@@ -15,6 +15,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Research source intake, evaluation dataset/case registration, run replay/export, and aggregated observability summary endpoints.
 - Research foundation captured in `docs/research-foundation.md`, including inspected sources and explicit inaccessible-source owner actions.
 - Portable backup/restore scripts verify SHA-256 manifests, optionally sign them with HMAC-SHA-256, and restore into a separate target directory by default.
+- Development credential vaults generate a random 32-byte key beside the encrypted record instead of deriving key material from the username; the key is intentionally excluded from backups.
 - Multi-agent coordination helpers provide structured handoff packets, evidence comparison, and bounded parallel execution.
 - Durable idempotency replay, run time/token/cost guards with model retry backoff, MCP server metadata, integrity-pinned disabled plugin lifecycle operations, security headers, and API/plugin regression coverage.
 - Safe project deletion with child credential revocation, disabled schedule bindings, and HTTPS/secret-protected webhook metadata routes.
@@ -26,7 +27,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 
 Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 28-test suite exercises redaction, path traversal, shell controls, endpoint SSRF/TLS checks, encrypted credential persistence and production key validation, context compaction/citations, audit integrity/CAS, locks, idempotency claims and API replay, offline/private routing, native provider adapter selection, tool contracts and timeout caps, API limits/auth, project deletion, plugin lifecycle, and checkpoint state recovery. Local smoke checks cover health/readiness, UI delivery, a completed run, bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration, project export, and observability summary; external provider and deployment evidence is not claimed.
 
-The committed Codex Security standard scan `f4e78174-2c8c-4a66-897d-5e66276cc62d` reviewed 73 inventoried files at revision `ceaf054` and produced four source-backed findings (3 high, 1 medium). The report is complete; the remaining findings are the documented OIDC principal, DNS-pinned egress, kernel sandbox, and development vault fallback. CI action SHAs are immutable; signed OIDC provenance/attestation, backup encryption and external key custody, immutable retention, webhook delivery signing, and restore drills remain owner gates.
+The committed Codex Security standard scan `ec1af528-b689-4ed0-ab7c-84257e1c7ffa` reviewed 73 inventoried files at revision `26f6328` and produced three source-backed high findings. The report is complete; the remaining findings are the documented OIDC principal, DNS-pinned egress, and kernel sandbox. CI action SHAs are immutable; signed OIDC provenance/attestation, backup encryption and external key custody, immutable retention, webhook delivery signing, and restore drills remain owner gates.
 
 ## External owner gates (not claimable locally)
 
