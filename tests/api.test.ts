@@ -186,6 +186,38 @@ describe('API boundary controls', () => {
     });
     expect(rejected.status).toBe(400);
   });
+  it('requires a versioned memory approval transition and audits the decision', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        namespace: 'session',
+        namespaceId: 'session-1',
+        text: 'candidate memory',
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as {
+      id: string;
+      version: number;
+      approved: boolean;
+    };
+    expect(created.approved).toBe(false);
+    const approvedResponse = await fetch(`${base}/api/v1/memory/${created.id}/approval`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ approved: true, version: created.version }),
+    });
+    expect(approvedResponse.status).toBe(200);
+    expect(await approvedResponse.json()).toMatchObject({ approved: true });
+    const stale = await fetch(`${base}/api/v1/memory/${created.id}/approval`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ approved: false, version: created.version }),
+    });
+    expect(stale.status).toBe(400);
+  });
   it('starts an actor-bound OAuth PKCE flow without returning the verifier', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));
     const store = createStore(dir);

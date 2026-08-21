@@ -930,6 +930,35 @@ export function createApi(deps: ApiDeps) {
         return send(res, 201, memory);
       }
       const memoryMatch = path.match(/^\/api\/v1\/memory\/([^/]+)$/);
+      const memoryApproval = path.match(/^\/api\/v1\/memory\/([^/]+)\/approval$/);
+      if (memoryApproval && req.method === 'POST') {
+        const memory = await required(
+          actorId,
+          await deps.store.get<MemoryItem>(memoryApproval[1]!),
+          'write',
+          'memory',
+        );
+        const body = await parseBody(req);
+        if (typeof body.approved !== 'boolean' || typeof body.version !== 'number')
+          throw new Error('memory_approval_input_invalid');
+        const saved = await deps.store.putIfVersion(
+          { ...memory, approved: body.approved },
+          body.version,
+        );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: memory.scope,
+          actorId,
+          action: body.approved ? 'memory.approved' : 'memory.rejected',
+          resourceType: 'memory',
+          resourceId: memory.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: { approved: body.approved, version: saved.version },
+        });
+        return send(res, 200, saved);
+      }
       if (memoryMatch && req.method === 'DELETE') {
         await required(
           actorId,

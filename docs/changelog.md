@@ -24,3 +24,4 @@
 - Device authorization pass: added bounded actor/provider-bound device-code sessions, server-side polling with pending/slow-down handling, device-code redaction, encrypted token persistence, and API regression coverage.
 - Capability normalization pass: added streaming chunk normalization, bounded 32-request batching, OpenAI-compatible SSE parsing, validated OpenAI/Cohere embeddings, and adapter contract coverage across provider families.
 - Credential-source pass: added validated environment-variable provider references that resolve at adapter-use time without persisting or returning the environment secret.
+- Memory approval pass: added an authenticated, version/CAS-protected memory approval/rejection route with tamper-evident audit events.
