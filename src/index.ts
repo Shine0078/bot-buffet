@@ -8,10 +8,12 @@ import { Orchestrator } from './orchestrator.js';
 import { createStore } from './store.js';
 import { createBuiltinTools } from './tools.js';
 import { CredentialVault } from './secrets.js';
+import { assertSandboxConfiguration } from './sandbox.js';
 import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = process.env.BOT_BUFFET_DATA_DIR ?? join(root, '.data');
+assertSandboxConfiguration();
 const store = createStore(dataDir);
 await store.load();
 const vault = new CredentialVault(join(dataDir, 'credentials.enc.json'));

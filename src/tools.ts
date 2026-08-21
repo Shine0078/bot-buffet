@@ -1,9 +1,7 @@
-import { execFile } from 'node:child_process';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { promisify } from 'node:util';
 import { basename, relative, sep } from 'node:path';
 import { JsonStateStore } from './store.js';
 import { ToolDefinition, ID, JsonSchema } from './types.js';
+import { createSandboxRuntime, SandboxRuntime } from './sandbox.js';
 import {
   assertWorkspacePath,
   assertWorkspaceRealPath,
@@ -12,7 +10,6 @@ import {
   validateJsonSchema,
 } from './security.js';
 
-const execFileAsync = promisify(execFile);
 export interface ToolContext {
   actorId: ID;
   runId: ID;
@@ -100,6 +97,15 @@ const toolBase = (
 
 export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
   const registry = new ToolRegistry();
+  const runtimes = new Map<string, SandboxRuntime>();
+  const sandbox = (workspaceRoot: string): SandboxRuntime => {
+    let runtime = runtimes.get(workspaceRoot);
+    if (!runtime) {
+      runtime = createSandboxRuntime(workspaceRoot);
+      runtimes.set(workspaceRoot, runtime);
+    }
+    return runtime;
+  };
   const pathAllowed = (root: string, resolved: string, paths: string[]): boolean =>
     paths.some((allowed) => {
       const base = assertWorkspacePath(root, allowed);
@@ -145,7 +151,10 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
         throw new Error('filesystem_read_denied:protected_path');
       return {
         path: relative(context.workspaceRoot, resolved),
-        content: await readFile(resolved, 'utf8'),
+        content: await sandbox(context.workspaceRoot).readFile(
+          relative(context.workspaceRoot, resolved),
+          context.signal,
+        ),
       };
     },
   });
@@ -180,13 +189,7 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
       if (!(await store.lock(lockName, context.runId, 30_000)))
         throw new Error('filesystem_write_denied:resource_locked');
       try {
-        await mkdir(
-          basename(resolved) === resolved
-            ? context.workspaceRoot
-            : resolved.slice(0, resolved.lastIndexOf(sep)),
-          { recursive: true },
-        );
-        await writeFile(resolved, data.content, 'utf8');
+        await sandbox(context.workspaceRoot).writeFile(relativePath, data.content, context.signal);
         await store.audit({
           kind: 'audit-event',
           ownerId: context.actorId,
@@ -234,8 +237,11 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
         throw new Error('filesystem_stat_denied:path_not_allowed');
       if (pathProtected(context.workspaceRoot, resolved, context.protectedPaths))
         throw new Error('filesystem_stat_denied:protected_path');
-      const info = await stat(resolved);
-      return { path, size: info.size, isFile: info.isFile() };
+      const info = await sandbox(context.workspaceRoot).stat(
+        relative(context.workspaceRoot, resolved),
+        context.signal,
+      );
+      return { path, size: info.size, isFile: info.isFile };
     },
   });
   registry.register({
@@ -278,16 +284,16 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
         /curl|wget|Invoke-WebRequest|npm|pnpm|npx|git/i.test(fullCommand)
       )
         throw new Error('shell_denied:network_blocked');
-      const result = await execFileAsync(data.command, data.args ?? [], {
-        cwd: context.workspaceRoot,
-        timeout: 30_000,
-        maxBuffer: 1_000_000,
-        windowsHide: true,
-      });
+      const result = await sandbox(context.workspaceRoot).run(
+        data.command,
+        data.args ?? [],
+        context.network,
+        context.signal,
+      );
       return {
         stdout: redactSecrets(result.stdout),
         stderr: redactSecrets(result.stderr),
-        code: 0,
+        code: result.code,
       };
     },
   });
