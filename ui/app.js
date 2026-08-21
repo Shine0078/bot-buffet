@@ -75,6 +75,25 @@ function selectAgent(id) {
   $('#inspectorContent').innerHTML =
     `<div class="agent-detail"><div class="detail-head"><div class="avatar">${esc(a.profile?.avatar || '◈')}</div><div><h2>${esc(a.profile?.name)}</h2><div class="detail-role">${esc(a.profile?.mission)}</div></div></div><div class="detail-list"><div><span>Status</span><strong>${esc(a.status)}</strong></div><div><span>Mode</span><strong>${esc(a.profile?.mode)}</strong></div><div><span>Network</span><strong>${esc(a.profile?.network)}</strong></div><div><span>Max steps</span><strong>${esc(a.profile?.maxSteps)}</strong></div><div><span>Tools</span><strong>${a.profile?.allowedToolIds?.length || 0} allowed</strong></div><div><span>Memory</span><strong>Project scoped</strong></div></div></div>`;
 }
+async function usageTable() {
+  $('#viewTitle').textContent = 'Usage and cost';
+  $('#viewSubtitle').textContent = 'Spend, tokens, and latency for the current month.';
+  $('#officeView').classList.add('hidden');
+  $('#tableView').classList.remove('hidden');
+  $('#tableTitle').textContent = 'Usage by agent';
+  const columns = ['key', 'costCents', 'tokensIn', 'tokensOut', 'calls'];
+  $('#tableHead').innerHTML = '<tr>' + columns.map((x) => `<th>${esc(x)}</th>`).join('') + '</tr>';
+  try {
+    const report = await api('/api/v1/usage?groupBy=agent&period=monthly');
+    $('#tableBody').innerHTML =
+      (report.buckets || [])
+        .map((row) => '<tr>' + columns.map((k) => `<td>${esc(row[k])}</td>`).join('') + '</tr>')
+        .join('') || '<tr><td colspan="5" class="muted">No recorded usage yet.</td></tr>';
+  } catch (err) {
+    $('#tableBody').innerHTML =
+      `<tr><td colspan="5" class="muted">Unable to load usage: ${esc(err.message)}</td></tr>`;
+  }
+}
 function table(view) {
   const d = state.data || {};
   const cfg = {
@@ -86,6 +105,28 @@ function table(view) {
     memory: ['Memory', d.memory || [], ['namespace', 'text', 'approved']],
     tools: ['Tools', d.tools || [], ['name', 'risk', 'enabled']],
     evaluations: ['Evaluations', d.evaluations || [], ['name', 'description', 'versionLabel']],
+    budgets: [
+      'Budgets',
+      (d.budgets || []).map((b) => ({
+        name: b.name,
+        period: b.period,
+        limit: '$' + ((b.limitCents || 0) / 100).toFixed(2),
+        spent: '$' + ((b.status?.spentCents || 0) / 100).toFixed(2),
+        state: b.status?.state || 'ok',
+      })),
+      ['name', 'period', 'limit', 'spent', 'state'],
+    ],
+    alerts: ['Alerts', d.alerts || [], ['severity', 'title', 'message', 'acknowledged']],
+    workflows: [
+      'Workflows',
+      (d.workflows || []).map((w) => ({
+        name: w.name,
+        nodes: (w.nodes || []).length,
+        edges: (w.edges || []).length,
+        enabled: w.enabled,
+      })),
+      ['name', 'nodes', 'edges', 'enabled'],
+    ],
   }[view] || ['Items', [], ['id', 'createdAt']];
   $('#viewTitle').textContent = cfg[0];
   $('#viewSubtitle').textContent = 'Inspect scoped records and evidence.';
@@ -124,7 +165,8 @@ document.addEventListener('click', async (e) => {
       $('#tableView').classList.add('hidden');
       $('#viewTitle').textContent = 'Office floor';
       $('#viewSubtitle').textContent = 'A calm view of agents, work, and evidence.';
-    } else table(state.view);
+    } else if (state.view === 'usage') await usageTable();
+    else table(state.view);
   }
 });
 document.addEventListener('keydown', (e) => {

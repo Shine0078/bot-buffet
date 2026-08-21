@@ -442,7 +442,11 @@ export function createApi(deps: ApiDeps) {
         });
         return;
       }
-      if (path === '/api/v1/bootstrap' && req.method === 'GET')
+      if (path === '/api/v1/bootstrap' && req.method === 'GET') {
+        const spendSources = {
+          usage: await deps.store.list<UsageRecord>((x) => x.kind === 'usage'),
+          costs: await deps.store.list<CostRecord>((x) => x.kind === 'cost'),
+        };
         return send(res, 200, {
           workspaces: await visible(
             actorId,
@@ -483,8 +487,17 @@ export function createApi(deps: ApiDeps) {
             actorId,
             await deps.store.list<EvaluationDataset>((x) => x.kind === 'evaluation-dataset'),
           ),
+          budgets: (
+            await visible(actorId, await deps.store.list<Budget>((x) => x.kind === 'budget'))
+          ).map((budget) => ({ ...budget, status: budgetStatus(budget, spendSources) })),
+          alerts: await visible(actorId, await deps.store.list<Alert>((x) => x.kind === 'alert')),
+          workflows: await visible(
+            actorId,
+            await deps.store.list<Workflow>((x) => x.kind === 'workflow'),
+          ),
           tools: deps.tools?.list() ?? [],
         });
+      }
       if (path === '/api/v1/projects' && req.method === 'GET')
         return send(
           res,

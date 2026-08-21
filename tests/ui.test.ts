@@ -27,4 +27,14 @@ describe('Office UI accessibility contract', () => {
     expect(css).toContain('prefers-reduced-motion');
     expect(css).toContain(':focus-visible');
   });
+
+  it('exposes budget, usage, workflow, and alert views in the accessible tables', () => {
+    for (const view of ['budgets', 'usage', 'workflows', 'alerts'])
+      expect(html).toContain(`data-view="${view}"`);
+    expect(app).toContain('budgets: [');
+    expect(app).toContain('workflows: [');
+    expect(app).toContain("alerts: ['Alerts'");
+    expect(app).toContain('await usageTable()');
+    expect(app).toContain("api('/api/v1/usage?groupBy=agent&period=monthly')");
+  });
 });
