@@ -106,6 +106,25 @@ export class Orchestrator extends EventEmitter {
       for (let sequence = run.stepCount + 1; sequence <= run.maxSteps; sequence += 1) {
         const current = await this.deps.store.get<Run>(runId);
         if (!current) throw new Error('run_deleted');
+        if (
+          agent.profile.timeLimitMs > 0 &&
+          Date.now() - Date.parse(current.startedAt ?? now()) > agent.profile.timeLimitMs
+        ) {
+          await this.updateRun(current, {
+            status: 'blocked',
+            error: 'time_limit_exceeded',
+            finishedAt: now(),
+          });
+          return;
+        }
+        if (agent.profile.costLimitCents > 0 && current.costCents >= agent.profile.costLimitCents) {
+          await this.updateRun(current, {
+            status: 'blocked',
+            error: 'cost_limit_exceeded',
+            finishedAt: now(),
+          });
+          return;
+        }
         if (current.cancelRequested || controller.signal.aborted) {
           await this.updateRun(current, { status: 'cancelled', finishedAt: now() });
           break;
@@ -164,9 +183,10 @@ export class Orchestrator extends EventEmitter {
             localPreferred: true,
             offline,
             allowedModelIds: agent.profile.allowedModels,
+            preferredModelId: agent.profile.preferredModelId,
+            fallbackModelIds: agent.profile.fallbackModelIds,
           },
           route[0],
-          agent.profile.preferredModelId,
         );
         const model = await this.deps.store.get<Model>(decision.modelId);
         if (!model) throw new Error('model_not_found');
@@ -185,8 +205,36 @@ export class Orchestrator extends EventEmitter {
           redacted: true,
         });
         await this.deps.store.insert(step);
-        const response = await this.deps.adapters(model).complete(request);
+        const response = await this.completeWithRetry(this.deps.adapters(model), request, 2);
         const responsePreview = redactSecrets(response.content.slice(0, 1000));
+        const stepCostCents =
+          (response.usage.inputTokens * model.inputCostPerMillionCents +
+            response.usage.outputTokens * model.outputCostPerMillionCents) /
+          1_000_000;
+        const nextTokensIn = current.tokensIn + response.usage.inputTokens;
+        const nextTokensOut = current.tokensOut + response.usage.outputTokens;
+        if (
+          agent.profile.tokenLimit > 0 &&
+          nextTokensIn + nextTokensOut > agent.profile.tokenLimit
+        ) {
+          await this.updateRun(current, {
+            status: 'blocked',
+            error: 'token_limit_exceeded',
+            finishedAt: now(),
+          });
+          return;
+        }
+        if (
+          agent.profile.costLimitCents > 0 &&
+          current.costCents + stepCostCents > agent.profile.costLimitCents
+        ) {
+          await this.updateRun(current, {
+            status: 'blocked',
+            error: 'cost_limit_exceeded',
+            finishedAt: now(),
+          });
+          return;
+        }
         await this.deps.store.put({
           ...step,
           status: 'succeeded',
@@ -295,8 +343,9 @@ export class Orchestrator extends EventEmitter {
         await this.updateRun(current, {
           stepCount: sequence,
           checkpointId: checkpoint.id,
-          tokensIn: current.tokensIn + response.usage.inputTokens,
-          tokensOut: current.tokensOut + response.usage.outputTokens,
+          tokensIn: nextTokensIn,
+          tokensOut: nextTokensOut,
+          costCents: current.costCents + stepCostCents,
           latencyMs: current.latencyMs + response.latencyMs,
           status: verification.passed ? 'completed' : 'running',
           finishedAt: verification.passed ? now() : undefined,
@@ -336,6 +385,33 @@ export class Orchestrator extends EventEmitter {
         task.acceptanceCriteria.length === 0 || evidence.length === task.acceptanceCriteria.length,
       evidence,
     };
+  }
+  private async completeWithRetry(
+    adapter: ModelAdapter,
+    request: ModelRequest,
+    maxRetries: number,
+  ): Promise<Awaited<ReturnType<ModelAdapter['complete']>>> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        return await adapter.complete(request);
+      } catch (error) {
+        lastError = error;
+        if (request.signal?.aborted || attempt === maxRetries) throw error;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 250 * 2 ** attempt);
+          request.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(new Error('run_cancelled'));
+            },
+            { once: true },
+          );
+        });
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('model_retry_failed');
   }
   private async updateRun(run: Run, changes: Partial<Run>): Promise<void> {
     const latest = (await this.deps.store.get<Run>(run.id)) ?? run;
@@ -449,14 +525,17 @@ export class Orchestrator extends EventEmitter {
         updatedAt: now(),
       };
       await this.deps.store.insert(fork);
+      if (checkpoint) await this.deps.store.setRunState(fork.id, checkpoint.state);
       return fork;
     }
     if (command.type === 'rollback') {
+      let checkpoint: Checkpoint | undefined;
       if (command.checkpointId) {
-        const checkpoint = await this.deps.store.get<Checkpoint>(command.checkpointId);
+        checkpoint = await this.deps.store.get<Checkpoint>(command.checkpointId);
         if (!checkpoint || checkpoint.runId !== run.id)
           throw new Error('checkpoint_scope_mismatch');
       }
+      if (checkpoint) await this.deps.store.setRunState(run.id, checkpoint.state);
       return this.deps.store.put({
         ...run,
         status: 'rolled_back',

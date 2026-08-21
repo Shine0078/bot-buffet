@@ -11,6 +11,8 @@ export interface RoutingRequest {
   offline: boolean;
   estimatedCostCents?: number;
   allowedModelIds?: ID[];
+  preferredModelId?: ID;
+  fallbackModelIds?: ID[];
 }
 export interface RoutingDecision {
   modelId: ID;
@@ -54,7 +56,11 @@ export class ModelRouter {
     }
     const candidates = route
       ? [...route.modelIds, ...route.fallbackModelIds]
-      : eligible.map((model) => model.id);
+      : [
+          ...(request.preferredModelId ? [request.preferredModelId] : []),
+          ...(request.fallbackModelIds ?? []),
+          ...eligible.map((model) => model.id),
+        ];
     const filtered = candidates
       .map((id) => eligible.find((model) => model.id === id))
       .filter((x): x is Model => Boolean(x));

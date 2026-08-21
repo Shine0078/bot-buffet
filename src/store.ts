@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { AuditEvent, BaseEntity, Entity, ID, RuntimeState, now, id } from './types.js';
+import { AuditEvent, BaseEntity, Entity, ID, ISODate, RuntimeState, now, id } from './types.js';
 
 const emptyState = (): RuntimeState => ({
   entities: {},
   runState: {},
   locks: {},
+  idempotency: {},
   auditTail: 'GENESIS',
   schemaVersion: 1,
 });
@@ -30,6 +31,7 @@ export class JsonStateStore {
       this.state.entities ??= {};
       this.state.runState ??= {};
       this.state.locks ??= {};
+      this.state.idempotency ??= {};
       this.state.auditTail ??= 'GENESIS';
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
@@ -52,11 +54,18 @@ export class JsonStateStore {
   }
 
   async put<T extends BaseEntity>(value: T): Promise<T> {
-    await this.load();
-    const saved = { ...value, updatedAt: now(), version: value.version + 1 } as T;
-    this.state.entities[saved.id] = saved as unknown as Entity;
-    await this.persist();
-    return saved;
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      const saved = { ...value, updatedAt: now(), version: value.version + 1 } as T;
+      this.state.entities[saved.id] = saved as unknown as Entity;
+      await this.persist();
+      return saved;
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async putIfVersion<T extends BaseEntity>(value: T, expectedVersion: number): Promise<T> {
@@ -77,11 +86,18 @@ export class JsonStateStore {
   }
 
   async insert<T extends BaseEntity>(value: T): Promise<T> {
-    await this.load();
-    if (this.state.entities[value.id]) throw new Error(`entity_exists:${value.id}`);
-    this.state.entities[value.id] = value as unknown as Entity;
-    await this.persist();
-    return value;
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      if (this.state.entities[value.id]) throw new Error(`entity_exists:${value.id}`);
+      this.state.entities[value.id] = value as unknown as Entity;
+      await this.persist();
+      return value;
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async get<T extends BaseEntity>(entityId: ID): Promise<T | undefined> {
@@ -97,9 +113,16 @@ export class JsonStateStore {
   }
 
   async delete(entityId: ID): Promise<void> {
-    await this.load();
-    delete this.state.entities[entityId];
-    await this.persist();
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      delete this.state.entities[entityId];
+      await this.persist();
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    await operation;
   }
 
   async getRunState(runId: ID): Promise<Record<string, unknown>> {
@@ -108,9 +131,69 @@ export class JsonStateStore {
   }
 
   async setRunState(runId: ID, value: Record<string, unknown>): Promise<void> {
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      this.state.runState[runId] = structuredClone(value);
+      await this.persist();
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    await operation;
+  }
+
+  async getIdempotency(
+    key: string,
+  ): Promise<{ status: number; payload: unknown; createdAt: string } | undefined> {
     await this.load();
-    this.state.runState[runId] = structuredClone(value);
-    await this.persist();
+    const record = this.state.idempotency[key];
+    if (!record) return undefined;
+    if (Date.now() - Date.parse(record.createdAt) > 24 * 60 * 60 * 1000) {
+      delete this.state.idempotency[key];
+      await this.persist();
+      return undefined;
+    }
+    return structuredClone(record);
+  }
+
+  async setIdempotency(key: string, status: number, payload: unknown): Promise<void> {
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      this.state.idempotency[key] = { status, payload: structuredClone(payload), createdAt: now() };
+      await this.persist();
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    await operation;
+  }
+
+  async claimIdempotency(
+    key: string,
+  ): Promise<
+    | { claimed: true }
+    | { claimed: false; record: { status: number; payload: unknown; createdAt: ISODate } }
+  > {
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      const current = this.state.idempotency[key];
+      if (current && Date.now() - Date.parse(current.createdAt) <= 24 * 60 * 60 * 1000)
+        return { claimed: false as const, record: structuredClone(current) };
+      this.state.idempotency[key] = {
+        status: 102,
+        payload: { code: 'idempotency_in_progress' },
+        createdAt: now(),
+      };
+      await this.persist();
+      return { claimed: true as const };
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async lock(resource: string, ownerId: ID, ttlMs: number): Promise<boolean> {

@@ -44,14 +44,22 @@ export class ToolRegistry {
     if (!tool) throw new Error(`tool_not_found:${name}`);
     const errors = validateJsonSchema(tool.definition.inputSchema, input);
     if (errors.length) throw new Error(`tool_input_invalid:${errors.join(',')}`);
-    const result = await tool.execute(input, context);
-    const output = redactSecrets(result);
-    const outputErrors = validateJsonSchema(tool.definition.outputSchema, output);
-    if (outputErrors.length) throw new Error(`tool_output_invalid:${outputErrors.join(',')}`);
-    const serialized = JSON.stringify(output);
-    if (serialized.length > tool.definition.outputLimitBytes)
-      throw new Error('tool_output_too_large');
-    return output;
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const deadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('tool_timeout')), tool.definition.timeoutMs);
+      });
+      const result = await Promise.race([tool.execute(input, context), deadline]);
+      const output = redactSecrets(result);
+      const outputErrors = validateJsonSchema(tool.definition.outputSchema, output);
+      if (outputErrors.length) throw new Error(`tool_output_invalid:${outputErrors.join(',')}`);
+      const serialized = JSON.stringify(output);
+      if (serialized.length > tool.definition.outputLimitBytes)
+        throw new Error('tool_output_too_large');
+      return output;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 }
 

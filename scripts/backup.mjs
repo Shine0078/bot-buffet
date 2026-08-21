@@ -1,8 +1,14 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 const dataDir = resolve(process.env.BOT_BUFFET_DATA_DIR ?? '.data');
+const backupKey = process.env.BOT_BUFFET_BACKUP_KEY ?? process.env.BOT_BUFFET_MASTER_KEY;
+if (
+  process.env.BOT_BUFFET_AUTH_MODE === 'production' &&
+  (!backupKey || Buffer.byteLength(backupKey) < 32)
+)
+  throw new Error('production_backup_key_required');
 const output = resolve(
   process.argv[2] ?? `backup-${new Date().toISOString().replace(/[:.]/g, '-')}`,
 );
@@ -22,5 +28,12 @@ for (const file of files) {
     if (error.code !== 'ENOENT') throw error;
   }
 }
-await writeFile(join(output, 'manifest.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
+const manifestText = JSON.stringify(manifest, null, 2);
+await writeFile(join(output, 'manifest.json'), manifestText, { mode: 0o600 });
+if (backupKey)
+  await writeFile(
+    join(output, 'manifest.mac'),
+    createHmac('sha256', backupKey).update(manifestText).digest('hex'),
+    { mode: 0o600 },
+  );
 console.log(`Backup created at ${output} (${manifest.files.length} files)`);

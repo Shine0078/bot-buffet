@@ -45,4 +45,25 @@ describe('durable state and tamper-evident audit', () => {
     await store.unlock('file:a', 'a');
     expect(await store.lock('file:a', 'b', 10000)).toBe(true);
   });
+  it('persists idempotency responses for replay after restart', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-'));
+    const path = join(dir, 'state.json');
+    const store = new JsonStateStore(path);
+    await store.setIdempotency('u:/api/v1/runs:key', 202, { id: 'run_1' });
+    const reloaded = new JsonStateStore(path);
+    expect(await reloaded.getIdempotency('u:/api/v1/runs:key')).toMatchObject({
+      status: 202,
+      payload: { id: 'run_1' },
+    });
+  });
+  it('claims an idempotency key only once under concurrent requests', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-'));
+    const store = new JsonStateStore(join(dir, 'state.json'));
+    const claims = await Promise.all([
+      store.claimIdempotency('u:/api/v1/runs:concurrent'),
+      store.claimIdempotency('u:/api/v1/runs:concurrent'),
+    ]);
+    expect(claims.filter((claim) => claim.claimed)).toHaveLength(1);
+    expect(claims.filter((claim) => !claim.claimed)).toHaveLength(1);
+  });
 });

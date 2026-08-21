@@ -7,7 +7,7 @@ import { ModelRouter } from '../src/router.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { createStore } from '../src/store.js';
 import { createBuiltinTools } from '../src/tools.js';
-import { Agent, Model, Project, Task, entity } from '../src/types.js';
+import { Agent, Checkpoint, Model, Project, Task, entity } from '../src/types.js';
 
 describe('durable orchestration', () => {
   it('creates checkpoints and evidence-backed completion', async () => {
@@ -117,6 +117,18 @@ describe('durable orchestration', () => {
     await orchestrator.start(run.id);
     const saved = await store.get<typeof run>(run.id);
     expect(saved?.status).toBe('completed');
-    expect((await store.list((x) => x.kind === 'checkpoint')).length).toBeGreaterThan(0);
+    const checkpoints = await store.list((x) => x.kind === 'checkpoint');
+    expect(checkpoints.length).toBeGreaterThan(0);
+    const checkpoint = checkpoints[0]!;
+    const fork = await orchestrator.command({
+      runId: run.id,
+      type: 'fork',
+      checkpointId: checkpoint.id,
+    });
+    expect(fork?.parentRunId).toBe(run.id);
+    expect(await store.getRunState(fork!.id)).toEqual((checkpoint as unknown as Checkpoint).state);
+    await store.setRunState(run.id, { changed: true });
+    await orchestrator.command({ runId: run.id, type: 'rollback', checkpointId: checkpoint.id });
+    expect(await store.getRunState(run.id)).toEqual((checkpoint as unknown as Checkpoint).state);
   });
 });

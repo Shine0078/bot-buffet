@@ -99,6 +99,12 @@ export interface Membership extends BaseEntity {
   workspaceId: ID;
   role: RoleName;
 }
+export interface Role extends BaseEntity {
+  kind: 'role';
+  name: RoleName | string;
+  permissions: string[];
+  system: boolean;
+}
 export interface Project extends BaseEntity {
   kind: 'project';
   workspaceId: ID;
@@ -252,6 +258,18 @@ export interface Plugin extends BaseEntity {
   network: 'blocked' | 'allowlist' | 'open';
   retention: string;
   permissions: string[];
+  integritySha256?: string;
+  previousReleaseVersion?: string;
+}
+export interface MCPServer extends BaseEntity {
+  kind: 'mcp-server';
+  name: string;
+  endpoint: string;
+  transport: 'stdio' | 'sse' | 'streamable-http';
+  credentialId?: ID;
+  enabled: boolean;
+  toolNames: string[];
+  integritySha256?: string;
 }
 export interface Policy extends BaseEntity {
   kind: 'policy';
@@ -561,6 +579,7 @@ export type Entity =
   | Organization
   | Workspace
   | Membership
+  | Role
   | Project
   | Environment
   | Agent
@@ -570,6 +589,7 @@ export type Entity =
   | ModelRoute
   | ToolDefinition
   | Plugin
+  | MCPServer
   | Policy
   | Permission
   | Task
@@ -598,6 +618,7 @@ export interface RuntimeState {
   entities: Record<string, Entity>;
   runState: Record<ID, Record<string, unknown>>;
   locks: Record<string, { ownerId: ID; expiresAt: ISODate }>;
+  idempotency: Record<string, { status: number; payload: unknown; createdAt: ISODate }>;
   auditTail: string;
   schemaVersion: number;
 }

@@ -1,11 +1,28 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 const source = resolve(process.argv[2] ?? '');
 const target = resolve(process.env.BOT_BUFFET_DATA_DIR ?? '.data-restore');
 if (!source || source === resolve('.')) throw new Error('restore_requires_backup_directory');
-const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
+const manifestText = await readFile(join(source, 'manifest.json'), 'utf8');
+const manifest = JSON.parse(manifestText);
+const backupKey = process.env.BOT_BUFFET_BACKUP_KEY ?? process.env.BOT_BUFFET_MASTER_KEY;
+let manifestMac;
+try {
+  manifestMac = (await readFile(join(source, 'manifest.mac'), 'utf8')).trim();
+} catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+}
+if (manifestMac) {
+  if (!backupKey) throw new Error('restore_manifest_key_required');
+  const expected = Buffer.from(createHmac('sha256', backupKey).update(manifestText).digest('hex'));
+  const presented = Buffer.from(manifestMac);
+  if (expected.length !== presented.length || !timingSafeEqual(expected, presented))
+    throw new Error('restore_manifest_authentication_failed');
+} else if (process.env.BOT_BUFFET_AUTH_MODE === 'production') {
+  throw new Error('production_signed_manifest_required');
+}
 await mkdir(target, { recursive: true });
 for (const item of manifest.files ?? []) {
   if (

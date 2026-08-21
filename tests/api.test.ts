@@ -7,6 +7,7 @@ import { createApi } from '../src/api.js';
 import { CredentialVault } from '../src/secrets.js';
 import { createStore } from '../src/store.js';
 import { Orchestrator } from '../src/orchestrator.js';
+import { entity, Agent, Environment, Project, Run, Task } from '../src/types.js';
 
 const servers: Array<ReturnType<typeof createApi>> = [];
 afterEach(async () => {
@@ -59,5 +60,124 @@ describe('API boundary controls', () => {
     const base = await start();
     const response = await fetch(`${base}/../package.json`);
     expect(response.status).not.toBe(200);
+  });
+  it('keeps plugin updates disabled and supports integrity-pinned rollback/delete', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/plugins`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Example', source: 'local' }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as { id: string; enabled: boolean };
+    expect(created.enabled).toBe(false);
+    const updatedResponse = await fetch(`${base}/api/v1/plugins/${created.id}/update`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: '1.1.0', integritySha256: 'a'.repeat(64) }),
+    });
+    expect(updatedResponse.status).toBe(200);
+    const deletedResponse = await fetch(`${base}/api/v1/plugins/${created.id}`, {
+      method: 'DELETE',
+    });
+    expect(deletedResponse.status).toBe(204);
+  });
+  it('replays a run create response for the same idempotency key', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));
+    const store = createStore(dir);
+    const project = entity({
+      kind: 'project',
+      ownerId: 'local-user',
+      scope: 'workspace',
+      workspaceId: 'workspace',
+      name: 'P',
+      slug: 'p',
+      archived: false,
+    }) as Project;
+    const environment = entity({
+      kind: 'environment',
+      ownerId: 'local-user',
+      scope: project.id,
+      projectId: project.id,
+      name: 'dev',
+      network: 'blocked' as const,
+      persistent: false,
+      protected: false,
+    }) as Environment;
+    const agent = entity({
+      kind: 'agent',
+      ownerId: 'local-user',
+      scope: project.id,
+      projectId: project.id,
+      environmentId: environment.id,
+      status: 'idle' as const,
+      profile: { mode: 'supervised' } as never,
+    }) as Agent;
+    const task = entity({
+      kind: 'task',
+      ownerId: 'local-user',
+      scope: project.id,
+      projectId: project.id,
+      environmentId: environment.id,
+      title: 't',
+      description: 't',
+      acceptanceCriteria: [],
+      status: 'ready' as const,
+      priority: 1,
+      dependencyIds: [],
+      labels: [],
+    }) as Task;
+    await store.insert(project);
+    await store.insert(environment);
+    await store.insert(agent);
+    await store.insert(task);
+    let creates = 0;
+    const run = entity({
+      kind: 'run',
+      ownerId: 'local-user',
+      scope: project.id,
+      projectId: project.id,
+      environmentId: environment.id,
+      agentId: agent.id,
+      taskId: task.id,
+      mode: 'supervised' as const,
+      status: 'queued' as const,
+      stepCount: 0,
+      maxSteps: 1,
+      cancelRequested: false,
+      costCents: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      latencyMs: 0,
+    }) as Run;
+    const orchestrator = Object.assign(new EventEmitter(), {
+      createRun: async () => {
+        creates += 1;
+        return run;
+      },
+      start: async () => undefined,
+    }) as unknown as Orchestrator;
+    const server = createApi({
+      store,
+      orchestrator,
+      uiRoot: dir,
+      vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+    const base = `http://127.0.0.1:${address.port}`;
+    const init = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': 'same-run' },
+      body: JSON.stringify({ projectId: project.id, agentId: agent.id, taskId: task.id }),
+    };
+    const first = await fetch(`${base}/api/v1/runs`, init);
+    const second = await fetch(`${base}/api/v1/runs`, init);
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(await second.json()).toMatchObject({ id: run.id });
+    expect(creates).toBe(1);
   });
 });

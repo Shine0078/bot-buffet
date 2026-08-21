@@ -13,6 +13,7 @@ import {
   EvaluationCase,
   EvaluationDataset,
   MemoryItem,
+  MCPServer,
   Model,
   ModelProvider,
   Plugin,
@@ -113,6 +114,14 @@ export function createApi(deps: ApiDeps) {
   const server = createServer(async (req, res) => {
     const requestId = randomUUID();
     res.setHeader('x-request-id', requestId);
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('referrer-policy', 'no-referrer');
+    res.setHeader(
+      'content-security-policy',
+      "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'",
+    );
+    if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+      res.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
     res.setHeader(
       'access-control-allow-origin',
       process.env.BOT_BUFFET_ALLOWED_ORIGINS ?? 'http://localhost:8787',
@@ -161,6 +170,21 @@ export function createApi(deps: ApiDeps) {
       }
     }
     try {
+      const idempotencyHeader = String(req.headers['idempotency-key'] ?? '').trim();
+      const idempotencyEligible = req.method === 'POST' && path === '/api/v1/runs';
+      if (idempotencyEligible && idempotencyHeader) {
+        if (idempotencyHeader.length > 256)
+          return send(res, 400, { code: 'idempotency_key_too_long', requestId });
+        const idempotencyScope = `${actorId}:${path}:${fingerprint(idempotencyHeader)}`;
+        const replay = await deps.store.getIdempotency(idempotencyScope);
+        if (replay)
+          return send(
+            res,
+            replay.status === 102 ? 409 : replay.status,
+            replay.status === 102 ? { code: 'idempotency_in_progress' } : replay.payload,
+          );
+        req.headers['x-bot-buffet-idempotency-scope'] = idempotencyScope;
+      }
       if (path === '/healthz')
         return send(res, 200, { status: 'ok', service: 'bot-buffet', time: now() });
       if (path === '/readyz')
@@ -545,6 +569,90 @@ export function createApi(deps: ApiDeps) {
         } as Plugin);
         return send(res, 200, saved);
       }
+      const pluginUpdate = path.match(/^\/api\/v1\/plugins\/([^/]+)\/(update|rollback)$/);
+      if (pluginUpdate && req.method === 'POST') {
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginUpdate[1]!),
+          'admin',
+          'plugin',
+        );
+        if (plugin.enabled || plugin.workspaceEnabled)
+          throw new Error('plugin_update_requires_disabled');
+        const body = await parseBody(req);
+        const integrity = body.integritySha256
+          ? String(body.integritySha256)
+          : plugin.integritySha256;
+        if (!integrity || !/^[a-f0-9]{64}$/i.test(integrity))
+          throw new Error('plugin_integrity_required');
+        const nextVersion =
+          pluginUpdate[2] === 'rollback'
+            ? plugin.previousReleaseVersion
+            : String(body.version ?? plugin.releaseVersion);
+        if (!nextVersion) throw new Error('plugin_rollback_unavailable');
+        const saved = await deps.store.put({
+          ...plugin,
+          previousReleaseVersion: plugin.releaseVersion,
+          releaseVersion: nextVersion,
+          source: body.source ? String(body.source) : plugin.source,
+          integritySha256: integrity,
+          version: plugin.version,
+        } as Plugin);
+        return send(res, 200, saved);
+      }
+      const pluginDelete = path.match(/^\/api\/v1\/plugins\/([^/]+)$/);
+      if (pluginDelete && req.method === 'DELETE') {
+        await required(actorId, await deps.store.get<Plugin>(pluginDelete[1]!), 'admin', 'plugin');
+        await deps.store.delete(pluginDelete[1]!);
+        return send(res, 204, { deleted: true });
+      }
+      if (path === '/api/v1/mcp-servers' && req.method === 'GET')
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<MCPServer>((x) => x.kind === 'mcp-server')),
+        );
+      if (path === '/api/v1/mcp-servers' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const scope = String(body.scope ?? 'workspace_local');
+        const scopeEntity = await deps.store.get(scope);
+        if (scopeEntity) await required(actorId, scopeEntity, 'admin', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('mcp_scope_required');
+        const transport = String(body.transport ?? 'streamable-http') as MCPServer['transport'];
+        const endpoint = String(body.endpoint ?? '');
+        if (!['stdio', 'sse', 'streamable-http'].includes(transport))
+          throw new Error('mcp_transport_invalid');
+        if (transport !== 'stdio') assertSafeEndpoint(endpoint);
+        const serverEntity = entity({
+          kind: 'mcp-server',
+          ownerId: actorId,
+          scope,
+          name: String(body.name ?? 'MCP server'),
+          endpoint,
+          transport,
+          enabled: false,
+          toolNames: [],
+          integritySha256: body.integritySha256 ? String(body.integritySha256) : undefined,
+        }) as MCPServer;
+        await deps.store.insert(serverEntity);
+        return send(res, 201, serverEntity);
+      }
+      const mcpMatch = path.match(/^\/api\/v1\/mcp-servers\/([^/]+)\/(enable|disable)$/);
+      if (mcpMatch && req.method === 'POST') {
+        const serverEntity = await required(
+          actorId,
+          await deps.store.get<MCPServer>(mcpMatch[1]!),
+          'admin',
+          'mcp-server',
+        );
+        const saved = await deps.store.put({
+          ...serverEntity,
+          enabled: mcpMatch[2] === 'enable',
+          version: serverEntity.version,
+        } as MCPServer);
+        return send(res, 200, saved);
+      }
       if (path === '/api/v1/files' && req.method === 'GET') {
         const projectId = url.searchParams.get('projectId');
         return send(
@@ -714,6 +822,18 @@ export function createApi(deps: ApiDeps) {
           task.environmentId !== environment.id
         )
           throw new Error('run_environment_scope_mismatch');
+        const idempotencyScope = req.headers['x-bot-buffet-idempotency-scope'];
+        if (idempotencyScope) {
+          const claim = await deps.store.claimIdempotency(String(idempotencyScope));
+          if (!claim.claimed)
+            return send(
+              res,
+              claim.record.status === 102 ? 409 : claim.record.status,
+              claim.record.status === 102
+                ? { code: 'idempotency_in_progress' }
+                : claim.record.payload,
+            );
+        }
         const run = await deps.orchestrator.createRun({
           ownerId: actorId,
           project,
@@ -721,6 +841,7 @@ export function createApi(deps: ApiDeps) {
           task,
           mode: body.mode as never,
         });
+        if (idempotencyScope) await deps.store.setIdempotency(String(idempotencyScope), 202, run);
         void deps.orchestrator.start(run.id);
         return send(res, 202, run);
       }
@@ -852,10 +973,13 @@ export function createApi(deps: ApiDeps) {
       }
       send(res, 404, { code: 'not_found' });
     } catch (error) {
-      send(res, 400, {
+      const failure = {
         code: 'request_failed',
         message: redactSecrets((error as Error).message) as string,
-      });
+      };
+      const idempotencyScope = req.headers['x-bot-buffet-idempotency-scope'];
+      if (idempotencyScope) await deps.store.setIdempotency(String(idempotencyScope), 400, failure);
+      send(res, 400, failure);
     }
   });
   server.requestTimeout = 30_000;
