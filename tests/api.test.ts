@@ -127,6 +127,12 @@ describe('API boundary controls', () => {
       body: JSON.stringify({ strategy: 'unknown', modelIds: ['m'] }),
     });
     expect(invalid.status).toBe(400);
+    const invalidCost = await fetch(`${base}/api/v1/model-routes`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ modelIds: ['m'], maxCostCents: 'not-a-number' }),
+    });
+    expect(invalidCost.status).toBe(400);
   });
 
   it('adds correlation ids and rejects oversized bodies', async () => {
