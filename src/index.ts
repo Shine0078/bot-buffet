@@ -9,7 +9,7 @@ import { createStore } from './store.js';
 import { createBuiltinTools } from './tools.js';
 import { CredentialVault } from './secrets.js';
 import { assertSandboxConfiguration } from './sandbox.js';
-import { PkceSessionStore } from './oauth.js';
+import { DeviceSessionStore, PkceSessionStore } from './oauth.js';
 import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
@@ -169,6 +169,7 @@ async function bootstrap(): Promise<void> {
 await bootstrap();
 const tools = createBuiltinTools(store);
 const oauth = new PkceSessionStore();
+const device = new DeviceSessionStore();
 const router = new ModelRouter(
   async () => store.list<Model>((x) => x.kind === 'model'),
   async () => true,
@@ -198,6 +199,7 @@ const server = createApi({
   vault,
   tools,
   oauth,
+  device,
   registerProvider: (provider) => providers.set(provider.id, provider),
 });
 const port = Number(process.env.PORT ?? 8787);

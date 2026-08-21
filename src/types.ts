@@ -192,6 +192,7 @@ export interface ModelProvider extends BaseEntity {
 export interface OAuthProviderConfig {
   authorizationEndpoint: string;
   tokenEndpoint: string;
+  deviceAuthorizationEndpoint?: string;
   clientId: string;
   scopes: string[];
   redirectUri: string;

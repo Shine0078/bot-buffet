@@ -38,7 +38,11 @@ import { CredentialVault } from './secrets.js';
 import { AuthorizationService } from './authorization.js';
 import { AuthenticationError, authenticateRequest } from './auth.js';
 import { ToolRegistry } from './tools.js';
-import { PkceSessionStore } from './oauth.js';
+import {
+  DeviceSessionStore,
+  PkceSessionStore,
+  validateDeviceAuthorizationEndpoint,
+} from './oauth.js';
 import { fetchPinned } from './egress.js';
 import { evaluateCases } from './evaluations.js';
 
@@ -49,6 +53,7 @@ export interface ApiDeps {
   vault: CredentialVault;
   tools?: ToolRegistry;
   oauth?: PkceSessionStore;
+  device?: DeviceSessionStore;
   registerProvider?: (provider: ModelProvider) => void;
 }
 const send = (res: ServerResponse, status: number, payload: unknown): void => {
@@ -97,9 +102,17 @@ const parseOAuthConfig = (value: unknown): OAuthProviderConfig | undefined => {
     scopes.length === 0
   )
     throw new Error('oauth_configuration_invalid');
+  if (
+    candidate.deviceAuthorizationEndpoint !== undefined &&
+    typeof candidate.deviceAuthorizationEndpoint !== 'string'
+  )
+    throw new Error('oauth_configuration_invalid');
   return {
     authorizationEndpoint: candidate.authorizationEndpoint,
     tokenEndpoint: candidate.tokenEndpoint,
+    ...(typeof candidate.deviceAuthorizationEndpoint === 'string'
+      ? { deviceAuthorizationEndpoint: candidate.deviceAuthorizationEndpoint }
+      : {}),
     clientId: candidate.clientId,
     redirectUri: candidate.redirectUri,
     scopes,
@@ -570,6 +583,169 @@ export function createApi(deps: ApiDeps) {
         return send(res, 200, {
           authorizeUrl: result.authorizationUrl,
           expiresAt: new Date(result.session.expiresAt).toISOString(),
+        });
+      }
+      const deviceStart = path.match(/^\/api\/v1\/providers\/([^/]+)\/device\/start$/);
+      if (deviceStart && req.method === 'POST') {
+        if (!deps.device) throw new Error('device_authorization_not_configured');
+        const provider = await required(
+          actorId,
+          await deps.store.get<ModelProvider>(deviceStart[1]!),
+          'write',
+          'model-provider',
+        );
+        const deviceEndpoint = provider.oauth?.deviceAuthorizationEndpoint;
+        if (!provider.oauth || !deviceEndpoint)
+          throw new Error('device_authorization_not_configured');
+        const endpoint = validateDeviceAuthorizationEndpoint(deviceEndpoint);
+        const deviceResponse = await fetchPinned(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: provider.oauth.clientId,
+            scope: provider.oauth.scopes.join(' '),
+          }).toString(),
+          redirect: 'error',
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!deviceResponse.ok)
+          throw new Error(`device_authorization_start_failed:${deviceResponse.status}`);
+        const payload = (await deviceResponse.json()) as {
+          device_code?: unknown;
+          user_code?: unknown;
+          verification_uri?: unknown;
+          verification_url?: unknown;
+          expires_in?: unknown;
+          interval?: unknown;
+        };
+        if (
+          typeof payload.device_code !== 'string' ||
+          typeof payload.user_code !== 'string' ||
+          (typeof payload.verification_uri !== 'string' &&
+            typeof payload.verification_url !== 'string')
+        )
+          throw new Error('device_authorization_response_invalid');
+        const result = deps.device.create({
+          actorId,
+          providerId: provider.id,
+          clientId: provider.oauth.clientId,
+          deviceCode: payload.device_code,
+          userCode: payload.user_code,
+          verificationUri: String(payload.verification_uri ?? payload.verification_url),
+          expiresInSeconds: typeof payload.expires_in === 'number' ? payload.expires_in : undefined,
+          intervalSeconds: typeof payload.interval === 'number' ? payload.interval : undefined,
+        });
+        return send(res, 200, {
+          sessionId: result.sessionId,
+          userCode: result.userCode,
+          verificationUri: result.verificationUri,
+          expiresAt: new Date(result.expiresAt).toISOString(),
+          intervalSeconds: result.intervalSeconds,
+        });
+      }
+      const devicePoll = path.match(/^\/api\/v1\/providers\/([^/]+)\/device\/poll$/);
+      if (devicePoll && req.method === 'POST') {
+        if (!deps.device) throw new Error('device_authorization_not_configured');
+        const provider = await required(
+          actorId,
+          await deps.store.get<ModelProvider>(devicePoll[1]!),
+          'write',
+          'model-provider',
+        );
+        if (!provider.oauth) throw new Error('device_authorization_not_configured');
+        const body = await parseBody(req);
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+        if (!sessionId || sessionId.length > 256) throw new Error('device_session_invalid');
+        const session = deps.device.beginPoll(provider.id, actorId, sessionId);
+        const tokenEndpoint = new URL(provider.oauth.tokenEndpoint);
+        const tokenResponse = await fetchPinned(tokenEndpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+            device_code: session.deviceCode,
+            client_id: session.clientId,
+          }).toString(),
+          redirect: 'error',
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!tokenResponse.ok) {
+          let providerError = '';
+          try {
+            const errorPayload = (await tokenResponse.json()) as { error?: unknown };
+            if (typeof errorPayload.error === 'string') providerError = errorPayload.error;
+          } catch {
+            // Error bodies are intentionally not returned or logged.
+          }
+          if (providerError === 'authorization_pending')
+            return send(res, 202, {
+              status: 'pending',
+              retryAfterSeconds: session.intervalSeconds,
+            });
+          if (providerError === 'slow_down') {
+            const retryAfterSeconds = deps.device.slowDown(session.sessionId);
+            return send(res, 202, { status: 'pending', retryAfterSeconds });
+          }
+          deps.device.invalidate(session.sessionId);
+          if (providerError === 'expired_token') throw new Error('device_authorization_expired');
+          if (providerError === 'access_denied') throw new Error('device_authorization_denied');
+          throw new Error(`device_token_exchange_failed:${tokenResponse.status}`);
+        }
+        const tokenPayload = (await tokenResponse.json()) as { access_token?: unknown };
+        if (typeof tokenPayload.access_token !== 'string' || tokenPayload.access_token.length < 8) {
+          deps.device.invalidate(session.sessionId);
+          throw new Error('device_access_token_missing');
+        }
+        const accessToken = tokenPayload.access_token;
+        // Consume the device session before any durable writes so a successful
+        // provider exchange cannot be replayed if persistence fails or a
+        // concurrent poll arrives after the provider has issued the token.
+        deps.device.complete(session.sessionId);
+        await deps.vault.set(provider.id, accessToken);
+        const existing = provider.credentialId
+          ? await deps.store.get<Credential>(provider.credentialId)
+          : undefined;
+        const metadata = {
+          providerId: provider.id,
+          label: `${provider.name} device credential`,
+          authType: 'device' as const,
+          scopes: provider.oauth.scopes,
+          disabled: false,
+          lastTestedAt: now(),
+          fingerprint: fingerprint(accessToken),
+        };
+        const credential = existing
+          ? await deps.store.put({ ...existing, metadata, version: existing.version } as Credential)
+          : ((await deps.store.insert(
+              entity({
+                kind: 'credential',
+                ownerId: actorId,
+                scope: provider.scope,
+                metadata,
+                secretRef: provider.id,
+              }) as Credential,
+            )) as Credential);
+        const saved = await deps.store.put({
+          ...provider,
+          credentialId: credential.id,
+          version: provider.version,
+        } as ModelProvider);
+        deps.registerProvider?.(saved);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: provider.scope,
+          actorId,
+          action: 'credential.connected',
+          resourceType: 'model-provider',
+          resourceId: provider.id,
+          risk: 'critical',
+          decision: 'executed',
+          metadata: { authType: 'device', scopes: provider.oauth.scopes },
+        });
+        return send(res, 200, {
+          provider: saved,
+          credential: { id: credential.id, metadata: credential.metadata },
         });
       }
       const providerTest = path.match(/^\/api\/v1\/providers\/([^/]+)\/test$/);

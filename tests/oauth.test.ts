@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { PkceSessionStore, pkceChallenge, validatePkceVerifier } from '../src/oauth.js';
+import {
+  DeviceSessionStore,
+  PkceSessionStore,
+  pkceChallenge,
+  validatePkceVerifier,
+} from '../src/oauth.js';
 
 describe('OAuth 2.0 PKCE sessions', () => {
   it('creates a standards-compliant authorization URL and one-time session', () => {
@@ -66,5 +71,60 @@ describe('OAuth 2.0 PKCE sessions', () => {
       store.consume('provider-1', result.session.state, 'user-1', result.session.expiresAt),
     ).toThrow('oauth_state_invalid_or_expired');
     expect(pkceChallenge(result.session.verifier)).not.toBe(result.session.state);
+  });
+});
+
+describe('OAuth 2.0 device authorization sessions', () => {
+  it('keeps device codes server-side and binds polling to actor/provider', () => {
+    const store = new DeviceSessionStore();
+    const result = store.create({
+      actorId: 'user-1',
+      providerId: 'provider-1',
+      clientId: 'client-1',
+      deviceCode: 'device-secret-code',
+      userCode: 'ABCD-EFGH',
+      verificationUri: 'https://login.example.test/device',
+      expiresInSeconds: 120,
+      intervalSeconds: 2,
+    });
+    expect(result).not.toHaveProperty('deviceCode');
+    expect(result.userCode).toBe('ABCD-EFGH');
+    expect(() => store.beginPoll('provider-2', 'user-1', result.sessionId)).toThrow(
+      'device_session_invalid_or_expired',
+    );
+    const session = store.beginPoll('provider-1', 'user-1', result.sessionId, 1_000);
+    expect(session.deviceCode).toBe('device-secret-code');
+    expect(() => store.beginPoll('provider-1', 'user-1', result.sessionId, 1_500)).toThrow(
+      'device_poll_too_fast',
+    );
+    expect(store.slowDown(result.sessionId)).toBe(7);
+    store.complete(result.sessionId);
+    expect(store.size()).toBe(0);
+  });
+
+  it('rejects unsafe verification endpoints and expires sessions', () => {
+    const store = new DeviceSessionStore();
+    expect(() =>
+      store.create({
+        actorId: 'user-1',
+        providerId: 'provider-1',
+        clientId: 'client-1',
+        deviceCode: 'device-code',
+        userCode: 'ABCD',
+        verificationUri: 'http://login.example.test/device',
+      }),
+    ).toThrow('oauth_verification_uri_https_required');
+    const result = store.create({
+      actorId: 'user-1',
+      providerId: 'provider-1',
+      clientId: 'client-1',
+      deviceCode: 'device-code',
+      userCode: 'ABCD',
+      verificationUri: 'https://login.example.test/device',
+      expiresInSeconds: 60,
+    });
+    expect(() =>
+      store.beginPoll('provider-1', 'user-1', result.sessionId, result.expiresAt),
+    ).toThrow('device_session_invalid_or_expired');
   });
 });

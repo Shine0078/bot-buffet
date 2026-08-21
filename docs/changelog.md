@@ -21,3 +21,4 @@
 - OAuth hardening pass: added actor-bound, one-time OAuth 2.0 PKCE sessions with S256 challenges, strict HTTPS/loopback redirect validation, bounded session capacity, server-side code exchange, and encrypted credential storage.
 - Evaluation execution pass: added deterministic exact-match/contains graders, explicit unsupported-grader failures, scoped evaluation-run persistence, evidence-only results, and API regression coverage.
 - Provider fidelity pass: Cohere now uses a native v2 chat/model adapter with normalized tool calls and usage; Azure OpenAI uses deployment-scoped `api-key` requests; and Bedrock uses SigV4-signed Converse requests instead of being silently routed through the OpenAI-compatible wire format.
+- Device authorization pass: added bounded actor/provider-bound device-code sessions, server-side polling with pending/slow-down handling, device-code redaction, encrypted token persistence, and API regression coverage.
