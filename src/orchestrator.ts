@@ -208,6 +208,7 @@ export class Orchestrator extends EventEmitter {
             allowedModelIds: agent.profile.allowedModels,
             preferredModelId: agent.profile.preferredModelId,
             fallbackModelIds: agent.profile.fallbackModelIds,
+            estimatedOutputTokens: Math.min(agent.profile.tokenLimit, 4096),
           },
           route[0],
         );

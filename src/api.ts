@@ -881,6 +881,9 @@ export function createApi(deps: ApiDeps) {
           capabilities: { ...defaultCapabilities(), ...((body.capabilities as object) ?? {}) },
           inputCostPerMillionCents: Number(body.inputCostPerMillionCents ?? 0),
           outputCostPerMillionCents: Number(body.outputCostPerMillionCents ?? 0),
+          latencyMs: body.latencyMs === undefined ? undefined : Math.max(0, Number(body.latencyMs)),
+          routingWeight:
+            body.routingWeight === undefined ? undefined : Math.max(0, Number(body.routingWeight)),
           available: true,
         });
         await deps.store.insert(model);
@@ -927,6 +930,13 @@ export function createApi(deps: ApiDeps) {
           : [];
         if (!modelIds.length && !fallbackModelIds.length)
           throw new Error('model_route_models_required');
+        const maxCostCents =
+          body.maxCostCents === undefined ? undefined : Number(body.maxCostCents);
+        if (
+          maxCostCents !== undefined &&
+          (!Number.isFinite(maxCostCents) || maxCostCents > 1_000_000_000)
+        )
+          throw new Error('model_route_cost_invalid');
         const route = entity({
           kind: 'model-route',
           ownerId: actorId,
@@ -938,9 +948,7 @@ export function createApi(deps: ApiDeps) {
           modelIds,
           fallbackModelIds,
           offlineOnly: Boolean(body.offlineOnly),
-          ...(body.maxCostCents === undefined
-            ? {}
-            : { maxCostCents: Math.max(0, Number(body.maxCostCents)) }),
+          ...(maxCostCents === undefined ? {} : { maxCostCents: Math.max(0, maxCostCents) }),
         }) as ModelRoute;
         await deps.store.insert(route);
         return send(res, 201, route);

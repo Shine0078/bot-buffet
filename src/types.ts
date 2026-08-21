@@ -224,6 +224,8 @@ export interface Model extends BaseEntity {
   license?: string;
   quantization?: string;
   sizeBytes?: number;
+  latencyMs?: number;
+  routingWeight?: number;
   available: boolean;
 }
 export interface ModelRoute extends BaseEntity {

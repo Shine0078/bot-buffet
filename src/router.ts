@@ -10,6 +10,7 @@ export interface RoutingRequest {
   localPreferred?: boolean;
   offline: boolean;
   estimatedCostCents?: number;
+  estimatedOutputTokens?: number;
   allowedModelIds?: ID[];
   preferredModelId?: ID;
   fallbackModelIds?: ID[];
@@ -32,6 +33,11 @@ export class ModelRouter {
     overrideModelId?: ID,
   ): Promise<RoutingDecision> {
     const inventory = await this.models();
+    const estimateCost = (model: Model) =>
+      request.estimatedCostCents ??
+      (Math.max(0, request.contextTokens) * model.inputCostPerMillionCents +
+        Math.max(0, request.estimatedOutputTokens ?? 0) * model.outputCostPerMillionCents) /
+        1_000_000;
     const eligible = inventory
       .filter(
         (model) =>
@@ -48,7 +54,10 @@ export class ModelRouter {
           request.allowedModelIds.includes(model.modelName) ||
           request.allowedModelIds.includes(model.name),
       )
-      .filter((model) => !route?.offlineOnly || model.local);
+      .filter((model) => !route?.offlineOnly || model.local)
+      .filter(
+        (model) => route?.maxCostCents === undefined || estimateCost(model) <= route.maxCostCents,
+      );
     if (overrideModelId) {
       const selected = eligible.find((model) => model.id === overrideModelId);
       if (!selected) throw new Error('routing:override_not_eligible');
@@ -67,10 +76,18 @@ export class ModelRouter {
     if (!filtered.length) throw new Error('routing:no_eligible_models');
     const ordered =
       route?.strategy === 'least-cost'
-        ? [...filtered].sort((a, b) => a.inputCostPerMillionCents - b.inputCostPerMillionCents)
-        : route?.strategy === 'privacy-first'
-          ? [...filtered].sort((a, b) => Number(b.local) - Number(a.local))
-          : filtered;
+        ? [...filtered].sort((a, b) => estimateCost(a) - estimateCost(b))
+        : route?.strategy === 'lowest-latency'
+          ? [...filtered].sort(
+              (a, b) =>
+                (a.latencyMs ?? Number.POSITIVE_INFINITY) -
+                (b.latencyMs ?? Number.POSITIVE_INFINITY),
+            )
+          : route?.strategy === 'weighted'
+            ? [...filtered].sort((a, b) => (b.routingWeight ?? 0) - (a.routingWeight ?? 0))
+            : route?.strategy === 'privacy-first'
+              ? [...filtered].sort((a, b) => Number(b.local) - Number(a.local))
+              : filtered;
     for (const model of ordered)
       if (await this.health(model.id)) {
         assertOffline(request.offline, model.local);
