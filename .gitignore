@@ -9,3 +9,4 @@ coverage/
 *.log
 sbom.cyclonedx.json
 provenance.json
+results.sarif
