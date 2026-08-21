@@ -383,6 +383,7 @@ export function createApi(deps: ApiDeps) {
             (x) => x.kind === 'model' && x.providerId === provider!.id && x.modelName === modelName,
           )
         )[0];
+        if (existing) await required(actorId, existing, 'read', 'model');
         const model =
           existing ??
           ((await deps.store.insert(
