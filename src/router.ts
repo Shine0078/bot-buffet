@@ -10,6 +10,7 @@ export interface RoutingRequest {
   localPreferred?: boolean;
   offline: boolean;
   estimatedCostCents?: number;
+  allowedModelIds?: ID[];
 }
 export interface RoutingDecision {
   modelId: ID;
@@ -37,9 +38,15 @@ export class ModelRouter {
           model.capabilities.contextTokens >= request.contextTokens,
       )
       .filter((model) => !request.offline || model.local)
+      .filter((model) => request.privacy !== 'private' || model.local)
       .filter(
-        (model) => request.privacy !== 'private' || model.local || request.localPreferred !== true,
-      );
+        (model) =>
+          !request.allowedModelIds?.length ||
+          request.allowedModelIds.includes(model.id) ||
+          request.allowedModelIds.includes(model.modelName) ||
+          request.allowedModelIds.includes(model.name),
+      )
+      .filter((model) => !route?.offlineOnly || model.local);
     if (overrideModelId) {
       const selected = eligible.find((model) => model.id === overrideModelId);
       if (!selected) throw new Error('routing:override_not_eligible');

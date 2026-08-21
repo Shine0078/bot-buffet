@@ -8,6 +8,12 @@ if (!source || source === resolve('.')) throw new Error('restore_requires_backup
 const manifest = JSON.parse(await readFile(join(source, 'manifest.json'), 'utf8'));
 await mkdir(target, { recursive: true });
 for (const item of manifest.files ?? []) {
+  if (
+    !item ||
+    !['state.json', 'credentials.enc.json'].includes(item.file) ||
+    typeof item.sha256 !== 'string'
+  )
+    throw new Error('restore_manifest_rejected:unexpected_file');
   const bytes = await readFile(join(source, item.file));
   const hash = createHash('sha256').update(bytes).digest('hex');
   if (hash !== item.sha256) throw new Error(`restore_hash_mismatch:${item.file}`);

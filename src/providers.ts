@@ -1,5 +1,5 @@
 import { ModelProvider, CapabilitySet, ProviderKind, now } from './types.js';
-import { assertSafeEndpoint, redactSecrets } from './security.js';
+import { assertSafeEndpoint, assertSafeEndpointResolved, redactSecrets } from './security.js';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -52,15 +52,28 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
     private readonly provider: ModelProvider,
     private readonly token?: string,
   ) {
-    assertSafeEndpoint(provider.endpoint);
+    assertSafeEndpoint(
+      provider.endpoint,
+      ['ollama', 'lmstudio', 'llamacpp', 'localai', 'vllm', 'jan'].includes(provider.providerKind),
+    );
+  }
+  private localEndpoint(): boolean {
+    return ['ollama', 'lmstudio', 'llamacpp', 'localai', 'vllm', 'jan'].includes(
+      this.provider.providerKind,
+    );
   }
   async complete(request: ModelRequest): Promise<ModelResponse> {
     const started = Date.now();
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (this.token) headers.authorization = `Bearer ${this.token}`;
-    const response = await fetch(`${this.provider.endpoint.replace(/\/$/, '')}/chat/completions`, {
+    const signal = request.signal
+      ? AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000);
+    const endpoint = await assertSafeEndpointResolved(this.provider.endpoint, this.localEndpoint());
+    const response = await fetch(`${endpoint.toString().replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers,
+      redirect: 'error',
       body: JSON.stringify({
         model: request.model,
         messages: request.messages,
@@ -69,7 +82,7 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
         tools: request.tools,
         response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined,
       }),
-      signal: request.signal,
+      signal,
     });
     if (!response.ok)
       throw new Error(
@@ -105,7 +118,12 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
-      const result = await fetch(`${this.provider.endpoint.replace(/\/$/, '')}/models`, {
+      const endpoint = await assertSafeEndpointResolved(
+        this.provider.endpoint,
+        this.localEndpoint(),
+      );
+      const result = await fetch(`${endpoint.toString().replace(/\/$/, '')}/models`, {
+        redirect: 'error',
         signal: AbortSignal.timeout(3000),
       });
       return result.ok ? 'healthy' : 'degraded';
@@ -115,7 +133,12 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
   }
   async listModels(): Promise<string[]> {
     try {
-      const response = await fetch(`${this.provider.endpoint.replace(/\/$/, '')}/models`, {
+      const endpoint = await assertSafeEndpointResolved(
+        this.provider.endpoint,
+        this.localEndpoint(),
+      );
+      const response = await fetch(`${endpoint.toString().replace(/\/$/, '')}/models`, {
+        redirect: 'error',
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) return [];

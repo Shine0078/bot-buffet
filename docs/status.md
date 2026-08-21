@@ -7,10 +7,10 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - TypeScript/Node build, durable JSON state, entity hierarchy, audit hash chain, locks, and atomic writes.
 - Orchestrator loop: context assembly, routing, model call, typed tool validation, policy/approval gate, sandboxed execution, verification, checkpointing, pause/resume/stop/fork/rollback.
 - Local mock model and OpenAI-compatible adapter; offline router guard and local discovery probes.
-- Filesystem/shell tools with traversal, protected-path, metacharacter, timeout, output, and network controls.
+- Filesystem/shell tools with lexical plus realpath confinement, allowlisted/protected descendants, metacharacter and code-execution-flag rejection, read-only command policy, timeout, output, and network controls.
 - Office UI, responsive list/table alternative, SSE live events, health/readiness, and emergency stop.
 - Unit/security/integration tests, CI, container, SBOM, and operations documents.
-- Encrypted credential vault, provider test/revoke endpoints, scoped memory/plugin/file APIs.
+- Encrypted credential vault, provider test/revoke endpoints, authorization-filtered memory/plugin/file APIs, parent-scope checks, approval expiry/CAS, request limits, correlation IDs, and bounded SSE.
 - Budgeted context assembler with freshness/relevance ordering, compaction, redaction, and source-citation carry-through.
 - Research source intake, evaluation dataset/case registration, run replay/export, and aggregated observability summary endpoints.
 - Research foundation captured in `docs/research-foundation.md`, including inspected sources and explicit inaccessible-source owner actions.
@@ -19,7 +19,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 
 ## Evidence
 
-Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 15-test suite exercises redaction, path traversal, shell controls, endpoint SSRF checks, encrypted credential persistence, context compaction/citations, audit integrity, locks, offline routing, tool contracts, and checkpoint completion. Live smoke checks also verified health/readiness, UI delivery, a completed run, production bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration, project export, and observability summary.
+Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The 20-test suite exercises redaction, path traversal, shell controls, endpoint SSRF/TLS checks, encrypted credential persistence, context compaction/citations, audit integrity/CAS, locks, offline/private routing, tool contracts, API limits/auth, and checkpoint completion. Local smoke checks cover health/readiness, UI delivery, a completed run, bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration, project export, and observability summary; external provider and deployment evidence is not claimed.
 
 ## External owner gates (not claimable locally)
 
@@ -32,4 +32,4 @@ Each gate has exact actions in `docs/owner-gates.md`.
 
 ## Verification limitation
 
-The local TypeScript, test, lint, audit, build, HTTP health/auth, UI delivery, run, audit-chain, and SBOM checks pass. Docker image build/runtime verification is currently blocked by the local Docker daemon being unavailable (`dockerDesktopLinuxEngine` pipe not found). Owner action: start Docker Desktop or provide a staging container runner, then run `docker build`, start the image, call `/readyz`, execute a smoke run, inspect logs, and perform rollback verification. This is an explicit external gate, not a completion claim.
+The local TypeScript, test, lint, audit, build, HTTP health/auth, UI delivery, run, audit-chain, and SBOM checks are rerun after each implementation commit. Direct production identity remains a static bearer subject until the owner supplies OIDC/SSO claim validation; Docker image build/runtime verification is blocked by the local Docker daemon being unavailable (`dockerDesktopLinuxEngine` pipe not found). Owner action: start Docker Desktop or provide a staging container runner, then run `docker build`, start the image, call `/readyz`, execute a smoke run, inspect logs, and perform rollback verification. These are explicit external gates, not completion claims.

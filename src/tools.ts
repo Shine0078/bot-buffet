@@ -6,6 +6,7 @@ import { JsonStateStore } from './store.js';
 import { ToolDefinition, ID, JsonSchema } from './types.js';
 import {
   assertWorkspacePath,
+  assertWorkspaceRealPath,
   redactSecrets,
   validateCommand,
   validateJsonSchema,
@@ -91,6 +92,24 @@ const toolBase = (
 
 export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
   const registry = new ToolRegistry();
+  const pathAllowed = (root: string, resolved: string, paths: string[]): boolean =>
+    paths.some((allowed) => {
+      const base = assertWorkspacePath(root, allowed);
+      return resolved === base || resolved.startsWith(`${base}${sep}`);
+    });
+  const pathProtected = (root: string, resolved: string, paths: string[]): boolean =>
+    paths.some((protectedPath) => {
+      const base = assertWorkspacePath(root, protectedPath);
+      return resolved === base || resolved.startsWith(`${base}${sep}`);
+    }) ||
+    (() => {
+      const relativePath = relative(root, resolved);
+      return (
+        relativePath === '.git' ||
+        relativePath.startsWith(`.git${sep}`) ||
+        basename(relativePath).startsWith('.env')
+      );
+    })();
   registry.register({
     definition: toolBase(
       'filesystem.read',
@@ -111,15 +130,11 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
     ),
     execute: async (input, context) => {
       const path = String((input as { path: string }).path);
-      const resolved = assertWorkspacePath(context.workspaceRoot, path);
-      if (
-        !context.allowedPaths.some(
-          (allowed) =>
-            resolved === assertWorkspacePath(context.workspaceRoot, allowed) ||
-            resolved.startsWith(`${assertWorkspacePath(context.workspaceRoot, allowed)}${sep}`),
-        )
-      )
+      const resolved = await assertWorkspaceRealPath(context.workspaceRoot, path);
+      if (!pathAllowed(context.workspaceRoot, resolved, context.allowedPaths))
         throw new Error('filesystem_read_denied:path_not_allowed');
+      if (pathProtected(context.workspaceRoot, resolved, context.protectedPaths))
+        throw new Error('filesystem_read_denied:protected_path');
       return {
         path: relative(context.workspaceRoot, resolved),
         content: await readFile(resolved, 'utf8'),
@@ -146,12 +161,10 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
     ),
     execute: async (input, context) => {
       const data = input as { path: string; content: string };
-      const resolved = assertWorkspacePath(context.workspaceRoot, data.path);
-      if (
-        context.protectedPaths.some(
-          (protectedPath) => resolved === assertWorkspacePath(context.workspaceRoot, protectedPath),
-        )
-      )
+      const resolved = await assertWorkspaceRealPath(context.workspaceRoot, data.path, true);
+      if (!pathAllowed(context.workspaceRoot, resolved, context.allowedPaths))
+        throw new Error('filesystem_write_denied:path_not_allowed');
+      if (pathProtected(context.workspaceRoot, resolved, context.protectedPaths))
         throw new Error('filesystem_write_denied:protected_path');
       if (data.content.length > 5_000_000) throw new Error('filesystem_write_denied:file_size_cap');
       const relativePath = relative(context.workspaceRoot, resolved);
@@ -208,7 +221,11 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
     ),
     execute: async (input, context) => {
       const path = String((input as { path: string }).path);
-      const resolved = assertWorkspacePath(context.workspaceRoot, path);
+      const resolved = await assertWorkspaceRealPath(context.workspaceRoot, path);
+      if (!pathAllowed(context.workspaceRoot, resolved, context.allowedPaths))
+        throw new Error('filesystem_stat_denied:path_not_allowed');
+      if (pathProtected(context.workspaceRoot, resolved, context.protectedPaths))
+        throw new Error('filesystem_stat_denied:protected_path');
       const info = await stat(resolved);
       return { path, size: info.size, isFile: info.isFile() };
     },
@@ -241,10 +258,16 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
     execute: async (input, context) => {
       const data = input as { command: string; args?: string[] };
       const fullCommand = [data.command, ...(data.args ?? [])].join(' ');
-      validateCommand(fullCommand, ['node', 'npm', 'git', 'pnpm', 'npx']);
+      validateCommand(fullCommand, ['node', 'npm', 'pnpm']);
+      const args = data.args ?? [];
+      const safeReadOnlyInvocation =
+        (data.command === 'node' || data.command === 'npm' || data.command === 'pnpm') &&
+        args.length === 1 &&
+        ['--version', '--help'].includes(args[0]!);
+      if (!safeReadOnlyInvocation) throw new Error('shell_denied:command_not_permitted');
       if (
         context.network === 'blocked' &&
-        /curl|wget|Invoke-WebRequest|npm\s+install/i.test(fullCommand)
+        /curl|wget|Invoke-WebRequest|npm|pnpm|npx|git/i.test(fullCommand)
       )
         throw new Error('shell_denied:network_blocked');
       const result = await execFileAsync(data.command, data.args ?? [], {

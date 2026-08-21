@@ -13,8 +13,11 @@ export class CredentialVault {
     private readonly filePath: string,
     masterKey = process.env.BOT_BUFFET_MASTER_KEY,
   ) {
-    if (!masterKey && process.env.BOT_BUFFET_AUTH_MODE === 'production')
-      throw new Error('credential_vault:master_key_required');
+    if (
+      process.env.BOT_BUFFET_AUTH_MODE === 'production' &&
+      (!masterKey || masterKey.length < 32 || /replace-with|example|changeme/i.test(masterKey))
+    )
+      throw new Error('credential_vault:strong_master_key_required');
     this.key = createHash('sha256')
       .update(masterKey ?? `dev-only-${process.env.USERNAME ?? 'local'}`)
       .digest();

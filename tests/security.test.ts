@@ -22,6 +22,7 @@ describe('security boundaries', () => {
     expect(() => validateCommand('node app.js; whoami')).toThrow('shell_metacharacter');
     expect(() => assertOffline(true, false)).toThrow('cloud_provider_blocked');
     expect(() => validateCommand('node app.js', ['node'])).not.toThrow();
+    expect(() => validateCommand('node --eval script', ['node'])).toThrow('code_execution_flag');
   });
   it('rejects metadata and credential-bearing provider endpoints', () => {
     expect(() => assertSafeEndpoint('http://169.254.169.254/latest')).toThrow(
@@ -30,7 +31,8 @@ describe('security boundaries', () => {
     expect(() => assertSafeEndpoint('https://user:pass@example.com/v1')).toThrow(
       'embedded_credentials',
     );
-    expect(assertSafeEndpoint('http://127.0.0.1:11434/v1').hostname).toBe('127.0.0.1');
+    expect(assertSafeEndpoint('http://127.0.0.1:11434/v1', true).hostname).toBe('127.0.0.1');
+    expect(() => assertSafeEndpoint('http://127.0.0.1:11434/v1')).toThrow('metadata_or_loopback');
   });
   it('validates typed tool schemas', () => {
     expect(

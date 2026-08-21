@@ -1,12 +1,15 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { JsonStateStore } from './store.js';
 import {
   Agent,
   ApprovalRequest,
+  BaseEntity,
   Checkpoint,
   Credential,
+  Environment,
   EvaluationCase,
   EvaluationDataset,
   MemoryItem,
@@ -26,6 +29,7 @@ import { Orchestrator } from './orchestrator.js';
 import { adapterFor, defaultCapabilities } from './providers.js';
 import { assertSafeEndpoint, assertWorkspacePath, redactSecrets, fingerprint } from './security.js';
 import { CredentialVault } from './secrets.js';
+import { AuthorizationService } from './authorization.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -44,9 +48,20 @@ const send = (res: ServerResponse, status: number, payload: unknown): void => {
   res.setHeader('cache-control', 'no-store');
   res.end(JSON.stringify(redactSecrets(payload)));
 };
+const MAX_BODY_BYTES = 2_000_000;
+const RATE_WINDOW_MS = 60_000;
+const RATE_LIMIT = 120;
+const requestBuckets = new Map<string, { startedAt: number; count: number }>();
 const parseBody = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
+  const declaredLength = Number(req.headers['content-length'] ?? 0);
+  if (declaredLength > MAX_BODY_BYTES) throw new Error('request_body_too_large');
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  let total = 0;
+  for await (const chunk of req) {
+    total += Buffer.byteLength(chunk);
+    if (total > MAX_BODY_BYTES) throw new Error('request_body_too_large');
+    chunks.push(Buffer.from(chunk));
+  }
   if (!chunks.length) return {};
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
@@ -56,12 +71,48 @@ const parseBody = async (req: IncomingMessage): Promise<Record<string, unknown>>
 };
 
 export function createApi(deps: ApiDeps) {
-  const subscribers = new Set<ServerResponse>();
+  const authorization = new AuthorizationService(deps.store);
+  const visible = async <T extends BaseEntity>(
+    actorId: string,
+    values: T[],
+    action: 'read' | 'write' | 'run' | 'approve' | 'admin' = 'read',
+  ) => authorization.filter(actorId, values, action);
+  const required = async <T extends BaseEntity>(
+    actorId: string,
+    value: T | undefined,
+    action: 'read' | 'write' | 'run' | 'approve' | 'admin' = 'read',
+    expectedKind?: string,
+  ) => {
+    if (
+      expectedKind &&
+      (value as (BaseEntity & { kind?: string }) | undefined)?.kind !== expectedKind
+    )
+      throw new Error('forbidden_or_not_found');
+    return (await authorization.require(actorId, value, action)) as T;
+  };
+  const subscribers = new Set<{
+    res: ServerResponse;
+    projectId?: string;
+    heartbeat: NodeJS.Timeout;
+  }>();
   deps.orchestrator.on('run', (event) => {
-    const data = `data: ${JSON.stringify(redactSecrets(event))}\n\n`;
-    for (const res of subscribers) res.write(data);
+    const safeEvent = redactSecrets(event) as Record<string, unknown>;
+    const run = safeEvent.run as Record<string, unknown> | undefined;
+    const approval = safeEvent.approval as Record<string, unknown> | undefined;
+    const eventProjectId = String(run?.projectId ?? approval?.scope ?? safeEvent.projectId ?? '');
+    const data = `data: ${JSON.stringify(safeEvent)}\n\n`;
+    for (const subscriber of subscribers)
+      if (!subscriber.projectId || !eventProjectId || subscriber.projectId === eventProjectId)
+        try {
+          subscriber.res.write(data);
+        } catch {
+          clearInterval(subscriber.heartbeat);
+          subscribers.delete(subscriber);
+        }
   });
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
+    const requestId = randomUUID();
+    res.setHeader('x-request-id', requestId);
     res.setHeader(
       'access-control-allow-origin',
       process.env.BOT_BUFFET_ALLOWED_ORIGINS ?? 'http://localhost:8787',
@@ -75,11 +126,36 @@ export function createApi(deps: ApiDeps) {
     }
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname;
-    const actorId = String(req.headers['x-bot-buffet-user'] ?? 'local-user');
+    const actorId =
+      process.env.BOT_BUFFET_AUTH_MODE === 'production'
+        ? String(process.env.BOT_BUFFET_API_SUBJECT ?? 'production-user')
+        : String(req.headers['x-bot-buffet-user'] ?? 'local-user');
+    if (path.startsWith('/api/')) {
+      const key = req.socket.remoteAddress ?? 'unknown';
+      const current = requestBuckets.get(key);
+      const nowMs = Date.now();
+      if (!current || nowMs - current.startedAt >= RATE_WINDOW_MS)
+        requestBuckets.set(key, { startedAt: nowMs, count: 1 });
+      else if (current.count >= RATE_LIMIT) {
+        res.setHeader('retry-after', '60');
+        send(res, 429, { code: 'rate_limited', requestId });
+        return;
+      } else current.count += 1;
+      if (requestBuckets.size > 10_000)
+        for (const [bucketKey, bucket] of requestBuckets)
+          if (nowMs - bucket.startedAt >= RATE_WINDOW_MS) requestBuckets.delete(bucketKey);
+    }
     if (process.env.BOT_BUFFET_AUTH_MODE === 'production') {
       const expected = process.env.BOT_BUFFET_API_TOKEN;
       const presented = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-      if (!expected || !presented || fingerprint(expected) !== fingerprint(presented)) {
+      const expectedFingerprint = expected ? Buffer.from(fingerprint(expected)) : Buffer.alloc(0);
+      const presentedFingerprint = Buffer.from(fingerprint(presented));
+      if (
+        !expected ||
+        !presented ||
+        expectedFingerprint.length !== presentedFingerprint.length ||
+        !timingSafeEqual(expectedFingerprint, presentedFingerprint)
+      ) {
         send(res, 401, { code: 'unauthorized' });
         return;
       }
@@ -94,41 +170,81 @@ export function createApi(deps: ApiDeps) {
           auth: process.env.BOT_BUFFET_AUTH_MODE ?? 'development',
         });
       if (path === '/events' && req.method === 'GET') {
+        const projectId = url.searchParams.get('projectId') ?? undefined;
+        if (process.env.BOT_BUFFET_AUTH_MODE === 'production' && !projectId)
+          return send(res, 400, { code: 'project_scope_required' });
+        if (projectId)
+          await required(actorId, await deps.store.get<Project>(projectId), 'read', 'project');
+        if (subscribers.size >= 100) return send(res, 429, { code: 'sse_capacity_reached' });
         res.statusCode = 200;
         res.setHeader('content-type', 'text/event-stream');
         res.setHeader('cache-control', 'no-cache');
         res.setHeader('connection', 'keep-alive');
         res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
-        subscribers.add(res);
-        req.on('close', () => subscribers.delete(res));
+        const heartbeat = setInterval(() => {
+          if (res.writableEnded) return;
+          try {
+            res.write(': heartbeat\n\n');
+          } catch {
+            clearInterval(heartbeat);
+          }
+        }, 30_000);
+        const subscriber = { res, projectId, heartbeat };
+        subscribers.add(subscriber);
+        req.on('close', () => {
+          clearInterval(heartbeat);
+          subscribers.delete(subscriber);
+        });
         return;
       }
       if (path === '/api/v1/bootstrap' && req.method === 'GET')
         return send(res, 200, {
-          workspaces: await deps.store.list<Workspace>((x) => x.kind === 'workspace'),
-          projects: await deps.store.list<Project>(
-            (x) => x.kind === 'project' && !(x as Project).archived,
+          workspaces: await visible(
+            actorId,
+            await deps.store.list<Workspace>((x) => x.kind === 'workspace'),
           ),
-          agents: await deps.store.list<Agent>((x) => x.kind === 'agent'),
-          tasks: await deps.store.list<Task>((x) => x.kind === 'task'),
-          runs: await deps.store.list((x) => x.kind === 'run'),
-          models: await deps.store.list<Model>((x) => x.kind === 'model'),
-          providers: await deps.store.list<ModelProvider>((x) => x.kind === 'model-provider'),
-          approvals: await deps.store.list<ApprovalRequest>(
-            (x) => x.kind === 'approval-request' && (x as ApprovalRequest).status === 'pending',
+          projects: await visible(
+            actorId,
+            await deps.store.list<Project>((x) => x.kind === 'project' && !(x as Project).archived),
           ),
-          plugins: await deps.store.list<Plugin>((x) => x.kind === 'plugin'),
-          audit: await deps.store.list((x) => x.kind === 'audit-event'),
+          agents: await visible(actorId, await deps.store.list<Agent>((x) => x.kind === 'agent')),
+          tasks: await visible(actorId, await deps.store.list<Task>((x) => x.kind === 'task')),
+          runs: await visible(actorId, await deps.store.list((x) => x.kind === 'run'), 'run'),
+          models: await visible(actorId, await deps.store.list<Model>((x) => x.kind === 'model')),
+          providers: await visible(
+            actorId,
+            await deps.store.list<ModelProvider>((x) => x.kind === 'model-provider'),
+          ),
+          approvals: await visible(
+            actorId,
+            await deps.store.list<ApprovalRequest>(
+              (x) => x.kind === 'approval-request' && (x as ApprovalRequest).status === 'pending',
+            ),
+          ),
+          plugins: await visible(
+            actorId,
+            await deps.store.list<Plugin>((x) => x.kind === 'plugin'),
+          ),
+          audit: await visible(actorId, await deps.store.list((x) => x.kind === 'audit-event')),
         });
       if (path === '/api/v1/projects' && req.method === 'GET')
-        return send(res, 200, await deps.store.list<Project>((x) => x.kind === 'project'));
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Project>((x) => x.kind === 'project')),
+        );
       if (path === '/api/v1/projects' && req.method === 'POST') {
         const body = await parseBody(req);
+        const workspaceId = String(body.workspaceId ?? 'workspace_local');
+        const workspace = await deps.store.get<Workspace>(workspaceId);
+        if (workspace) await required(actorId, workspace, 'write', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('workspace_scope_required');
         const project = entity({
           kind: 'project',
           ownerId: actorId,
-          scope: String(body.workspaceId ?? 'workspace_local'),
-          workspaceId: String(body.workspaceId ?? 'workspace_local'),
+          scope: workspaceId,
+          workspaceId,
           name: String(body.name ?? 'Untitled project'),
           slug: String(
             body.slug ??
@@ -143,8 +259,12 @@ export function createApi(deps: ApiDeps) {
       }
       const projectMatch = path.match(/^\/api\/v1\/projects\/([^/]+)$/);
       if (projectMatch && req.method === 'PATCH') {
-        const project = await deps.store.get<Project>(projectMatch[1]!);
-        if (!project) return send(res, 404, { code: 'not_found' });
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(projectMatch[1]!),
+          'write',
+          'project',
+        );
         const body = await parseBody(req);
         const saved = await deps.store.put({
           ...project,
@@ -159,19 +279,31 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await deps.store.list<ModelProvider>((x) => x.kind === 'model-provider'),
+          await visible(
+            actorId,
+            await deps.store.list<ModelProvider>((x) => x.kind === 'model-provider'),
+          ),
         );
       if (path === '/api/v1/providers' && req.method === 'POST') {
         const body = await parseBody(req);
-        assertSafeEndpoint(String(body.endpoint ?? 'http://127.0.0.1:11434/v1'));
+        const scope = String(body.scope ?? 'workspace_local');
+        const scopeEntity = await deps.store.get(scope);
+        if (scopeEntity) await required(actorId, scopeEntity, 'write', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('provider_scope_required');
+        const providerKind = String(
+          body.providerKind ?? 'openai-compatible',
+        ) as ModelProvider['providerKind'];
+        assertSafeEndpoint(
+          String(body.endpoint ?? 'http://127.0.0.1:11434/v1'),
+          ['ollama', 'lmstudio', 'llamacpp', 'localai', 'vllm', 'jan'].includes(providerKind),
+        );
         let provider = entity({
           kind: 'model-provider',
           ownerId: actorId,
-          scope: String(body.scope ?? 'workspace_local'),
+          scope,
           name: String(body.name ?? body.providerKind ?? 'Provider'),
-          providerKind: String(
-            body.providerKind ?? 'openai-compatible',
-          ) as ModelProvider['providerKind'],
+          providerKind: String(providerKind) as ModelProvider['providerKind'],
           endpoint: String(body.endpoint ?? 'http://127.0.0.1:11434/v1'),
           credentialId: undefined,
           enabled: true,
@@ -220,8 +352,12 @@ export function createApi(deps: ApiDeps) {
       }
       const providerTest = path.match(/^\/api\/v1\/providers\/([^/]+)\/test$/);
       if (providerTest && req.method === 'POST') {
-        const provider = await deps.store.get<ModelProvider>(providerTest[1]!);
-        if (!provider) return send(res, 404, { code: 'not_found' });
+        const provider = await required(
+          actorId,
+          await deps.store.get<ModelProvider>(providerTest[1]!),
+          'write',
+          'model-provider',
+        );
         const health = await adapterFor(provider, deps.vault.getSync(provider.id)).health();
         const saved = await deps.store.put({
           ...provider,
@@ -233,8 +369,12 @@ export function createApi(deps: ApiDeps) {
       }
       const providerDelete = path.match(/^\/api\/v1\/providers\/([^/]+)$/);
       if (providerDelete && req.method === 'DELETE') {
-        const provider = await deps.store.get<ModelProvider>(providerDelete[1]!);
-        if (!provider) return send(res, 404, { code: 'not_found' });
+        const provider = await required(
+          actorId,
+          await deps.store.get<ModelProvider>(providerDelete[1]!),
+          'admin',
+          'model-provider',
+        );
         await deps.vault.revoke(provider.id);
         const credential = await deps.store.get<Credential>(provider.credentialId ?? '');
         if (credential)
@@ -253,16 +393,30 @@ export function createApi(deps: ApiDeps) {
         return send(res, 200, saved);
       }
       if (path === '/api/v1/credentials' && req.method === 'GET')
-        return send(res, 200, await deps.store.list<Credential>((x) => x.kind === 'credential'));
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Credential>((x) => x.kind === 'credential')),
+        );
       if (path === '/api/v1/models' && req.method === 'GET')
-        return send(res, 200, await deps.store.list<Model>((x) => x.kind === 'model'));
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Model>((x) => x.kind === 'model')),
+        );
       if (path === '/api/v1/models' && req.method === 'POST') {
         const body = await parseBody(req);
+        const provider = await required(
+          actorId,
+          await deps.store.get<ModelProvider>(String(body.providerId)),
+          'write',
+          'model-provider',
+        );
         const model = entity({
           kind: 'model',
           ownerId: actorId,
-          scope: String(body.scope ?? 'workspace_local'),
-          providerId: String(body.providerId),
+          scope: provider.scope,
+          providerId: provider.id,
           name: String(body.name ?? body.modelName),
           modelName: String(body.modelName),
           local: Boolean(body.local),
@@ -280,26 +434,50 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await deps.store.list<MemoryItem>(
-            (x) =>
-              x.kind === 'memory' &&
-              (!namespace || (x as MemoryItem).namespace === namespace) &&
-              (!namespaceId || (x as MemoryItem).namespaceId === namespaceId),
+          await visible(
+            actorId,
+            await deps.store.list<MemoryItem>(
+              (x) =>
+                x.kind === 'memory' &&
+                (!namespace || (x as MemoryItem).namespace === namespace) &&
+                (!namespaceId || (x as MemoryItem).namespaceId === namespaceId),
+            ),
           ),
         );
       }
       if (path === '/api/v1/memory' && req.method === 'POST') {
         const body = await parseBody(req);
+        const namespaceId = String(body.namespaceId ?? body.scope ?? 'project_local');
+        const namespace = String(body.namespace ?? 'project') as MemoryItem['namespace'];
+        const namespaceKinds: Partial<Record<MemoryItem['namespace'], string>> = {
+          user: 'user',
+          organization: 'organization',
+          workspace: 'workspace',
+          project: 'project',
+          environment: 'environment',
+          agent: 'agent',
+          task: 'task',
+          artifact: 'artifact',
+        };
+        if (!(namespace in namespaceKinds) && namespace !== 'session')
+          throw new Error('memory_namespace_invalid');
+        const namespaceEntity = await deps.store.get(namespaceId);
+        if (namespace === 'session' && namespaceEntity)
+          throw new Error('memory_session_scope_invalid');
+        if (namespaceEntity)
+          await required(actorId, namespaceEntity, 'write', namespaceKinds[namespace]);
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('memory_scope_required');
         const memory = entity({
           kind: 'memory',
           ownerId: actorId,
-          scope: String(body.scope ?? body.namespaceId ?? 'project_local'),
-          namespace: String(body.namespace ?? 'project') as MemoryItem['namespace'],
-          namespaceId: String(body.namespaceId ?? body.scope ?? 'project_local'),
+          scope: namespaceId,
+          namespace,
+          namespaceId,
           text: String(body.text ?? ''),
           data: body.data as Record<string, unknown> | undefined,
           sourceIds: [],
-          approved: Boolean(body.approved),
+          approved: false,
           freshnessAt: now(),
           expiresAt: body.expiresAt ? String(body.expiresAt) : undefined,
         }) as MemoryItem;
@@ -308,17 +486,32 @@ export function createApi(deps: ApiDeps) {
       }
       const memoryMatch = path.match(/^\/api\/v1\/memory\/([^/]+)$/);
       if (memoryMatch && req.method === 'DELETE') {
+        await required(
+          actorId,
+          await deps.store.get<MemoryItem>(memoryMatch[1]!),
+          'write',
+          'memory',
+        );
         await deps.store.delete(memoryMatch[1]!);
         return send(res, 204, { deleted: true });
       }
       if (path === '/api/v1/plugins' && req.method === 'GET')
-        return send(res, 200, await deps.store.list<Plugin>((x) => x.kind === 'plugin'));
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Plugin>((x) => x.kind === 'plugin')),
+        );
       if (path === '/api/v1/plugins' && req.method === 'POST') {
         const body = await parseBody(req);
+        const scope = String(body.scope ?? 'workspace_local');
+        const scopeEntity = await deps.store.get(scope);
+        if (scopeEntity) await required(actorId, scopeEntity, 'admin', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('plugin_scope_required');
         const plugin = entity({
           kind: 'plugin',
           ownerId: actorId,
-          scope: String(body.scope ?? 'workspace_local'),
+          scope,
           name: String(body.name ?? 'Plugin'),
           releaseVersion: String(body.version ?? '0.1.0'),
           source: String(body.source ?? 'user'),
@@ -337,8 +530,12 @@ export function createApi(deps: ApiDeps) {
       }
       const pluginMatch = path.match(/^\/api\/v1\/plugins\/([^/]+)\/(enable|disable)$/);
       if (pluginMatch && req.method === 'POST') {
-        const plugin = await deps.store.get<Plugin>(pluginMatch[1]!);
-        if (!plugin) return send(res, 404, { code: 'not_found' });
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginMatch[1]!),
+          'admin',
+          'plugin',
+        );
         const enabled = pluginMatch[2] === 'enable';
         const saved = await deps.store.put({
           ...plugin,
@@ -353,22 +550,35 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await deps.store.list<ProjectFile>(
-            (x) => x.kind === 'file' && (!projectId || (x as ProjectFile).projectId === projectId),
+          await visible(
+            actorId,
+            await deps.store.list<ProjectFile>(
+              (x) =>
+                x.kind === 'file' && (!projectId || (x as ProjectFile).projectId === projectId),
+            ),
           ),
         );
       }
       if (path === '/api/v1/sources' && req.method === 'GET')
-        return send(res, 200, await deps.store.list<Source>((x) => x.kind === 'source'));
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Source>((x) => x.kind === 'source')),
+        );
       if (path === '/api/v1/sources' && req.method === 'POST') {
         const body = await parseBody(req);
+        const projectId = String(body.projectId ?? 'project_local');
+        const sourceProject = await deps.store.get<Project>(projectId);
+        if (sourceProject) await required(actorId, sourceProject, 'write', 'project');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('source_project_required');
         const uri = String(body.uri ?? '');
         assertSafeEndpoint(uri);
         const source = entity({
           kind: 'source',
           ownerId: actorId,
-          scope: String(body.projectId ?? 'project_local'),
-          projectId: String(body.projectId ?? 'project_local'),
+          scope: projectId,
+          projectId,
           uri,
           title: body.title ? String(body.title) : undefined,
           status: 'pending' as const,
@@ -381,14 +591,22 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await deps.store.list<EvaluationDataset>((x) => x.kind === 'evaluation-dataset'),
+          await visible(
+            actorId,
+            await deps.store.list<EvaluationDataset>((x) => x.kind === 'evaluation-dataset'),
+          ),
         );
       if (path === '/api/v1/evaluations/datasets' && req.method === 'POST') {
         const body = await parseBody(req);
+        const scope = String(body.scope ?? 'workspace_local');
+        const scopeEntity = await deps.store.get(scope);
+        if (scopeEntity) await required(actorId, scopeEntity, 'write', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('dataset_scope_required');
         const dataset = entity({
           kind: 'evaluation-dataset',
           ownerId: actorId,
-          scope: String(body.scope ?? 'workspace_local'),
+          scope,
           name: String(body.name ?? 'Untitled dataset'),
           description: String(body.description ?? ''),
           caseIds: [],
@@ -399,11 +617,20 @@ export function createApi(deps: ApiDeps) {
       }
       if (path === '/api/v1/evaluations/cases' && req.method === 'POST') {
         const body = await parseBody(req);
+        const datasetId = String(body.datasetId ?? 'dataset_local');
+        const parentDataset = await required(
+          actorId,
+          await deps.store.get<EvaluationDataset>(datasetId),
+          'write',
+          'evaluation-dataset',
+        ).catch(() => undefined);
+        if (!parentDataset && process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('dataset_required');
         const evaluationCase = entity({
           kind: 'evaluation-case',
           ownerId: actorId,
-          scope: String(body.datasetId ?? 'dataset_local'),
-          datasetId: String(body.datasetId ?? 'dataset_local'),
+          scope: datasetId,
+          datasetId,
           name: String(body.name ?? 'Case'),
           input: body.input,
           expected: body.expected,
@@ -421,7 +648,11 @@ export function createApi(deps: ApiDeps) {
         return send(res, 201, evaluationCase);
       }
       if (path === '/api/v1/observability/summary' && req.method === 'GET') {
-        const runs = await deps.store.list<Run>((x) => x.kind === 'run');
+        const runs = await visible(
+          actorId,
+          await deps.store.list<Run>((x) => x.kind === 'run'),
+          'read',
+        );
         return send(res, 200, {
           runs: runs.length,
           active: runs.filter((run) =>
@@ -438,16 +669,22 @@ export function createApi(deps: ApiDeps) {
         });
       }
       const replayMatch = path.match(/^\/api\/v1\/runs\/([^/]+)\/replay$/);
-      if (replayMatch && req.method === 'GET')
+      if (replayMatch && req.method === 'GET') {
+        await required(actorId, await deps.store.get<Run>(replayMatch[1]!), 'read', 'run');
         return send(
           res,
           200,
-          await deps.store.list<Checkpoint>(
-            (x) => x.kind === 'checkpoint' && (x as Checkpoint).runId === replayMatch[1]!,
+          await visible(
+            actorId,
+            await deps.store.list<Checkpoint>(
+              (x) => x.kind === 'checkpoint' && (x as Checkpoint).runId === replayMatch[1]!,
+            ),
           ),
         );
+      }
       const exportMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/export$/);
       if (exportMatch && req.method === 'GET') {
+        await required(actorId, await deps.store.get<Project>(exportMatch[1]!), 'read', 'project');
         const snapshot = await deps.store.snapshot();
         const scoped = Object.values(snapshot.entities).filter(
           (item) => item.scope === exportMatch[1] || item.id === exportMatch[1],
@@ -465,6 +702,18 @@ export function createApi(deps: ApiDeps) {
         const agent = await deps.store.get<Agent>(String(body.agentId));
         const task = await deps.store.get<Task>(String(body.taskId));
         if (!project || !agent || !task) return send(res, 400, { code: 'run_context_missing' });
+        await required(actorId, project, 'run', 'project');
+        await required(actorId, agent, 'run', 'agent');
+        await required(actorId, task, 'run', 'task');
+        if (agent.projectId !== project.id || task.projectId !== project.id)
+          throw new Error('run_context_scope_mismatch');
+        const environment = await deps.store.get<Environment>(agent.environmentId);
+        if (
+          !environment ||
+          environment.projectId !== project.id ||
+          task.environmentId !== environment.id
+        )
+          throw new Error('run_environment_scope_mismatch');
         const run = await deps.orchestrator.createRun({
           ownerId: actorId,
           project,
@@ -476,12 +725,23 @@ export function createApi(deps: ApiDeps) {
         return send(res, 202, run);
       }
       if (path === '/api/v1/runs' && req.method === 'GET')
-        return send(res, 200, await deps.store.list((x) => x.kind === 'run'));
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list((x) => x.kind === 'run'), 'read'),
+        );
       const runMatch = path.match(
         /^\/api\/v1\/runs\/([^/]+)\/(pause|resume|cancel|stop|fork|rollback)$/,
       );
       if (runMatch && req.method === 'POST') {
         const body = await parseBody(req);
+        const commandRun = await required(
+          actorId,
+          await deps.store.get<Run>(runMatch[1]!),
+          'run',
+          'run',
+        );
+        if (commandRun.projectId !== commandRun.scope) throw new Error('run_scope_mismatch');
         const result = await deps.orchestrator.command({
           runId: runMatch[1]!,
           type: runMatch[2] as never,
@@ -493,50 +753,79 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await deps.store.list<ApprovalRequest>(
-            (x) => x.kind === 'approval-request' && (x as ApprovalRequest).status === 'pending',
+          await visible(
+            actorId,
+            await deps.store.list<ApprovalRequest>(
+              (x) => x.kind === 'approval-request' && (x as ApprovalRequest).status === 'pending',
+            ),
+            'approve',
           ),
         );
       const approvalMatch = path.match(/^\/api\/v1\/approvals\/([^/]+)$/);
       if (approvalMatch && req.method === 'POST') {
-        const approval = await deps.store.get<ApprovalRequest>(approvalMatch[1]!);
-        if (!approval) return send(res, 404, { code: 'not_found' });
+        const approval = await required(
+          actorId,
+          await deps.store.get<ApprovalRequest>(approvalMatch[1]!),
+          'approve',
+          'approval-request',
+        );
+        if (approval.status !== 'pending' || Date.parse(approval.expiresAt) <= Date.now())
+          throw new Error('approval_not_pending_or_expired');
         const body = await parseBody(req);
         const status = body.approved ? ('approved' as const) : ('rejected' as const);
-        const saved = await deps.store.put({
-          ...approval,
-          status,
-          decidedBy: actorId,
-          decidedAt: now(),
-          reason: body.reason ? String(body.reason) : undefined,
-          version: approval.version,
-        } as ApprovalRequest);
+        const run = await required(
+          actorId,
+          await deps.store.get<Run>(approval.runId),
+          'run',
+          'run',
+        );
+        if (run.projectId !== approval.scope) throw new Error('approval_scope_mismatch');
+        const saved = await deps.store.putIfVersion(
+          {
+            ...approval,
+            status,
+            decidedBy: actorId,
+            decidedAt: now(),
+            reason: body.reason ? String(body.reason) : undefined,
+            version: approval.version,
+          } as ApprovalRequest,
+          approval.version,
+        );
         if (status === 'approved')
           await deps.orchestrator.command({ runId: approval.runId, type: 'resume' });
         else {
-          const run = await deps.store.get<Run>(approval.runId);
-          if (run)
-            await deps.store.put({
+          await deps.store.putIfVersion(
+            {
               ...run,
               status: 'blocked',
               error: 'approval_rejected',
               finishedAt: now(),
               version: run.version,
-            } as Run);
+            } as Run,
+            run.version,
+          );
         }
         return send(res, 200, saved);
       }
       if (path === '/api/v1/audit' && req.method === 'GET')
-        return send(res, 200, await deps.store.list((x) => x.kind === 'audit-event'));
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list((x) => x.kind === 'audit-event')),
+        );
       if (path === '/api/v1/audit/verify' && req.method === 'GET')
         return send(res, 200, await deps.store.verifyAuditChain());
       if (path === '/api/v1/stop-all' && req.method === 'POST') {
-        const runs = await deps.store.list<Run>(
-          (x) =>
-            x.kind === 'run' &&
-            ['queued', 'running', 'waiting_approval', 'paused', 'retrying'].includes(
-              (x as { status: string }).status,
-            ),
+        const runs = await visible(
+          actorId,
+          await deps.store.list<Run>(
+            (x) =>
+              x.kind === 'run' &&
+              ['queued', 'running', 'waiting_approval', 'paused', 'retrying'].includes(
+                (x as { status: string }).status,
+              ),
+          ),
+          'run',
         );
         for (const run of runs) await deps.orchestrator.command({ runId: run.id, type: 'stop' });
         return send(res, 200, { stopped: runs.length });
@@ -569,4 +858,8 @@ export function createApi(deps: ApiDeps) {
       });
     }
   });
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 10_000;
+  server.timeout = 35_000;
+  return server;
 }

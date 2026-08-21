@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
+import { isIP } from 'node:net';
+import { lookup } from 'node:dns/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { JsonSchema, Permission, Policy, PolicyRule, Risk } from './types.js';
 
@@ -37,6 +40,38 @@ export function assertWorkspacePath(
   return resolved;
 }
 
+export async function assertWorkspaceRealPath(
+  root: string,
+  candidate: string,
+  forWrite = false,
+): Promise<string> {
+  const lexical = assertWorkspacePath(root, candidate);
+  const resolvedRoot = await realpath(root);
+  let resolvedTarget: string;
+  try {
+    resolvedTarget = await realpath(lexical);
+  } catch (error) {
+    if (!forWrite || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const parent = await realpath(resolve(lexical, '..'));
+    const parentRelative = relative(resolvedRoot, parent);
+    if (
+      parentRelative === '..' ||
+      parentRelative.startsWith(`..${sep}`) ||
+      isAbsolute(parentRelative)
+    )
+      throw new Error('path_rejected:symlink_parent');
+    return lexical;
+  }
+  const relativeTarget = relative(resolvedRoot, resolvedTarget);
+  if (
+    relativeTarget === '..' ||
+    relativeTarget.startsWith(`..${sep}`) ||
+    isAbsolute(relativeTarget)
+  )
+    throw new Error('path_rejected:symlink_escape');
+  return lexical;
+}
+
 const SHELL_META = /[;&|`$(){}<>\n\r]/;
 export function validateCommand(command: string, allowedCommands: string[] = []): void {
   if (!command.trim() || command.length > 4096)
@@ -45,6 +80,17 @@ export function validateCommand(command: string, allowedCommands: string[] = [])
   const executable = command.trim().split(/\s+/)[0] ?? '';
   if (allowedCommands.length && !allowedCommands.includes(executable))
     throw new Error(`command_rejected:not_allowlisted:${executable}`);
+  if (
+    /(^|\s)(-e|--eval|-p|--print|--require|--loader|--experimental-loader|--inspect|--inspect-brk)(\s|$)/i.test(
+      command,
+    )
+  )
+    throw new Error('command_rejected:code_execution_flag');
+  if (
+    /(^|\s)(-C|--directory|--prefix|--global|install|exec|run-script)(\s|$)/i.test(command) &&
+    /(^|\s)(npm|pnpm|npx|git)(\s|$)/i.test(command)
+  )
+    throw new Error('command_rejected:workspace_escape_flag');
 }
 
 export function validateJsonSchema(schema: JsonSchema, value: unknown, path = '$'): string[] {
@@ -126,7 +172,37 @@ export function assertOffline(offline: boolean, local: boolean): void {
   if (offline && !local) throw new Error('offline_mode:cloud_provider_blocked');
 }
 
-export function assertSafeEndpoint(endpoint: string): URL {
+const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+const privateIpv4 = (host: string): boolean => {
+  const parts = host.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255))
+    return false;
+  return (
+    parts[0]! === 10 ||
+    parts[0]! === 127 ||
+    parts[0]! === 0 ||
+    (parts[0]! === 169 && parts[1]! === 254) ||
+    (parts[0]! === 172 && parts[1]! >= 16 && parts[1]! <= 31) ||
+    (parts[0]! === 192 && parts[1]! === 168)
+  );
+};
+const privateHost = (host: string): boolean => {
+  const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (localHosts.has(normalized) || privateIpv4(normalized)) return true;
+  if (isIP(normalized) === 6)
+    return (
+      normalized === '::1' ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      normalized.startsWith('fe8') ||
+      normalized.startsWith('fe9') ||
+      normalized.startsWith('fea') ||
+      normalized.startsWith('feb')
+    );
+  return false;
+};
+
+export function assertSafeEndpoint(endpoint: string, allowLocal = false): URL {
   let parsed: URL;
   try {
     parsed = new URL(endpoint);
@@ -137,10 +213,39 @@ export function assertSafeEndpoint(endpoint: string): URL {
     throw new Error('endpoint_rejected:unsupported_protocol');
   if (parsed.username || parsed.password) throw new Error('endpoint_rejected:embedded_credentials');
   if (
-    parsed.hostname === '169.254.169.254' ||
     parsed.hostname === 'metadata.google.internal' ||
-    parsed.hostname === '::1'
+    (!allowLocal && privateHost(parsed.hostname))
   )
     throw new Error('endpoint_rejected:metadata_or_loopback');
+  if (allowLocal && !localHosts.has(parsed.hostname.toLowerCase()) && privateHost(parsed.hostname))
+    throw new Error('endpoint_rejected:private_network');
+  if (!allowLocal && parsed.protocol !== 'https:')
+    throw new Error('endpoint_rejected:tls_required');
+  return parsed;
+}
+
+export async function assertSafeEndpointResolved(
+  endpoint: string,
+  allowLocal = false,
+): Promise<URL> {
+  const parsed = assertSafeEndpoint(endpoint, allowLocal);
+  let addresses: Array<{ address: string }>;
+  try {
+    addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+  } catch {
+    throw new Error('endpoint_rejected:dns_lookup_failed');
+  }
+  if (!addresses.length) throw new Error('endpoint_rejected:dns_no_address');
+  for (const address of addresses) {
+    if (
+      privateHost(address.address) &&
+      !(
+        allowLocal &&
+        localHosts.has(parsed.hostname.toLowerCase()) &&
+        (address.address === '127.0.0.1' || address.address === '::1')
+      )
+    )
+      throw new Error('endpoint_rejected:private_or_metadata');
+  }
   return parsed;
 }

@@ -17,6 +17,9 @@ export class JsonStateStore {
   private state: RuntimeState = emptyState();
   private loaded = false;
   private writeQueue: Promise<void> = Promise.resolve();
+  private auditQueue: Promise<AuditEvent> = Promise.resolve(undefined as never);
+  private mutationQueue: Promise<void> = Promise.resolve();
+  private lockQueue: Promise<void> = Promise.resolve();
   constructor(private readonly filePath: string) {}
 
   async load(): Promise<void> {
@@ -54,6 +57,23 @@ export class JsonStateStore {
     this.state.entities[saved.id] = saved as unknown as Entity;
     await this.persist();
     return saved;
+  }
+
+  async putIfVersion<T extends BaseEntity>(value: T, expectedVersion: number): Promise<T> {
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      const current = this.state.entities[value.id] as T | undefined;
+      if (!current || current.version !== expectedVersion) throw new Error('concurrent_update');
+      const saved = { ...value, updatedAt: now(), version: expectedVersion + 1 } as T;
+      this.state.entities[saved.id] = saved as unknown as Entity;
+      await this.persist();
+      return saved;
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async insert<T extends BaseEntity>(value: T): Promise<T> {
@@ -94,20 +114,39 @@ export class JsonStateStore {
   }
 
   async lock(resource: string, ownerId: ID, ttlMs: number): Promise<boolean> {
-    await this.load();
-    const current = this.state.locks[resource];
-    if (current && current.expiresAt > now() && current.ownerId !== ownerId) return false;
-    this.state.locks[resource] = { ownerId, expiresAt: new Date(Date.now() + ttlMs).toISOString() };
-    await this.persist();
-    return true;
+    let acquired = false;
+    const operation = this.lockQueue.then(async () => {
+      await this.load();
+      const current = this.state.locks[resource];
+      if (current && current.expiresAt > now() && current.ownerId !== ownerId) return;
+      this.state.locks[resource] = {
+        ownerId,
+        expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+      };
+      acquired = true;
+      await this.persist();
+    });
+    this.lockQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    await operation;
+    return acquired;
   }
 
   async unlock(resource: string, ownerId: ID): Promise<void> {
-    await this.load();
-    if (this.state.locks[resource]?.ownerId === ownerId) {
-      delete this.state.locks[resource];
-      await this.persist();
-    }
+    const operation = this.lockQueue.then(async () => {
+      await this.load();
+      if (this.state.locks[resource]?.ownerId === ownerId) {
+        delete this.state.locks[resource];
+        await this.persist();
+      }
+    });
+    this.lockQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    await operation;
   }
 
   async audit(
@@ -116,26 +155,33 @@ export class JsonStateStore {
       scope: string;
     },
   ): Promise<AuditEvent> {
-    await this.load();
-    const previousHash = this.state.auditTail;
-    const base = {
-      ...input,
-      id: id('audit'),
-      version: 1,
-      createdAt: now(),
-      updatedAt: now(),
-      accessPolicy: {
-        visibility: 'organization' as const,
-        roles: { owner: ['*'], admin: ['*'], auditor: ['read'] },
-      },
-      previousHash,
-    };
-    const hash = createHash('sha256').update(JSON.stringify(base)).digest('hex');
-    const event = { ...base, hash } as AuditEvent;
-    this.state.entities[event.id] = event;
-    this.state.auditTail = hash;
-    await this.persist();
-    return event;
+    const operation = this.auditQueue.then(async () => {
+      await this.load();
+      const previousHash = this.state.auditTail;
+      const base = {
+        ...input,
+        id: id('audit'),
+        version: 1,
+        createdAt: now(),
+        updatedAt: now(),
+        accessPolicy: {
+          visibility: 'organization' as const,
+          roles: { owner: ['*'], admin: ['*'], auditor: ['read'] },
+        },
+        previousHash,
+      };
+      const hash = createHash('sha256').update(JSON.stringify(base)).digest('hex');
+      const event = { ...base, hash } as AuditEvent;
+      this.state.entities[event.id] = event;
+      this.state.auditTail = hash;
+      await this.persist();
+      return event;
+    });
+    this.auditQueue = operation.then(
+      (event) => event,
+      () => undefined as never,
+    );
+    return operation;
   }
 
   async verifyAuditChain(): Promise<{ valid: boolean; badEventId?: ID }> {

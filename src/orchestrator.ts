@@ -5,12 +5,14 @@ import {
   Agent,
   ApprovalRequest,
   Checkpoint,
+  Environment,
   Model,
   ModelRoute,
   Project,
   Run,
   RunStep,
   Task,
+  Workspace,
   entity,
   id,
   now,
@@ -85,8 +87,12 @@ export class Orchestrator extends EventEmitter {
     const run = await this.deps.store.get<Run>(runId);
     if (!run) throw new Error('run_not_found');
     const agent = await this.deps.store.get<Agent>(run.agentId);
+    const environment = await this.deps.store.get<Environment>(run.environmentId);
     const task = run.taskId ? await this.deps.store.get<Task>(run.taskId) : undefined;
     const project = await this.deps.store.get<Project>(run.projectId);
+    const workspace = project
+      ? await this.deps.store.get<Workspace>(project.workspaceId)
+      : undefined;
     if (!agent || !project || !task) throw new Error('run_context_missing');
     const controller = new AbortController();
     this.controllers.set(runId, controller);
@@ -149,14 +155,18 @@ export class Orchestrator extends EventEmitter {
             x.kind === 'model-route' &&
             (x.projectId === run.projectId || x.agentId === run.agentId),
         );
+        const offline =
+          process.env.BOT_BUFFET_OFFLINE === 'true' || workspace?.offlineMode === true;
         const decision = await this.deps.router.choose(
           {
             contextTokens: 4096,
             privacy: 'private',
             localPreferred: true,
-            offline: process.env.BOT_BUFFET_OFFLINE === 'true',
+            offline,
+            allowedModelIds: agent.profile.allowedModels,
           },
           route[0],
+          agent.profile.preferredModelId,
         );
         const model = await this.deps.store.get<Model>(decision.modelId);
         if (!model) throw new Error('model_not_found');
@@ -176,11 +186,12 @@ export class Orchestrator extends EventEmitter {
         });
         await this.deps.store.insert(step);
         const response = await this.deps.adapters(model).complete(request);
+        const responsePreview = redactSecrets(response.content.slice(0, 1000));
         await this.deps.store.put({
           ...step,
           status: 'succeeded',
           output: redactSecrets({
-            content: response.content,
+            content: responsePreview,
             toolCalls: response.toolCalls,
             usage: response.usage,
           }),
@@ -191,7 +202,7 @@ export class Orchestrator extends EventEmitter {
         } as RunStep);
         const nextState: Record<string, unknown> = {
           ...state,
-          lastResponse: response.content,
+          lastResponse: responsePreview,
           lastModel: model.id,
           lastStep: sequence,
         };
@@ -199,6 +210,12 @@ export class Orchestrator extends EventEmitter {
           for (const call of response.toolCalls) {
             const tool = this.deps.tools.get(call.name);
             if (!tool) throw new Error(`tool_not_found:${call.name}`);
+            if (!tool.definition.enabled) throw new Error(`tool_disabled:${call.name}`);
+            if (
+              !agent.profile.allowedToolIds.includes(tool.definition.id) &&
+              !agent.profile.allowedToolIds.includes(tool.definition.name)
+            )
+              throw new Error(`tool_not_allowed:${call.name}`);
             const decisionPolicy = decidePolicy(
               tool.definition.risk,
               run.projectId,
@@ -211,6 +228,8 @@ export class Orchestrator extends EventEmitter {
             );
             if (
               decisionPolicy.decision === 'approval-required' ||
+              tool.definition.risk === 'high' ||
+              tool.definition.risk === 'critical' ||
               agent.profile.approvalPolicy.requiredRisks.includes(tool.definition.risk)
             ) {
               await this.requestApproval(
@@ -230,7 +249,11 @@ export class Orchestrator extends EventEmitter {
               workspaceRoot: this.deps.workspaceRoot(project),
               allowedPaths: agent.profile.allowedPaths,
               protectedPaths: agent.profile.protectedPaths,
-              network: agent.profile.network,
+              network: [agent.profile.network, environment?.network ?? 'blocked'].sort(
+                (a, b) =>
+                  ({ blocked: 0, allowlist: 1, open: 2 })[a] -
+                  { blocked: 0, allowlist: 1, open: 2 }[b],
+              )[0] as ToolContext['network'],
               signal: controller.signal,
             };
             const output = await this.deps.tools.invoke(call.name, call.arguments, context);
@@ -408,6 +431,8 @@ export class Orchestrator extends EventEmitter {
       const checkpoint = command.checkpointId
         ? await this.deps.store.get<Checkpoint>(command.checkpointId)
         : undefined;
+      if (command.checkpointId && (!checkpoint || checkpoint.runId !== run.id))
+        throw new Error('checkpoint_scope_mismatch');
       const fork = {
         ...run,
         id: id('run'),
@@ -426,7 +451,12 @@ export class Orchestrator extends EventEmitter {
       await this.deps.store.insert(fork);
       return fork;
     }
-    if (command.type === 'rollback')
+    if (command.type === 'rollback') {
+      if (command.checkpointId) {
+        const checkpoint = await this.deps.store.get<Checkpoint>(command.checkpointId);
+        if (!checkpoint || checkpoint.runId !== run.id)
+          throw new Error('checkpoint_scope_mismatch');
+      }
       return this.deps.store.put({
         ...run,
         status: 'rolled_back',
@@ -434,6 +464,7 @@ export class Orchestrator extends EventEmitter {
         updatedAt: now(),
         version: run.version,
       } as Run);
+    }
     return run;
   }
 }

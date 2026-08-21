@@ -17,4 +17,17 @@ describe('credential vault', () => {
     await reloaded.revoke('provider-1');
     expect(reloaded.getSync('provider-1')).toBeUndefined();
   });
+  it('rejects weak or placeholder production master keys', () => {
+    const previous = process.env.BOT_BUFFET_AUTH_MODE;
+    process.env.BOT_BUFFET_AUTH_MODE = 'production';
+    try {
+      expect(() => new CredentialVault('unused', 'replace-with-a-32-byte-secret')).toThrow(
+        'strong_master_key_required',
+      );
+      expect(() => new CredentialVault('unused', 'short')).toThrow('strong_master_key_required');
+    } finally {
+      if (previous === undefined) delete process.env.BOT_BUFFET_AUTH_MODE;
+      else process.env.BOT_BUFFET_AUTH_MODE = previous;
+    }
+  });
 });
