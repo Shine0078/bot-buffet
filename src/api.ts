@@ -38,6 +38,7 @@ import {
   adapterFor,
   defaultCapabilities,
   discoverLocalEndpoints,
+  localDiscoveryCandidates,
   LocalDiscoveryResult,
   resolveProviderToken,
 } from './providers.js';
@@ -337,6 +338,70 @@ export function createApi(deps: ApiDeps) {
           providers: await (deps.discoverLocal ?? discoverLocalEndpoints)(),
           offlineOnly: true,
         });
+      if (path === '/api/v1/local-models/register' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const providerKind = String(body.providerKind ?? 'ollama') as ModelProvider['providerKind'];
+        if (!localDiscoveryCandidates().some(([kind]) => kind === providerKind))
+          throw new Error('local_provider_kind_invalid');
+        const endpoint = String(body.endpoint ?? '');
+        assertSafeEndpoint(endpoint, true);
+        const scope = String(body.scope ?? 'workspace_local');
+        const scopeEntity = await deps.store.get(scope);
+        if (scopeEntity) await required(actorId, scopeEntity, 'write', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('local_model_scope_required');
+        const modelName = String(body.modelName ?? '')
+          .trim()
+          .slice(0, 200);
+        if (!modelName) throw new Error('local_model_name_required');
+        let provider = (
+          await deps.store.list<ModelProvider>(
+            (x) =>
+              x.kind === 'model-provider' &&
+              x.scope === scope &&
+              x.providerKind === providerKind &&
+              x.endpoint === endpoint,
+          )
+        )[0];
+        if (!provider) {
+          provider = entity({
+            kind: 'model-provider',
+            ownerId: actorId,
+            scope,
+            name: String(body.name ?? `${providerKind} local`).slice(0, 200),
+            providerKind,
+            endpoint,
+            enabled: true,
+            health: 'unknown',
+            capabilities: defaultCapabilities(),
+          }) as ModelProvider;
+          await deps.store.insert(provider);
+          deps.registerProvider?.(provider);
+        } else await required(actorId, provider, 'write', 'model-provider');
+        const existing = (
+          await deps.store.list<Model>(
+            (x) => x.kind === 'model' && x.providerId === provider!.id && x.modelName === modelName,
+          )
+        )[0];
+        const model =
+          existing ??
+          ((await deps.store.insert(
+            entity({
+              kind: 'model',
+              ownerId: actorId,
+              scope,
+              providerId: provider.id,
+              name: modelName,
+              modelName,
+              local: true,
+              capabilities: provider.capabilities,
+              inputCostPerMillionCents: 0,
+              outputCostPerMillionCents: 0,
+              available: true,
+            }) as Model,
+          )) as Model);
+        return send(res, existing ? 200 : 201, { provider, model, offlineOnly: true });
+      }
       if (path === '/events' && req.method === 'GET') {
         const projectId = url.searchParams.get('projectId') ?? undefined;
         if (process.env.BOT_BUFFET_AUTH_MODE === 'production' && !projectId)

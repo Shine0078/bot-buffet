@@ -96,6 +96,44 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('registers discovered local models idempotently and keeps them offline-only', async () => {
+    const base = await start();
+    const payload = {
+      providerKind: 'ollama',
+      endpoint: 'http://127.0.0.1:11434/v1',
+      modelName: 'qwen2.5-coder',
+    };
+    const first = await fetch(`${base}/api/v1/local-models/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    expect(first.status).toBe(201);
+    const created = (await first.json()) as {
+      offlineOnly: boolean;
+      provider: { id: string };
+      model: { id: string; local: boolean };
+    };
+    expect(created).toMatchObject({ offlineOnly: true, model: { local: true } });
+    const second = await fetch(`${base}/api/v1/local-models/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    expect(second.status).toBe(200);
+    await expect(second.json()).resolves.toMatchObject({
+      provider: { id: created.provider.id },
+      model: { id: created.model.id },
+      offlineOnly: true,
+    });
+    const cloudKind = await fetch(`${base}/api/v1/local-models/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...payload, providerKind: 'openai' }),
+    });
+    expect(cloudKind.status).toBe(400);
+  });
+
   it('creates and lists validated model routes', async () => {
     const base = await start();
     const providerResponse = await fetch(`${base}/api/v1/providers`, {
