@@ -20,6 +20,7 @@ Updated 2026-08-21. This is the source of truth for implementation evidence.
 - Safe project deletion with child credential revocation, disabled schedule bindings, and HTTPS/secret-protected webhook metadata routes.
 - CI now pins third-party action SHAs and emits an unsigned commit/artifact provenance manifest; signed OIDC attestation remains a release-owner gate.
 - Anthropic and Gemini now use native provider adapters instead of being routed through the OpenAI-compatible wire format.
+- The production entrypoint now uses the same provider adapter factory as the API/control-plane registry, so native adapter selection is effective at runtime.
 
 ## Evidence
 

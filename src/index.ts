@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApi } from './api.js';
-import { OpenAICompatibleAdapter, MockLocalAdapter } from './providers.js';
+import { adapterFor, MockLocalAdapter } from './providers.js';
 import { ModelRouter } from './router.js';
 import { Orchestrator } from './orchestrator.js';
 import { createStore } from './store.js';
@@ -184,7 +184,7 @@ const orchestrator = new Orchestrator({
     if (model.local) return new MockLocalAdapter(model.modelName);
     const provider = providers.get(model.providerId);
     if (!provider) throw new Error('provider_not_found');
-    return new OpenAICompatibleAdapter(provider, vault.getSync(provider.id));
+    return adapterFor(provider, vault.getSync(provider.id));
   },
 });
 const server = createApi({
