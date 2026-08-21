@@ -26,6 +26,7 @@ import {
   Task,
   Webhook,
   Workspace,
+  OAuthProviderConfig,
   entity,
   now,
 } from './types.js';
@@ -36,6 +37,8 @@ import { CredentialVault } from './secrets.js';
 import { AuthorizationService } from './authorization.js';
 import { AuthenticationError, authenticateRequest } from './auth.js';
 import { ToolRegistry } from './tools.js';
+import { PkceSessionStore } from './oauth.js';
+import { fetchPinned } from './egress.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -43,6 +46,7 @@ export interface ApiDeps {
   uiRoot: string;
   vault: CredentialVault;
   tools?: ToolRegistry;
+  oauth?: PkceSessionStore;
   registerProvider?: (provider: ModelProvider) => void;
 }
 const send = (res: ServerResponse, status: number, payload: unknown): void => {
@@ -75,6 +79,29 @@ const parseBody = async (req: IncomingMessage): Promise<Record<string, unknown>>
   } catch {
     throw new Error('invalid_json');
   }
+};
+
+const parseOAuthConfig = (value: unknown): OAuthProviderConfig | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+  const candidate = value as Record<string, unknown>;
+  const scopes = Array.isArray(candidate.scopes)
+    ? candidate.scopes.filter((scope): scope is string => typeof scope === 'string')
+    : [];
+  if (
+    typeof candidate.authorizationEndpoint !== 'string' ||
+    typeof candidate.tokenEndpoint !== 'string' ||
+    typeof candidate.clientId !== 'string' ||
+    typeof candidate.redirectUri !== 'string' ||
+    scopes.length === 0
+  )
+    throw new Error('oauth_configuration_invalid');
+  return {
+    authorizationEndpoint: candidate.authorizationEndpoint,
+    tokenEndpoint: candidate.tokenEndpoint,
+    clientId: candidate.clientId,
+    redirectUri: candidate.redirectUri,
+    scopes,
+  };
 };
 
 export function createApi(deps: ApiDeps) {
@@ -157,6 +184,97 @@ export function createApi(deps: ApiDeps) {
           if (nowMs - bucket.startedAt >= RATE_WINDOW_MS) requestBuckets.delete(bucketKey);
     }
     try {
+      const oauthCallback = path.match(/^\/api\/v1\/providers\/([^/]+)\/oauth\/callback$/);
+      if (oauthCallback && req.method === 'GET') {
+        if (!deps.oauth) throw new Error('oauth_not_configured');
+        const provider = await deps.store.get<ModelProvider>(oauthCallback[1]!);
+        if (!provider?.oauth) throw new Error('oauth_not_configured');
+        const code = url.searchParams.get('code');
+        const state = url.searchParams.get('state');
+        const failure = url.searchParams.get('error');
+        if (!state || state.length > 256) throw new Error('oauth_callback_invalid');
+        const session = deps.oauth.consume(provider.id, state);
+        if (failure) throw new Error(`oauth_provider_denied:${failure.slice(0, 64)}`);
+        if (!code || code.length > 4096) throw new Error('oauth_callback_invalid');
+        const tokenEndpoint = new URL(provider.oauth.tokenEndpoint);
+        const tokenResponse = await fetchPinned(
+          tokenEndpoint,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'authorization_code',
+              code,
+              client_id: provider.oauth.clientId,
+              redirect_uri: session.redirectUri,
+              code_verifier: session.verifier,
+            }).toString(),
+            signal: AbortSignal.timeout(15_000),
+          },
+          false,
+        );
+        if (!tokenResponse.ok)
+          throw new Error(`oauth_token_exchange_failed:${tokenResponse.status}`);
+        const tokenPayload = (await tokenResponse.json()) as { access_token?: unknown };
+        if (typeof tokenPayload.access_token !== 'string' || tokenPayload.access_token.length < 8)
+          throw new Error('oauth_access_token_missing');
+        await deps.vault.set(provider.id, tokenPayload.access_token);
+        const existing = provider.credentialId
+          ? await deps.store.get<Credential>(provider.credentialId)
+          : undefined;
+        const credential = existing
+          ? await deps.store.put({
+              ...existing,
+              metadata: {
+                ...existing.metadata,
+                authType: 'oauth-pkce',
+                scopes: provider.oauth.scopes,
+                disabled: false,
+                lastTestedAt: now(),
+                fingerprint: fingerprint(tokenPayload.access_token),
+              },
+              version: existing.version,
+            } as Credential)
+          : ((await deps.store.insert(
+              entity({
+                kind: 'credential',
+                ownerId: session.actorId,
+                scope: provider.scope,
+                metadata: {
+                  providerId: provider.id,
+                  label: `${provider.name} OAuth credential`,
+                  authType: 'oauth-pkce' as const,
+                  scopes: provider.oauth.scopes,
+                  disabled: false,
+                  lastTestedAt: now(),
+                  fingerprint: fingerprint(tokenPayload.access_token),
+                },
+                secretRef: provider.id,
+              }) as Credential,
+            )) as Credential);
+        const saved = await deps.store.put({
+          ...provider,
+          credentialId: credential.id,
+          version: provider.version,
+        } as ModelProvider);
+        deps.registerProvider?.(saved);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: session.actorId,
+          scope: provider.scope,
+          actorId: session.actorId,
+          action: 'credential.connected',
+          resourceType: 'model-provider',
+          resourceId: provider.id,
+          risk: 'critical',
+          decision: 'executed',
+          metadata: { authType: 'oauth-pkce', scopes: provider.oauth.scopes },
+        });
+        return send(res, 200, {
+          provider: saved,
+          credential: { id: credential.id, metadata: credential.metadata },
+        });
+      }
       let actorId: string;
       try {
         actorId = await authenticateRequest(req, process.env.BOT_BUFFET_AUTH_MODE ?? 'development');
@@ -382,6 +500,7 @@ export function createApi(deps: ApiDeps) {
           providerKind: String(providerKind) as ModelProvider['providerKind'],
           endpoint: String(body.endpoint ?? 'http://127.0.0.1:11434/v1'),
           credentialId: undefined,
+          oauth: parseOAuthConfig(body.oauth),
           enabled: true,
           health: 'unknown',
           capabilities: defaultCapabilities(),
@@ -425,6 +544,31 @@ export function createApi(deps: ApiDeps) {
           });
         }
         return send(res, 201, provider);
+      }
+      const oauthStart = path.match(/^\/api\/v1\/providers\/([^/]+)\/oauth\/start$/);
+      if (oauthStart && req.method === 'POST') {
+        if (!deps.oauth) throw new Error('oauth_not_configured');
+        const provider = await required(
+          actorId,
+          await deps.store.get<ModelProvider>(oauthStart[1]!),
+          'write',
+          'model-provider',
+        );
+        if (!provider.oauth) throw new Error('oauth_not_configured');
+        const body = await parseBody(req);
+        const result = deps.oauth.begin({
+          actorId,
+          providerId: provider.id,
+          authorizationEndpoint: provider.oauth.authorizationEndpoint,
+          clientId: provider.oauth.clientId,
+          redirectUri: provider.oauth.redirectUri,
+          scopes: provider.oauth.scopes,
+          ttlMs: typeof body.ttlMs === 'number' ? body.ttlMs : undefined,
+        });
+        return send(res, 200, {
+          authorizeUrl: result.authorizationUrl,
+          expiresAt: new Date(result.session.expiresAt).toISOString(),
+        });
       }
       const providerTest = path.match(/^\/api\/v1\/providers\/([^/]+)\/test$/);
       if (providerTest && req.method === 'POST') {

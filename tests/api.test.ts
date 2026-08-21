@@ -8,7 +8,8 @@ import { createApi } from '../src/api.js';
 import { CredentialVault } from '../src/secrets.js';
 import { createStore } from '../src/store.js';
 import { Orchestrator } from '../src/orchestrator.js';
-import { entity, Agent, Environment, Project, Run, Task } from '../src/types.js';
+import { entity, Agent, Environment, ModelProvider, Project, Run, Task } from '../src/types.js';
+import { PkceSessionStore } from '../src/oauth.js';
 
 const servers: Array<ReturnType<typeof createApi>> = [];
 const oidcKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -146,6 +147,61 @@ describe('API boundary controls', () => {
       method: 'DELETE',
     });
     expect(deletedResponse.status).toBe(204);
+  });
+  it('starts an actor-bound OAuth PKCE flow without returning the verifier', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));
+    const store = createStore(dir);
+    const provider = entity({
+      kind: 'model-provider',
+      ownerId: 'local-user',
+      scope: 'workspace_local',
+      name: 'OAuth Provider',
+      providerKind: 'openai-compatible' as const,
+      endpoint: 'https://api.example.test/v1',
+      enabled: true,
+      health: 'unknown' as const,
+      capabilities: {
+        streaming: true,
+        toolCalling: true,
+        structuredOutput: true,
+        vision: false,
+        audio: false,
+        embeddings: false,
+        reranking: false,
+      },
+      oauth: {
+        authorizationEndpoint: 'https://login.example.test/authorize',
+        tokenEndpoint: 'https://login.example.test/token',
+        clientId: 'client-1',
+        scopes: ['models:read'],
+        redirectUri: 'http://127.0.0.1:8787/oauth/callback',
+      },
+    }) as ModelProvider;
+    await store.insert(provider);
+    const server = createApi({
+      store,
+      orchestrator: new EventEmitter() as unknown as Orchestrator,
+      uiRoot: dir,
+      vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+      oauth: new PkceSessionStore(),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/providers/${provider.id}/oauth/start`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { authorizeUrl: string; expiresAt: string };
+    const authorization = new URL(payload.authorizeUrl);
+    expect(authorization.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(authorization.searchParams.get('state')).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(payload).not.toHaveProperty('verifier');
+    const callback = `http://127.0.0.1:${address.port}/api/v1/providers/${provider.id}/oauth/callback?error=access_denied&state=${encodeURIComponent(authorization.searchParams.get('state')!)}`;
+    expect((await fetch(callback)).status).toBe(400);
+    expect((await fetch(callback)).status).toBe(400);
   });
   it('replays a run create response for the same idempotency key', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));

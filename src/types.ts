@@ -187,6 +187,14 @@ export interface ModelProvider extends BaseEntity {
   enabled: boolean;
   health: 'unknown' | 'healthy' | 'degraded' | 'offline';
   capabilities: CapabilitySet;
+  oauth?: OAuthProviderConfig;
+}
+export interface OAuthProviderConfig {
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  scopes: string[];
+  redirectUri: string;
 }
 export interface CapabilitySet {
   streaming: boolean;
