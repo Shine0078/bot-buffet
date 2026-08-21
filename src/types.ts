@@ -167,6 +167,11 @@ export interface CredentialMetadata {
   disabled: boolean;
   fingerprint: string;
 }
+export interface Credential extends BaseEntity {
+  kind: 'credential';
+  metadata: CredentialMetadata;
+  secretRef: string;
+}
 export interface ModelProvider extends BaseEntity {
   kind: 'model-provider';
   name: string;
@@ -559,6 +564,7 @@ export type Entity =
   | Project
   | Environment
   | Agent
+  | Credential
   | ModelProvider
   | Model
   | ModelRoute

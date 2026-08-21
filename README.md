@@ -19,7 +19,9 @@ Open <http://127.0.0.1:8787>. The first run creates a local workspace, a project
 - Typed control/data/execution-plane entities and scoped relationships.
 - Durable state, checkpoints, resumable run control, locks, fork/rollback, and tamper-evident audit chain.
 - Model registry and routing with local-first/offline enforcement plus OpenAI-compatible adapters.
+- Encrypted local credential vault with fingerprints-only metadata, provider health testing, and revocation.
 - Typed tool registry with schemas, policy decisions, path confinement, protected paths, command controls, output caps, and redaction.
+- Scoped memory, plugin lifecycle, credential, and file registry API surfaces.
 - Supervised orchestrator loop with approvals, deterministic evidence checks, usage/cost counters, retries-by-resume, and SSE events.
 - Accessible responsive Office UI with a list/table alternative, reduced-motion mode, keyboard focus, and global stop.
 - Health/readiness APIs, Docker hardening, CI checks, SBOM generation, and operational documentation.

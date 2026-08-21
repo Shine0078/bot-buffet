@@ -5,9 +5,13 @@ import { JsonStateStore } from './store.js';
 import {
   Agent,
   ApprovalRequest,
+  Credential,
+  MemoryItem,
   Model,
   ModelProvider,
+  Plugin,
   Project,
+  ProjectFile,
   Run,
   Task,
   Workspace,
@@ -15,16 +19,23 @@ import {
   now,
 } from './types.js';
 import { Orchestrator } from './orchestrator.js';
-import { defaultCapabilities } from './providers.js';
-import { assertWorkspacePath, redactSecrets, fingerprint } from './security.js';
+import { adapterFor, defaultCapabilities } from './providers.js';
+import { assertSafeEndpoint, assertWorkspacePath, redactSecrets, fingerprint } from './security.js';
+import { CredentialVault } from './secrets.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
   orchestrator: Orchestrator;
   uiRoot: string;
+  vault: CredentialVault;
+  registerProvider?: (provider: ModelProvider) => void;
 }
 const send = (res: ServerResponse, status: number, payload: unknown): void => {
   res.statusCode = status;
+  if (status === 204) {
+    res.end();
+    return;
+  }
   res.setHeader('content-type', 'application/json');
   res.setHeader('cache-control', 'no-store');
   res.end(JSON.stringify(redactSecrets(payload)));
@@ -98,6 +109,11 @@ export function createApi(deps: ApiDeps) {
           tasks: await deps.store.list<Task>((x) => x.kind === 'task'),
           runs: await deps.store.list((x) => x.kind === 'run'),
           models: await deps.store.list<Model>((x) => x.kind === 'model'),
+          providers: await deps.store.list<ModelProvider>((x) => x.kind === 'model-provider'),
+          approvals: await deps.store.list<ApprovalRequest>(
+            (x) => x.kind === 'approval-request' && (x as ApprovalRequest).status === 'pending',
+          ),
+          plugins: await deps.store.list<Plugin>((x) => x.kind === 'plugin'),
         });
       if (path === '/api/v1/projects' && req.method === 'GET')
         return send(res, 200, await deps.store.list<Project>((x) => x.kind === 'project'));
@@ -142,7 +158,8 @@ export function createApi(deps: ApiDeps) {
         );
       if (path === '/api/v1/providers' && req.method === 'POST') {
         const body = await parseBody(req);
-        const provider = entity({
+        assertSafeEndpoint(String(body.endpoint ?? 'http://127.0.0.1:11434/v1'));
+        let provider = entity({
           kind: 'model-provider',
           ownerId: actorId,
           scope: String(body.scope ?? 'workspace_local'),
@@ -151,13 +168,36 @@ export function createApi(deps: ApiDeps) {
             body.providerKind ?? 'openai-compatible',
           ) as ModelProvider['providerKind'],
           endpoint: String(body.endpoint ?? 'http://127.0.0.1:11434/v1'),
-          credentialId: body.token ? `cred_${fingerprint(String(body.token))}` : undefined,
+          credentialId: undefined,
           enabled: true,
           health: 'unknown',
           capabilities: defaultCapabilities(),
-        });
+        }) as ModelProvider;
         await deps.store.insert(provider);
-        if (body.token)
+        deps.registerProvider?.(provider);
+        if (body.token) {
+          await deps.vault.set(provider.id, String(body.token));
+          const credential = entity({
+            kind: 'credential',
+            ownerId: actorId,
+            scope: provider.scope,
+            metadata: {
+              providerId: provider.id,
+              label: `${provider.name} credential`,
+              authType: 'api-key' as const,
+              scopes: [],
+              disabled: false,
+              fingerprint: fingerprint(String(body.token)),
+            },
+            secretRef: provider.id,
+          }) as Credential;
+          await deps.store.insert(credential);
+          provider = await deps.store.put({
+            ...provider,
+            credentialId: credential.id,
+            version: provider.version,
+          } as ModelProvider);
+          deps.registerProvider?.(provider);
           await deps.store.audit({
             kind: 'audit-event',
             ownerId: actorId,
@@ -170,8 +210,45 @@ export function createApi(deps: ApiDeps) {
             decision: 'executed',
             metadata: { fingerprint: fingerprint(String(body.token)), authType: 'api-key' },
           });
+        }
         return send(res, 201, provider);
       }
+      const providerTest = path.match(/^\/api\/v1\/providers\/([^/]+)\/test$/);
+      if (providerTest && req.method === 'POST') {
+        const provider = await deps.store.get<ModelProvider>(providerTest[1]!);
+        if (!provider) return send(res, 404, { code: 'not_found' });
+        const health = await adapterFor(provider, deps.vault.getSync(provider.id)).health();
+        const saved = await deps.store.put({
+          ...provider,
+          health,
+          version: provider.version,
+        } as ModelProvider);
+        deps.registerProvider?.(saved);
+        return send(res, 200, { provider: saved, health });
+      }
+      const providerDelete = path.match(/^\/api\/v1\/providers\/([^/]+)$/);
+      if (providerDelete && req.method === 'DELETE') {
+        const provider = await deps.store.get<ModelProvider>(providerDelete[1]!);
+        if (!provider) return send(res, 404, { code: 'not_found' });
+        await deps.vault.revoke(provider.id);
+        const credential = await deps.store.get<Credential>(provider.credentialId ?? '');
+        if (credential)
+          await deps.store.put({
+            ...credential,
+            metadata: { ...credential.metadata, disabled: true },
+            version: credential.version,
+          } as Credential);
+        const saved = await deps.store.put({
+          ...provider,
+          enabled: false,
+          health: 'offline',
+          version: provider.version,
+        } as ModelProvider);
+        deps.registerProvider?.(saved);
+        return send(res, 200, saved);
+      }
+      if (path === '/api/v1/credentials' && req.method === 'GET')
+        return send(res, 200, await deps.store.list<Credential>((x) => x.kind === 'credential'));
       if (path === '/api/v1/models' && req.method === 'GET')
         return send(res, 200, await deps.store.list<Model>((x) => x.kind === 'model'));
       if (path === '/api/v1/models' && req.method === 'POST') {
@@ -191,6 +268,90 @@ export function createApi(deps: ApiDeps) {
         });
         await deps.store.insert(model);
         return send(res, 201, model);
+      }
+      if (path === '/api/v1/memory' && req.method === 'GET') {
+        const namespace = url.searchParams.get('namespace');
+        const namespaceId = url.searchParams.get('namespaceId');
+        return send(
+          res,
+          200,
+          await deps.store.list<MemoryItem>(
+            (x) =>
+              x.kind === 'memory' &&
+              (!namespace || (x as MemoryItem).namespace === namespace) &&
+              (!namespaceId || (x as MemoryItem).namespaceId === namespaceId),
+          ),
+        );
+      }
+      if (path === '/api/v1/memory' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const memory = entity({
+          kind: 'memory',
+          ownerId: actorId,
+          scope: String(body.scope ?? body.namespaceId ?? 'project_local'),
+          namespace: String(body.namespace ?? 'project') as MemoryItem['namespace'],
+          namespaceId: String(body.namespaceId ?? body.scope ?? 'project_local'),
+          text: String(body.text ?? ''),
+          data: body.data as Record<string, unknown> | undefined,
+          sourceIds: [],
+          approved: Boolean(body.approved),
+          freshnessAt: now(),
+          expiresAt: body.expiresAt ? String(body.expiresAt) : undefined,
+        }) as MemoryItem;
+        await deps.store.insert(memory);
+        return send(res, 201, memory);
+      }
+      const memoryMatch = path.match(/^\/api\/v1\/memory\/([^/]+)$/);
+      if (memoryMatch && req.method === 'DELETE') {
+        await deps.store.delete(memoryMatch[1]!);
+        return send(res, 204, { deleted: true });
+      }
+      if (path === '/api/v1/plugins' && req.method === 'GET')
+        return send(res, 200, await deps.store.list<Plugin>((x) => x.kind === 'plugin'));
+      if (path === '/api/v1/plugins' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const plugin = entity({
+          kind: 'plugin',
+          ownerId: actorId,
+          scope: String(body.scope ?? 'workspace_local'),
+          name: String(body.name ?? 'Plugin'),
+          releaseVersion: String(body.version ?? '0.1.0'),
+          source: String(body.source ?? 'user'),
+          enabled: false,
+          pinned: Boolean(body.pinned),
+          dependencies: [],
+          workspaceEnabled: false,
+          projectIds: [],
+          agentIds: [],
+          network: 'blocked' as const,
+          retention: String(body.retention ?? '30d'),
+          permissions: [],
+        }) as Plugin;
+        await deps.store.insert(plugin);
+        return send(res, 201, plugin);
+      }
+      const pluginMatch = path.match(/^\/api\/v1\/plugins\/([^/]+)\/(enable|disable)$/);
+      if (pluginMatch && req.method === 'POST') {
+        const plugin = await deps.store.get<Plugin>(pluginMatch[1]!);
+        if (!plugin) return send(res, 404, { code: 'not_found' });
+        const enabled = pluginMatch[2] === 'enable';
+        const saved = await deps.store.put({
+          ...plugin,
+          enabled,
+          workspaceEnabled: enabled,
+          version: plugin.version,
+        } as Plugin);
+        return send(res, 200, saved);
+      }
+      if (path === '/api/v1/files' && req.method === 'GET') {
+        const projectId = url.searchParams.get('projectId');
+        return send(
+          res,
+          200,
+          await deps.store.list<ProjectFile>(
+            (x) => x.kind === 'file' && (!projectId || (x as ProjectFile).projectId === projectId),
+          ),
+        );
       }
       if (path === '/api/v1/runs' && req.method === 'POST') {
         const body = await parseBody(req);
@@ -246,6 +407,17 @@ export function createApi(deps: ApiDeps) {
         } as ApprovalRequest);
         if (status === 'approved')
           await deps.orchestrator.command({ runId: approval.runId, type: 'resume' });
+        else {
+          const run = await deps.store.get<Run>(approval.runId);
+          if (run)
+            await deps.store.put({
+              ...run,
+              status: 'blocked',
+              error: 'approval_rejected',
+              finishedAt: now(),
+              version: run.version,
+            } as Run);
+        }
         return send(res, 200, saved);
       }
       if (path === '/api/v1/audit' && req.method === 'GET')

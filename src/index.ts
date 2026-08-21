@@ -7,12 +7,15 @@ import { ModelRouter } from './router.js';
 import { Orchestrator } from './orchestrator.js';
 import { createStore } from './store.js';
 import { createBuiltinTools } from './tools.js';
+import { CredentialVault } from './secrets.js';
 import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = process.env.BOT_BUFFET_DATA_DIR ?? join(root, '.data');
 const store = createStore(dataDir);
 await store.load();
+const vault = new CredentialVault(join(dataDir, 'credentials.enc.json'));
+await vault.load();
 await mkdir(join(root, 'workspace'), { recursive: true });
 
 async function bootstrap(): Promise<void> {
@@ -181,10 +184,16 @@ const orchestrator = new Orchestrator({
     if (model.local) return new MockLocalAdapter(model.modelName);
     const provider = providers.get(model.providerId);
     if (!provider) throw new Error('provider_not_found');
-    return new OpenAICompatibleAdapter(provider);
+    return new OpenAICompatibleAdapter(provider, vault.getSync(provider.id));
   },
 });
-const server = createApi({ store, orchestrator, uiRoot: join(root, 'ui') });
+const server = createApi({
+  store,
+  orchestrator,
+  uiRoot: join(root, 'ui'),
+  vault,
+  registerProvider: (provider) => providers.set(provider.id, provider),
+});
 const port = Number(process.env.PORT ?? 8787);
 server.listen(port, '127.0.0.1', () =>
   console.log(`Bot Buffet listening on http://127.0.0.1:${port}`),

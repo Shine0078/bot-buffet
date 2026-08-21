@@ -19,6 +19,7 @@ import { ModelAdapter, ModelRequest } from './providers.js';
 import { ModelRouter } from './router.js';
 import { ToolContext, ToolRegistry } from './tools.js';
 import { decidePolicy, redactSecrets } from './security.js';
+import { assembleContext } from './context.js';
 
 export interface OrchestratorDeps {
   store: JsonStateStore;
@@ -108,6 +109,25 @@ export class Orchestrator extends EventEmitter {
           return;
         }
         const state = await this.deps.store.getRunState(runId);
+        const assembled = assembleContext(
+          [
+            {
+              id: task.id,
+              text: `Task: ${task.title}\n${task.description}\nAcceptance: ${task.acceptanceCriteria.join('; ')}`,
+              scope: 'task',
+              relevance: 1,
+              sourceIds: [],
+            },
+            {
+              id: `${run.id}:state`,
+              text: `State: ${JSON.stringify(redactSecrets(state))}`,
+              scope: 'run',
+              relevance: 0.8,
+              sourceIds: [],
+            },
+          ],
+          Math.max(128, Math.min(2048, Math.floor(agent.profile.tokenLimit / 4))),
+        );
         const request: ModelRequest = {
           model: '',
           messages: [
@@ -117,7 +137,7 @@ export class Orchestrator extends EventEmitter {
             },
             {
               role: 'user',
-              content: `Task: ${task.title}\n${task.description}\nAcceptance: ${task.acceptanceCriteria.join('; ')}\nState: ${JSON.stringify(redactSecrets(state))}`,
+              content: assembled.text,
             },
           ],
           maxTokens: Math.min(agent.profile.tokenLimit, 4096),
@@ -295,11 +315,12 @@ export class Orchestrator extends EventEmitter {
     };
   }
   private async updateRun(run: Run, changes: Partial<Run>): Promise<void> {
+    const latest = (await this.deps.store.get<Run>(run.id)) ?? run;
     const saved = await this.deps.store.put({
-      ...run,
+      ...latest,
       ...changes,
       updatedAt: now(),
-      version: run.version,
+      version: latest.version,
     } as Run);
     this.emit('run', { type: `run.${saved.status}`, run: saved });
   }
