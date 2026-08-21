@@ -4,7 +4,8 @@ import { ModelProvider, now } from '../src/types.js';
 const fetchPinned = vi.hoisted(() => vi.fn());
 vi.mock('../src/egress.js', () => ({ fetchPinned }));
 
-const { AzureOpenAIAdapter, BedrockAdapter, CohereAdapter } = await import('../src/providers.js');
+const { AzureOpenAIAdapter, BedrockAdapter, CohereAdapter, OpenAICompatibleAdapter } =
+  await import('../src/providers.js');
 
 const provider: ModelProvider = {
   id: 'provider-cohere',
@@ -120,6 +121,135 @@ describe('native Cohere adapter', () => {
     await expect(adapter.listModels()).resolves.toEqual(['command-a', 'embed-v4']);
     expect(fetchPinned.mock.calls[0]?.[0]).toBe('https://api.cohere.com/v1/models');
     expect(fetchPinned.mock.calls[1]?.[0]).toBe('https://api.cohere.com/v1/models');
+  });
+
+  it('normalizes Cohere embeddings', async () => {
+    fetchPinned.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          model: 'embed-v4',
+          embeddings: [
+            [0.1, 0.2],
+            [0.3, 0.4],
+          ],
+          usage: { billed_units: { input_tokens: 8 } },
+        }),
+        { status: 200 },
+      ),
+    );
+    const response = await new CohereAdapter(provider, 'token').embed!({
+      model: 'embed-v4',
+      input: ['one', 'two'],
+    });
+    expect(response).toMatchObject({
+      model: 'embed-v4',
+      embeddings: [
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ],
+      usage: { inputTokens: 8, outputTokens: 0 },
+    });
+    expect(fetchPinned.mock.calls[0]?.[0]).toBe('https://api.cohere.com/v2/embed');
+  });
+});
+
+describe('normalized OpenAI-compatible capabilities', () => {
+  beforeEach(() => fetchPinned.mockReset());
+
+  it('parses streaming SSE chunks and emits a terminal usage chunk', async () => {
+    fetchPinned.mockResolvedValueOnce(
+      new Response(
+        [
+          'data: {"id":"stream-1","choices":[{"delta":{"content":"Hel"}}]}',
+          'data: {"id":"stream-1","choices":[{"delta":{"content":"lo"}}]}',
+          'data: {"id":"stream-1","choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2}}',
+          'data: [DONE]',
+          '',
+        ].join('\n'),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      ),
+    );
+    const adapter = new OpenAICompatibleAdapter(
+      { ...provider, providerKind: 'openai', endpoint: 'https://api.openai.com/v1' },
+      'token',
+    );
+    const chunks = [];
+    for await (const chunk of adapter.stream({
+      model: 'gpt-test',
+      messages: [{ role: 'user', content: 'Hi' }],
+    }))
+      chunks.push(chunk);
+    expect(chunks).toEqual([
+      { id: 'stream-1', delta: 'Hel', done: false },
+      { id: 'stream-1', delta: 'lo', done: false },
+      {
+        id: 'stream-1',
+        delta: '',
+        done: true,
+        usage: { inputTokens: 4, outputTokens: 2 },
+      },
+    ]);
+    expect(
+      JSON.parse(String((fetchPinned.mock.calls[0] as [string, RequestInit])[1].body)),
+    ).toMatchObject({
+      stream: true,
+      model: 'gpt-test',
+    });
+  });
+
+  it('normalizes embeddings and rejects malformed vectors', async () => {
+    fetchPinned.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          model: 'embed-test',
+          data: [{ embedding: [0.5, -0.25] }],
+          usage: { prompt_tokens: 3 },
+        }),
+        { status: 200 },
+      ),
+    );
+    const adapter = new OpenAICompatibleAdapter(
+      { ...provider, providerKind: 'openai', endpoint: 'https://api.openai.com/v1' },
+      'token',
+    );
+    await expect(adapter.embed!({ model: 'embed-test', input: 'hello' })).resolves.toMatchObject({
+      model: 'embed-test',
+      embeddings: [[0.5, -0.25]],
+      usage: { inputTokens: 3, outputTokens: 0 },
+    });
+    fetchPinned.mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [{ embedding: ['x'] }] }), { status: 200 }),
+    );
+    await expect(adapter.embed!({ model: 'embed-test', input: 'bad' })).rejects.toThrow(
+      'provider_embedding_invalid',
+    );
+  });
+
+  it('provides bounded normalized batching through the adapter contract', async () => {
+    fetchPinned
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'r1', choices: [{ message: { content: 'one' } }] }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'r2', choices: [{ message: { content: 'two' } }] }), {
+          status: 200,
+        }),
+      );
+    const adapter = new OpenAICompatibleAdapter(
+      { ...provider, providerKind: 'openai', endpoint: 'https://api.openai.com/v1' },
+      'token',
+    );
+    await expect(
+      adapter.batch!([
+        { model: 'gpt-test', messages: [{ role: 'user', content: 'one' }] },
+        { model: 'gpt-test', messages: [{ role: 'user', content: 'two' }] },
+      ]),
+    ).resolves.toMatchObject([{ content: 'one' }, { content: 'two' }]);
+    await expect(
+      adapter.batch!(Array.from({ length: 33 }, () => ({ model: 'gpt-test', messages: [] }))),
+    ).rejects.toThrow('provider_batch_too_large');
   });
 });
 

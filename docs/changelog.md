@@ -22,3 +22,4 @@
 - Evaluation execution pass: added deterministic exact-match/contains graders, explicit unsupported-grader failures, scoped evaluation-run persistence, evidence-only results, and API regression coverage.
 - Provider fidelity pass: Cohere now uses a native v2 chat/model adapter with normalized tool calls and usage; Azure OpenAI uses deployment-scoped `api-key` requests; and Bedrock uses SigV4-signed Converse requests instead of being silently routed through the OpenAI-compatible wire format.
 - Device authorization pass: added bounded actor/provider-bound device-code sessions, server-side polling with pending/slow-down handling, device-code redaction, encrypted token persistence, and API regression coverage.
+- Capability normalization pass: added streaming chunk normalization, bounded 32-request batching, OpenAI-compatible SSE parsing, validated OpenAI/Cohere embeddings, and adapter contract coverage across provider families.

@@ -32,11 +32,69 @@ export interface ModelResponse {
   raw?: unknown;
 }
 
+export interface ModelStreamChunk {
+  id: string;
+  delta: string;
+  toolCalls?: Array<{
+    id?: string;
+    name?: string;
+    arguments?: string;
+  }>;
+  done: boolean;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+
+export interface EmbeddingRequest {
+  model: string;
+  input: string | string[];
+  signal?: AbortSignal;
+}
+
+export interface EmbeddingResponse {
+  model: string;
+  embeddings: number[][];
+  usage: { inputTokens: number; outputTokens: number };
+  latencyMs: number;
+}
+
 export interface ModelAdapter {
   complete(request: ModelRequest): Promise<ModelResponse>;
+  stream(request: ModelRequest): AsyncIterable<ModelStreamChunk>;
+  embed?(request: EmbeddingRequest): Promise<EmbeddingResponse>;
+  batch?(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]>;
   health(): Promise<'healthy' | 'degraded' | 'offline'>;
   listModels(): Promise<string[]>;
 }
+
+const singleResponseStream = async function* (
+  response: Promise<ModelResponse>,
+): AsyncGenerator<ModelStreamChunk> {
+  const result = await response;
+  yield {
+    id: result.id,
+    delta: result.content,
+    toolCalls: result.toolCalls.map((call) => ({
+      id: call.id,
+      name: call.name,
+      arguments: JSON.stringify(call.arguments),
+    })),
+    done: false,
+  };
+  yield { id: result.id, delta: '', done: true, usage: result.usage };
+};
+
+const embeddingUsage = (usage: { prompt_tokens?: number; total_tokens?: number } | undefined) => ({
+  inputTokens: usage?.prompt_tokens ?? usage?.total_tokens ?? 0,
+  outputTokens: 0,
+});
+
+const boundedBatch = async (
+  complete: (request: ModelRequest) => Promise<ModelResponse>,
+  requests: readonly ModelRequest[],
+): Promise<readonly ModelResponse[]> => {
+  if (requests.length > 32) throw new Error('provider_batch_too_large');
+  return Promise.all(requests.map((request) => complete(request)));
+};
 
 const capabilityDefaults: CapabilitySet = {
   streaming: true,
@@ -124,6 +182,131 @@ export class OpenAICompatibleAdapter implements ModelAdapter {
       latencyMs: Date.now() - started,
       raw: redactSecrets(data),
     };
+  }
+  async *stream(request: ModelRequest): AsyncGenerator<ModelStreamChunk> {
+    const response = await fetchPinned(
+      `${this.provider.endpoint.replace(/\/$/u, '')}/chat/completions`,
+      {
+        method: 'POST',
+        headers: { ...this.headers(), accept: 'text/event-stream' },
+        redirect: 'error',
+        body: JSON.stringify({
+          model: request.model,
+          messages: request.messages,
+          temperature: request.temperature,
+          max_tokens: request.maxTokens,
+          tools: request.tools,
+          response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined,
+          stream: true,
+        }),
+        signal: request.signal
+          ? AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
+          : AbortSignal.timeout(30_000),
+      },
+      this.localEndpoint(),
+    );
+    if (!response.ok)
+      throw new Error(
+        `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
+      );
+    const text = await response.text();
+    let yielded = false;
+    let responseId = `response_${Date.now()}`;
+    for (const line of text.split(/\r?\n/u)) {
+      const dataLine = line.startsWith('data:') ? line.slice(5).trim() : '';
+      if (!dataLine || dataLine === '[DONE]') continue;
+      let payload: {
+        id?: string;
+        choices?: Array<{
+          delta?: {
+            content?: string;
+            tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
+          };
+          finish_reason?: string | null;
+        }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      try {
+        payload = JSON.parse(dataLine) as typeof payload;
+      } catch {
+        throw new Error('provider_stream_chunk_invalid');
+      }
+      responseId = payload.id ?? responseId;
+      const choice = payload.choices?.[0];
+      const delta = choice?.delta?.content ?? '';
+      const toolCalls = choice?.delta?.tool_calls?.map((call) => ({
+        id: call.id,
+        name: call.function?.name,
+        arguments: call.function?.arguments,
+      }));
+      if (delta || toolCalls?.length) {
+        yielded = true;
+        yield {
+          id: responseId,
+          delta,
+          ...(toolCalls?.length ? { toolCalls } : {}),
+          done: false,
+        };
+      }
+      if (choice?.finish_reason || payload.usage) {
+        yielded = true;
+        yield {
+          id: responseId,
+          delta: '',
+          done: true,
+          usage: payload.usage
+            ? {
+                inputTokens: payload.usage.prompt_tokens ?? 0,
+                outputTokens: payload.usage.completion_tokens ?? 0,
+              }
+            : undefined,
+        };
+      }
+    }
+    if (!yielded) yield { id: responseId, delta: '', done: true };
+  }
+  async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+    const started = Date.now();
+    const response = await fetchPinned(
+      `${this.provider.endpoint.replace(/\/$/u, '')}/embeddings`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        redirect: 'error',
+        body: JSON.stringify({ model: request.model, input: request.input }),
+        signal: request.signal
+          ? AbortSignal.any([request.signal, AbortSignal.timeout(30_000)])
+          : AbortSignal.timeout(30_000),
+      },
+      this.localEndpoint(),
+    );
+    if (!response.ok)
+      throw new Error(
+        `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
+      );
+    const data = (await response.json()) as {
+      model?: string;
+      data?: Array<{ embedding?: unknown }>;
+      usage?: { prompt_tokens?: number; total_tokens?: number };
+    };
+    const embeddings = (data.data ?? []).map((item) => {
+      if (
+        !Array.isArray(item.embedding) ||
+        item.embedding.some((value) => typeof value !== 'number')
+      )
+        throw new Error('provider_embedding_invalid');
+      return item.embedding as number[];
+    });
+    if (!embeddings.length) throw new Error('provider_embedding_missing');
+    return {
+      model: data.model ?? request.model,
+      embeddings,
+      usage: embeddingUsage(data.usage),
+      latencyMs: Date.now() - started,
+    };
+  }
+  batch(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]> {
+    return boundedBatch((request) => this.complete(request), requests);
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
@@ -235,6 +418,12 @@ export class AnthropicAdapter implements ModelAdapter {
       raw: redactSecrets(data),
     };
   }
+  stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    return singleResponseStream(this.complete(request));
+  }
+  batch(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]> {
+    return boundedBatch((request) => this.complete(request), requests);
+  }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
       const response = await fetchPinned(`${this.provider.endpoint.replace(/\/$/, '')}/v1/models`, {
@@ -339,6 +528,12 @@ export class GeminiAdapter implements ModelAdapter {
       raw: redactSecrets(data),
     };
   }
+  stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    return singleResponseStream(this.complete(request));
+  }
+  batch(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]> {
+    return boundedBatch((request) => this.complete(request), requests);
+  }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
       await fetchPinned(`${this.provider.endpoint.replace(/\/$/, '')}/models`, {
@@ -427,6 +622,12 @@ export class AzureOpenAIAdapter implements ModelAdapter {
       latencyMs: Date.now() - started,
       raw: redactSecrets(data),
     };
+  }
+  stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    return singleResponseStream(this.complete(request));
+  }
+  batch(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]> {
+    return boundedBatch((request) => this.complete(request), requests);
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
@@ -575,6 +776,48 @@ export class CohereAdapter implements ModelAdapter {
       },
       latencyMs: Date.now() - started,
       raw: redactSecrets(data),
+    };
+  }
+  stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    return singleResponseStream(this.complete(request));
+  }
+  batch(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]> {
+    return boundedBatch((request) => this.complete(request), requests);
+  }
+  async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+    const started = Date.now();
+    const response = await fetchPinned(`${this.baseUrl()}/v2/embed`, {
+      method: 'POST',
+      headers: this.headers(),
+      redirect: 'error',
+      body: JSON.stringify({
+        model: request.model,
+        input_type: 'search_document',
+        texts: Array.isArray(request.input) ? request.input : [request.input],
+      }),
+      signal: providerSignal({ model: request.model, messages: [], signal: request.signal }),
+    });
+    if (!response.ok)
+      throw new Error(
+        `provider_error:${response.status}:${String(redactSecrets(await response.text()))}`,
+      );
+    const data = (await response.json()) as {
+      model?: string;
+      embeddings?: unknown;
+      usage?: { billed_units?: { input_tokens?: number } };
+    };
+    if (!Array.isArray(data.embeddings)) throw new Error('provider_embedding_missing');
+    const embeddings = data.embeddings.map((embedding) => {
+      if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== 'number'))
+        throw new Error('provider_embedding_invalid');
+      return embedding as number[];
+    });
+    if (!embeddings.length) throw new Error('provider_embedding_missing');
+    return {
+      model: data.model ?? request.model,
+      embeddings,
+      usage: { inputTokens: data.usage?.billed_units?.input_tokens ?? 0, outputTokens: 0 },
+      latencyMs: Date.now() - started,
     };
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
@@ -829,6 +1072,12 @@ export class BedrockAdapter implements ModelAdapter {
       raw: redactSecrets(data),
     };
   }
+  stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    return singleResponseStream(this.complete(request));
+  }
+  batch(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]> {
+    return boundedBatch((request) => this.complete(request), requests);
+  }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     try {
       const url = this.controlPlaneUrl('/foundation-models?byOutputModality=TEXT');
@@ -882,6 +1131,12 @@ export class MockLocalAdapter implements ModelAdapter {
       },
       latencyMs: 1,
     };
+  }
+  stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    return singleResponseStream(this.complete(request));
+  }
+  batch(requests: readonly ModelRequest[]): Promise<readonly ModelResponse[]> {
+    return boundedBatch((request) => this.complete(request), requests);
   }
   async health(): Promise<'healthy' | 'degraded' | 'offline'> {
     return 'healthy';
