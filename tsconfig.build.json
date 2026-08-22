@@ -5,5 +5,14 @@
     "outDir": "dist"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["tests", "scripts", "node_modules", "dist", "src/main", "src/preload", "src/renderer", "src/shared"]
+  "exclude": [
+    "tests",
+    "scripts",
+    "node_modules",
+    "dist",
+    "src/main",
+    "src/preload",
+    "src/renderer",
+    "src/shared"
+  ]
 }

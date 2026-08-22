@@ -229,6 +229,10 @@ describe('Office UI in a real browser', () => {
         }),
       })
     ).json()) as { id: string };
+    // The desk this test drives must actually exist before the UI is asked to
+    // render it; without this the assertion below could pass against an empty
+    // floor if agent creation silently failed.
+    expect(agent.id).toBeTruthy();
     await fetch(base + '/api/v1/tasks', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

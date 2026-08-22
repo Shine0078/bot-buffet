@@ -1,0 +1,23 @@
+# Normalize every text file to LF in the index AND in the working tree on all
+# platforms. Without this, Git for Windows' system-level `core.autocrlf=true`
+# checks the repository out with CRLF while the committed blobs are LF, so
+# `npm run format:check` (Prettier defaults to endOfLine: "lf") fails on Windows
+# for every file while passing in Linux CI. `eol=lf` overrides autocrlf, so a
+# Windows contributor and the CI runner verify byte-identical files.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary
+
+# Generated lockfile: keep it out of language stats and diffs.
+package-lock.json linguist-generated=true -diff
