@@ -28,6 +28,7 @@ import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { labelUntrusted } from './injection.js';
+import { canStartInMode, decideMode } from './modes.js';
 
 export interface OrchestratorDeps {
   store: JsonStateStore;
@@ -123,6 +124,17 @@ export class Orchestrator extends EventEmitter {
       ? await this.deps.store.get<Workspace>(project.workspaceId)
       : undefined;
     if (!agent || !project || !task) throw new Error('run_context_missing');
+    // Emergency stop is a mode, not just a button: a run carrying it must not
+    // execute a single step, whichever path started it.
+    if (!canStartInMode(run.mode)) {
+      await this.updateRun(run, {
+        status: 'blocked',
+        error: 'mode_run_halted',
+        finishedAt: now(),
+      });
+      await this.emitAudit(run, 'run.mode_halted', 'medium', 'denied', { mode: run.mode });
+      return;
+    }
     const controller = new AbortController();
     this.controllers.set(runId, controller);
     await this.updateRun(run, {
@@ -385,6 +397,31 @@ export class Orchestrator extends EventEmitter {
               !agent.profile.allowedToolIds.includes(tool.definition.name)
             )
               throw new Error(`tool_not_allowed:${call.name}`);
+            // The run's mode constrains what this step may do, in addition to
+            // the policy below and never instead of it. A mode can only narrow
+            // what policy already permits, so selecting one is never an
+            // escalation.
+            const modeDecision = decideMode(run.mode, tool.definition.risk);
+            if (!modeDecision.allowed) {
+              await this.deps.store.audit({
+                kind: 'audit-event',
+                ownerId: run.ownerId,
+                scope: run.projectId,
+                actorId: run.ownerId,
+                action: 'tool.mode_refused',
+                resourceType: 'run',
+                resourceId: run.id,
+                risk: tool.definition.risk,
+                decision: 'denied',
+                metadata: {
+                  mode: run.mode,
+                  tool: call.name,
+                  code: modeDecision.code,
+                  reason: modeDecision.reason,
+                },
+              });
+              throw new Error(`${modeDecision.code}:${call.name}`);
+            }
             const decisionPolicy = decidePolicy(
               tool.definition.risk,
               run.projectId,
@@ -397,6 +434,10 @@ export class Orchestrator extends EventEmitter {
             );
             if (
               decisionPolicy.decision === 'approval-required' ||
+              // The mode's own approval threshold. Supervised mode approves
+              // every action that is not read-only, which policy alone would
+              // not require.
+              modeDecision.requiresApproval ||
               tool.definition.risk === 'high' ||
               tool.definition.risk === 'critical' ||
               agent.profile.approvalPolicy.requiredRisks.includes(tool.definition.risk)
