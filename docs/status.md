@@ -49,7 +49,7 @@ regressions:
   and the secret scan no longer treats a bare `.env` file as an extensionless
   exemption.
 
-Latest evidence: `npm run verify` (64 files, 615 tests),
+Latest evidence: `npm run verify` (64 files, 626 tests),
 `npm run preflight`, `npm run audit`, `npm run security:scan`, `npm run sbom`,
 `npm run provenance`, `npm run smoke`, `npm run restore:drill`, a Docker image
 build, the Docker sandbox integration suite (13 tests), and a negative
