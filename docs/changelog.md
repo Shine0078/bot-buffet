@@ -136,3 +136,5 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Plugin-activation pass: added CAS-protected workspace/project/agent
   assignments and effective per-agent reads constrained by activation scope and
   the profile `allowedPluginIds` allowlist.
+- Memory deletion now requires the current entity version, uses compare-and-swap at the durable-store boundary, and emits a scoped `memory.deleted` audit event so stale destructive requests cannot remove a newer record silently.
+- Project deletion now uses a current-version serialized store mutation with a persistent scope tombstone, preventing delayed child writes from recreating data after a destructive operation; child run state is removed and credential cleanup remains audited.

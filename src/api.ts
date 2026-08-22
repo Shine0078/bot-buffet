@@ -15,7 +15,6 @@ import {
   Citation,
   CostRecord,
   Credential,
-  Entity,
   Environment,
   EvaluationCase,
   EvaluationDataset,
@@ -265,7 +264,8 @@ const attachExchangedCredential = async (
     );
     if (provider.credentialId && provider.credentialId !== credential.id) {
       try {
-        await store.delete(provider.credentialId);
+        const previous = await store.get<Credential>(provider.credentialId);
+        if (previous) await store.deleteIfVersion<Credential>(previous.id, previous.version);
       } catch {
         // An unreferenced stale metadata row is harmless; the vault and provider
         // pointer are already consistent and no secret is stored in the row.
@@ -1217,27 +1217,15 @@ export function createApi(deps: ApiDeps) {
           'admin',
           'project',
         );
-        const activeRuns = await deps.store.list<Run>(
-          (x) =>
-            x.kind === 'run' &&
-            (x as Run).projectId === project.id &&
-            ['queued', 'running', 'waiting_approval', 'paused', 'retrying'].includes(
-              (x as Run).status,
-            ),
-        );
-        if (activeRuns.length) throw new Error('project_delete_active_runs');
-        const children = await deps.store.list<Entity>(
-          (x) =>
-            x.id === project.id ||
-            x.scope === project.id ||
-            (x as BaseEntity & { projectId?: string }).projectId === project.id,
-        );
-        for (const child of children)
-          if (child.kind !== 'audit-event') {
-            if (child.kind === 'credential') await deps.vault.revoke(child.id);
-            if (child.kind === 'webhook') await deps.vault.revoke(`webhook:${child.id}`);
-            await deps.store.delete(child.id);
-          }
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== project.version)
+          throw new Error('project_version_required');
+        const deleted = await deps.store.deleteProjectIfVersion(project.id, expectedVersion);
+        for (const child of deleted.deleted) {
+          if (child.kind === 'credential') await deps.vault.revoke((child as Credential).secretRef);
+          if (child.kind === 'webhook') await deps.vault.revoke(`webhook:${child.id}`);
+        }
         await deps.store.audit({
           kind: 'audit-event',
           ownerId: actorId,
@@ -1248,7 +1236,7 @@ export function createApi(deps: ApiDeps) {
           resourceId: project.id,
           risk: 'critical',
           decision: 'executed',
-          metadata: { deletedEntityCount: children.length },
+          metadata: { deletedEntityCount: deleted.deleted.length, version: expectedVersion },
         });
         return send(res, 204, { deleted: true });
       }
@@ -2881,7 +2869,15 @@ export function createApi(deps: ApiDeps) {
           'write',
         );
         const expired = expiredMemoryItems(candidates).slice(0, rawLimit);
-        for (const memory of expired) await deps.store.delete(memory.id);
+        let deletedCount = 0;
+        for (const memory of expired) {
+          try {
+            await deps.store.deleteIfVersion<MemoryItem>(memory.id, memory.version);
+            deletedCount += 1;
+          } catch (error) {
+            if ((error as Error).message !== 'concurrent_update') throw error;
+          }
+        }
         await deps.store.audit({
           kind: 'audit-event',
           ownerId: actorId,
@@ -2893,13 +2889,13 @@ export function createApi(deps: ApiDeps) {
           risk: 'medium',
           decision: 'executed',
           metadata: {
-            deleted: expired.length,
+            deleted: deletedCount,
             limit: rawLimit,
             namespace,
             namespaceId,
           },
         });
-        return send(res, 200, { deleted: expired.length, examined: candidates.length });
+        return send(res, 200, { deleted: deletedCount, examined: candidates.length });
       }
       const memoryMatch = path.match(/^\/api\/v1\/memory\/([^/]+)$/);
       const memoryApproval = path.match(/^\/api\/v1\/memory\/([^/]+)\/approval$/);
@@ -2932,13 +2928,29 @@ export function createApi(deps: ApiDeps) {
         return send(res, 200, saved);
       }
       if (memoryMatch && req.method === 'DELETE') {
-        await required(
+        const memory = await required(
           actorId,
           await deps.store.get<MemoryItem>(memoryMatch[1]!),
           'write',
           'memory',
         );
-        await deps.store.delete(memoryMatch[1]!);
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== memory.version)
+          throw new Error('memory_version_required');
+        const deleted = await deps.store.deleteIfVersion<MemoryItem>(memory.id, expectedVersion);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: memory.scope,
+          actorId,
+          action: 'memory.deleted',
+          resourceType: 'memory',
+          resourceId: deleted.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: { version: expectedVersion },
+        });
         return send(res, 204, { deleted: true });
       }
       if (path === '/api/v1/connectors' && req.method === 'GET') {
@@ -3355,7 +3367,7 @@ export function createApi(deps: ApiDeps) {
         );
         if (credential) {
           await deps.vault.revoke(credential.secretRef);
-          await deps.store.delete(credential.id);
+          await deps.store.deleteIfVersion<Credential>(credential.id, credential.version);
         }
         await deps.store.audit({
           kind: 'audit-event',
@@ -3391,10 +3403,10 @@ export function createApi(deps: ApiDeps) {
           const credential = await deps.store.get<Credential>(plugin.credentialId);
           if (credential) {
             await deps.vault.revoke(credential.secretRef);
-            await deps.store.delete(credential.id);
+            await deps.store.deleteIfVersion<Credential>(credential.id, credential.version);
           }
         }
-        await deps.store.delete(deleted.id);
+        await deps.store.deleteIfVersion<Plugin>(deleted.id, deleted.version);
         await deps.store.audit({
           kind: 'audit-event',
           ownerId: actorId,

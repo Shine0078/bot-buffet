@@ -10,6 +10,7 @@ const emptyState = (): RuntimeState => ({
   runState: {},
   locks: {},
   idempotency: {},
+  deletedScopes: {},
   auditTail: 'GENESIS',
   schemaVersion: CURRENT_SCHEMA_VERSION,
 });
@@ -35,11 +36,19 @@ export function migrateRuntimeState(value: unknown): RuntimeState {
   };
   if (value.auditTail !== undefined && typeof value.auditTail !== 'string')
     throw new Error('state_schema_invalid');
+  const deletedScopes = optionalRecord<RuntimeState['deletedScopes']>('deletedScopes');
+  if (
+    Object.values(deletedScopes).some(
+      (timestamp) => typeof timestamp !== 'string' || !Number.isFinite(Date.parse(timestamp)),
+    )
+  )
+    throw new Error('state_schema_invalid');
   return {
     entities: optionalRecord<RuntimeState['entities']>('entities'),
     runState: optionalRecord<RuntimeState['runState']>('runState'),
     locks: optionalRecord<RuntimeState['locks']>('locks'),
     idempotency: optionalRecord<RuntimeState['idempotency']>('idempotency'),
+    deletedScopes,
     auditTail: typeof value.auditTail === 'string' ? value.auditTail : 'GENESIS',
     schemaVersion: CURRENT_SCHEMA_VERSION,
   };
@@ -55,6 +64,17 @@ export class JsonStateStore {
   private mutationQueue: Promise<void> = Promise.resolve();
   private lockQueue: Promise<void> = Promise.resolve();
   constructor(private readonly filePath: string) {}
+
+  private assertScopeLive(value: BaseEntity): void {
+    const candidate = value as BaseEntity & { projectId?: unknown };
+    const projectId = typeof candidate.projectId === 'string' ? candidate.projectId : value.scope;
+    if (
+      (value as BaseEntity & { kind?: string }).kind === 'project' &&
+      this.state.deletedScopes[value.id]
+    )
+      throw new Error('project_deleted');
+    if (this.state.deletedScopes[projectId]) throw new Error('project_deleted');
+  }
 
   async load(): Promise<void> {
     if (this.loaded) return;
@@ -86,6 +106,7 @@ export class JsonStateStore {
   async put<T extends BaseEntity>(value: T): Promise<T> {
     const operation = this.mutationQueue.then(async () => {
       await this.load();
+      this.assertScopeLive(value);
       const saved = { ...value, updatedAt: now(), version: value.version + 1 } as T;
       this.state.entities[saved.id] = saved as unknown as Entity;
       await this.persist();
@@ -101,6 +122,7 @@ export class JsonStateStore {
   async putIfVersion<T extends BaseEntity>(value: T, expectedVersion: number): Promise<T> {
     const operation = this.mutationQueue.then(async () => {
       await this.load();
+      this.assertScopeLive(value);
       const current = this.state.entities[value.id] as T | undefined;
       if (!current || current.version !== expectedVersion) throw new Error('concurrent_update');
       const saved = { ...value, updatedAt: now(), version: expectedVersion + 1 } as T;
@@ -118,6 +140,7 @@ export class JsonStateStore {
   async insert<T extends BaseEntity>(value: T): Promise<T> {
     const operation = this.mutationQueue.then(async () => {
       await this.load();
+      this.assertScopeLive(value);
       if (this.state.entities[value.id]) throw new Error(`entity_exists:${value.id}`);
       this.state.entities[value.id] = value as unknown as Entity;
       await this.persist();
@@ -134,6 +157,7 @@ export class JsonStateStore {
   async upsert<T extends BaseEntity>(value: T): Promise<T> {
     const operation = this.mutationQueue.then(async () => {
       await this.load();
+      this.assertScopeLive(value);
       const current = this.state.entities[value.id] as T | undefined;
       const saved = current
         ? ({
@@ -178,6 +202,70 @@ export class JsonStateStore {
       () => undefined,
     );
     await operation;
+  }
+
+  /** Delete only the version the caller read. Destructive API mutations must
+   * not remove a newer record that raced the confirmation request. */
+  async deleteIfVersion<T extends BaseEntity>(entityId: ID, expectedVersion: number): Promise<T> {
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      const current = this.state.entities[entityId] as T | undefined;
+      if (!current || current.version !== expectedVersion) throw new Error('concurrent_update');
+      delete this.state.entities[entityId];
+      await this.persist();
+      return current;
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  /** Delete a project and its durable children as one serialized mutation. A
+   * tombstone rejects delayed inserts that already passed parent validation. */
+  async deleteProjectIfVersion(
+    projectId: ID,
+    expectedVersion: number,
+  ): Promise<{ project: Entity; deleted: Entity[] }> {
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      const project = this.state.entities[projectId];
+      if (!project || project.kind !== 'project') throw new Error('forbidden_or_not_found');
+      if (project.version !== expectedVersion) throw new Error('concurrent_update');
+      const activeStatuses = new Set([
+        'queued',
+        'running',
+        'waiting_approval',
+        'paused',
+        'retrying',
+      ]);
+      const children = Object.values(this.state.entities).filter((value) => {
+        if (value.kind === 'audit-event') return false;
+        if (value.id === projectId || value.scope === projectId) return true;
+        return (value as Entity & { projectId?: string }).projectId === projectId;
+      });
+      if (
+        children.some(
+          (value) =>
+            value.kind === 'run' &&
+            activeStatuses.has((value as Entity & { status: string }).status),
+        )
+      )
+        throw new Error('project_delete_active_runs');
+      const deletedIds = new Set(children.map((value) => value.id));
+      for (const value of children) delete this.state.entities[value.id];
+      for (const runId of Object.keys(this.state.runState))
+        if (deletedIds.has(runId)) delete this.state.runState[runId];
+      this.state.deletedScopes[projectId] = now();
+      await this.persist();
+      return { project, deleted: children };
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async getRunState(runId: ID): Promise<Record<string, unknown>> {

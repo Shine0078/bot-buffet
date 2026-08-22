@@ -45,6 +45,28 @@ describe('durable state and tamper-evident audit', () => {
     await store.unlock('file:a', 'a');
     expect(await store.lock('file:a', 'b', 10000)).toBe(true);
   });
+  it('deletes only the expected entity version', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-delete-cas-'));
+    const store = new JsonStateStore(join(dir, 'state.json'));
+    const project = entity({
+      kind: 'project',
+      ownerId: 'u',
+      scope: 'w',
+      workspaceId: 'w',
+      name: 'P',
+      slug: 'p',
+      archived: false,
+    });
+    await store.insert(project);
+    await expect(store.deleteIfVersion(project.id, project.version + 1)).rejects.toThrow(
+      'concurrent_update',
+    );
+    await expect(store.get(project.id)).resolves.toBeDefined();
+    await expect(store.deleteIfVersion(project.id, project.version)).resolves.toMatchObject({
+      id: project.id,
+    });
+    await expect(store.get(project.id)).resolves.toBeUndefined();
+  });
   it('persists idempotency responses for replay after restart', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-'));
     const path = join(dir, 'state.json');
@@ -77,6 +99,7 @@ describe('durable state and tamper-evident audit', () => {
       runState: {},
       locks: {},
       idempotency: {},
+      deletedScopes: {},
       auditTail: 'GENESIS',
     });
     const futurePath = join(dir, 'future.json');
@@ -87,5 +110,35 @@ describe('durable state and tamper-evident audit', () => {
       mode: 0o600,
     });
     await expect(new JsonStateStore(malformedPath).load()).rejects.toThrow('state_schema_invalid');
+  });
+  it('tombstones a deleted project and rejects delayed child inserts', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-project-delete-'));
+    const store = new JsonStateStore(join(dir, 'state.json'));
+    const project = entity({
+      kind: 'project',
+      ownerId: 'u',
+      scope: 'w',
+      workspaceId: 'w',
+      name: 'P',
+      slug: 'p',
+      archived: false,
+    });
+    await store.insert(project);
+    await expect(store.deleteProjectIfVersion(project.id, project.version)).resolves.toMatchObject({
+      project: { id: project.id },
+      deleted: expect.arrayContaining([expect.objectContaining({ id: project.id })]),
+    });
+    const child = entity({
+      kind: 'environment',
+      ownerId: 'u',
+      scope: project.id,
+      projectId: project.id,
+      name: 'late',
+      network: 'blocked' as const,
+      persistent: false,
+      protected: false,
+    });
+    await expect(store.insert(child)).rejects.toThrow('project_deleted');
+    await expect(store.upsert(child)).rejects.toThrow('project_deleted');
   });
 });

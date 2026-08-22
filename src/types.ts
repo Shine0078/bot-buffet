@@ -681,6 +681,8 @@ export interface RuntimeState {
   runState: Record<ID, Record<string, unknown>>;
   locks: Record<string, { ownerId: ID; expiresAt: ISODate }>;
   idempotency: Record<string, { status: number; payload: unknown; createdAt: ISODate }>;
+  /** Tombstones prevent delayed child writes from recreating data under a deleted project. */
+  deletedScopes: Record<ID, ISODate>;
   auditTail: string;
   schemaVersion: number;
 }

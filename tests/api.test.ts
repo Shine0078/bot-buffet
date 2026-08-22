@@ -1018,7 +1018,7 @@ describe('API boundary controls', () => {
       body: JSON.stringify({ name: 'Disposable' }),
     });
     expect(createdResponse.status).toBe(201);
-    const created = (await createdResponse.json()) as { id: string };
+    const created = (await createdResponse.json()) as { id: string; version: number };
     const environments = (await (await fetch(`${base}/api/v1/environments`)).json()) as Array<{
       projectId: string;
       name: string;
@@ -1033,8 +1033,16 @@ describe('API boundary controls', () => {
         }),
       ]),
     );
+    const staleDeleteResponse = await fetch(`${base}/api/v1/projects/${created.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version + 1 }),
+    });
+    expect(staleDeleteResponse.status).toBe(400);
     const deletedResponse = await fetch(`${base}/api/v1/projects/${created.id}`, {
       method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version }),
     });
     expect(deletedResponse.status).toBe(204);
     const listed = await fetch(`${base}/api/v1/projects`);
@@ -1577,6 +1585,34 @@ describe('API boundary controls', () => {
     );
     expect(remainingMemory.status).toBe(200);
     expect(await remainingMemory.json()).toHaveLength(2);
+
+    const deletableResponse = await fetch(`${base}/api/v1/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        namespace: 'session',
+        namespaceId: 'session-1',
+        text: 'delete me',
+      }),
+    });
+    const deletable = (await deletableResponse.json()) as { id: string; version: number };
+    const staleDelete = await fetch(`${base}/api/v1/memory/${deletable.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: deletable.version + 1 }),
+    });
+    expect(staleDelete.status).toBe(400);
+    const deleteResponse = await fetch(`${base}/api/v1/memory/${deletable.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: deletable.version }),
+    });
+    expect(deleteResponse.status).toBe(204);
+    const deletedAudit = await fetch(`${base}/api/v1/audit?action=memory.deleted`);
+    expect(deletedAudit.status).toBe(200);
+    expect(await deletedAudit.json()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ action: 'memory.deleted' })]),
+    );
   });
   it('starts an actor-bound OAuth PKCE flow without returning the verifier', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));
