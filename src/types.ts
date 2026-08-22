@@ -224,6 +224,11 @@ export interface Model extends BaseEntity {
   license?: string;
   quantization?: string;
   sizeBytes?: number;
+  /** File name of the imported weight artifact, relative to the model store root. */
+  artifactPath?: string;
+  /** SHA-256 the harness computed over the artifact on disk, never a caller claim. */
+  artifactSha256?: string;
+  artifactVerifiedAt?: string;
   latencyMs?: number;
   routingWeight?: number;
   available: boolean;

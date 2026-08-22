@@ -1,7 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { mkdir, readFile } from 'node:fs/promises';
+import { extname, join, resolve } from 'node:path';
 import { JsonStateStore } from './store.js';
 import {
   Agent,
@@ -69,6 +69,7 @@ import { budgetStatus, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { CostGrouping, costReport, forecastCents } from './reporting.js';
 import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
 import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
+import { formatBytes, planModelImport, verifyArtifact, volumeSpace } from './modelArtifacts.js';
 import { renderMetrics, runToOtlp } from './telemetry.js';
 import { researchBrief, validateCitations } from './research.js';
 import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
@@ -83,6 +84,10 @@ export interface ApiDeps {
   device?: DeviceSessionStore;
   registerProvider?: (provider: ModelProvider) => void;
   discoverLocal?: () => Promise<LocalDiscoveryResult[]>;
+  /** Root the verified local model weight files are stored under. Defaults to
+   *  a child of the durable data directory so a read-only container root does
+   *  not break the import path. */
+  modelStoreRoot?: string;
 }
 const send = (res: ServerResponse, status: number, payload: unknown): void => {
   res.statusCode = status;
@@ -150,6 +155,10 @@ const parseOAuthConfig = (value: unknown): OAuthProviderConfig | undefined => {
 
 export function createApi(deps: ApiDeps) {
   const authorization = new AuthorizationService(deps.store);
+  // Verified model weights live beside the durable state rather than in the
+  // repository, so an import cannot land on a read-only container root.
+  const modelStoreRoot =
+    deps.modelStoreRoot ?? join(process.env.BOT_BUFFET_DATA_DIR ?? '.data', 'models');
   const visible = async <T extends BaseEntity>(
     actorId: string,
     values: T[],
@@ -544,6 +553,139 @@ export function createApi(deps: ApiDeps) {
             }) as Model,
           )) as Model);
         return send(res, existing ? 200 : 201, { provider, model, offlineOnly: true });
+      }
+      if (path === '/api/v1/local-models/import' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const model = await deps.store.get<Model>(String(body.modelId ?? ''));
+        if (!model || model.kind !== 'model') throw new Error('model_not_found');
+        // Importing weights changes what the model will execute, so it is a
+        // write against the model, not a read.
+        await required(actorId, model, 'write', 'model');
+
+        const storeRoot = resolve(modelStoreRoot);
+        await mkdir(storeRoot, { recursive: true });
+        const space = await volumeSpace(storeRoot);
+        const decision = planModelImport(
+          {
+            fileName: String(body.fileName ?? ''),
+            sha256: body.sha256 == null ? null : String(body.sha256),
+            sizeBytes: body.sizeBytes == null ? null : Number(body.sizeBytes),
+            sourceUrl: body.sourceUrl == null ? null : String(body.sourceUrl),
+            quantization: body.quantization == null ? null : String(body.quantization),
+            license: body.license == null ? null : String(body.license),
+          },
+          storeRoot,
+          space,
+        );
+
+        if (!decision.ok || !decision.plan) {
+          await deps.store.audit({
+            kind: 'audit-event',
+            ownerId: actorId,
+            scope: model.scope,
+            actorId,
+            action: 'model.artifact_import',
+            resourceType: 'model',
+            resourceId: model.id,
+            risk: 'medium',
+            decision: 'denied',
+            metadata: { refusals: decision.refusals },
+          });
+          return send(res, 400, {
+            code: decision.refusals[0] ?? 'model_artifact_invalid',
+            refusals: decision.refusals,
+            freeBytes: space.freeBytes,
+            freeBytesHuman: formatBytes(space.freeBytes),
+          });
+        }
+
+        // Verification is performed by the harness against the bytes actually
+        // on disk. The caller's claim that an artifact is valid is never
+        // sufficient, and an unverified artifact is never registered.
+        const plan = decision.plan;
+        let verification;
+        try {
+          verification = await verifyArtifact(plan.destination, plan.sha256, plan.sizeBytes);
+        } catch {
+          await deps.store.audit({
+            kind: 'audit-event',
+            ownerId: actorId,
+            scope: model.scope,
+            actorId,
+            action: 'model.artifact_import',
+            resourceType: 'model',
+            resourceId: model.id,
+            risk: 'medium',
+            decision: 'denied',
+            metadata: { reason: 'model_artifact_unreadable', fileName: plan.fileName },
+          });
+          return send(res, 404, { code: 'model_artifact_unreadable', fileName: plan.fileName });
+        }
+
+        if (!verification.verified) {
+          await deps.store.audit({
+            kind: 'audit-event',
+            ownerId: actorId,
+            scope: model.scope,
+            actorId,
+            action: 'model.artifact_import',
+            resourceType: 'model',
+            resourceId: model.id,
+            risk: 'high',
+            decision: 'denied',
+            metadata: {
+              reason: verification.reason,
+              fileName: plan.fileName,
+              expectedSha256: plan.sha256,
+              actualSha256: verification.actualSha256,
+            },
+          });
+          return send(res, 409, {
+            code: verification.reason,
+            expectedSha256: plan.sha256,
+            actualSha256: verification.actualSha256,
+          });
+        }
+
+        // Compare-and-swap on the version the read observed, so two concurrent
+        // imports cannot leave the record describing one artifact while the
+        // digest describes another.
+        const updated = await deps.store.putIfVersion<Model>(
+          {
+            ...model,
+            sizeBytes: verification.actualBytes,
+            artifactPath: plan.fileName,
+            artifactSha256: verification.actualSha256,
+            artifactVerifiedAt: new Date().toISOString(),
+            ...(plan.quantization ? { quantization: plan.quantization } : {}),
+            ...(plan.license ? { license: plan.license } : {}),
+          },
+          model.version,
+        );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: model.scope,
+          actorId,
+          action: 'model.artifact_import',
+          resourceType: 'model',
+          resourceId: model.id,
+          risk: 'medium',
+          decision: 'allowed',
+          metadata: {
+            fileName: plan.fileName,
+            sha256: verification.actualSha256,
+            sizeBytes: verification.actualBytes,
+          },
+        });
+        return send(res, 200, {
+          model: updated,
+          verified: true,
+          sha256: verification.actualSha256,
+          sizeBytes: verification.actualBytes,
+          sizeHuman: formatBytes(verification.actualBytes),
+          freeBytesAfter: space.freeBytes - verification.actualBytes,
+        });
       }
       if (path === '/events' && req.method === 'GET') {
         const projectId = url.searchParams.get('projectId') ?? undefined;
