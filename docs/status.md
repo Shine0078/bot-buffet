@@ -54,8 +54,36 @@ Added this session:
 - Digest-pinned sandbox image required in production, failing closed at startup.
 - Structural guard holding the Office UI to its escaping rule.
 
-Suite: 288 tests across 41 files, all passing, with `verify` covering format,
-lint, types, tests, build, and the brand gate.
+### The declared-but-never-read audit
+
+Enforcing run modes revealed a pattern worth naming: a field declared on the
+agent profile, validated when written, stored on every record, and read by
+nothing at runtime. Every such field is a safety property the interface
+promises and the runtime does not provide. Auditing all sixteen profile fields
+for actual runtime consultation found five:
+
+| Field                | What it promised                                                            | What it did                                                                                                                               |
+| -------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`               | plan/review/chat/supervised/autonomous/maintenance/emergency-stop semantics | Nothing. A `plan` run could mutate files exactly like `autonomous`, and `emergency-stop` did not stop anything.                           |
+| `verificationPolicy` | Which checks decide whether a run may claim completion                      | Nothing. One hardcoded substring check ran regardless, so `requireEvidence: false` still required evidence and declared checks never ran. |
+| `memoryPolicy`       | Readable and writable memory scopes, approval, retention                    | Nothing — and the orchestrator never loaded memory into agent context at all, so the policy governed a path that did not exist.           |
+| `escalationPolicy`   | pause / retry / delegate / stop on failure                                  | Validated on write, never read. Every failure ended the run as `failed`.                                                                  |
+| `environmentKeys`    | Which environment variables an agent may see                                | Nothing. The local sandbox inherited the entire parent environment, including the master key and OIDC configuration.                      |
+| `skills`             | Progressive-disclosure references                                           | Nothing. An agent was never told its own skills existed.                                                                                  |
+
+All six are now enforced, each with unit coverage for the decision and
+orchestrator-level coverage for the wiring — because a pure function passing
+its tests proves nothing about whether the loop consults it, which is precisely
+how these survived.
+
+The remaining unread field is `allowedPluginIds`, which is honest rather than
+broken: agents have no plugin invocation path yet, so there is nothing to
+constrain. It is recorded here rather than quietly enforced against a path that
+does not exist.
+
+Suite: 451 tests across 52 files, all passing, with `verify` covering format,
+lint, types, tests, build, and the brand gate. Coverage thresholds are ratcheted
+to the measured figures so a regression fails rather than eroding quietly.
 
 Still owner gates: staging and production deployment, real provider-account
 integration tests, off-host backup custody, and a production rollback drill.
