@@ -110,7 +110,14 @@ export const validateProviderEnvironmentCredential = (
     throw new Error('provider_environment_variable_protected');
   const local = LOCAL_PROVIDER_KINDS.has(providerKind);
   const parsed = assertSafeEndpoint(endpoint, local);
-  if (local) return;
+  if (local) {
+    if (process.env.BOT_BUFFET_AUTH_MODE === 'production') {
+      const variableAllowlist = configuredList('BOT_BUFFET_PROVIDER_ENV_ALLOWLIST');
+      if (!variableAllowlist.has(environmentVariable.toLowerCase()))
+        throw new Error('provider_environment_variable_not_allowlisted');
+    }
+    return;
+  }
   const hostAllowlist = configuredList('BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST');
   if (!hostAllowlist.has(parsed.hostname.toLowerCase()))
     throw new Error('provider_environment_endpoint_not_allowlisted');

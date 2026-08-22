@@ -99,6 +99,34 @@ describe('provider adapter normalization', () => {
     }
   });
 
+  it('applies the production variable allowlist to loopback providers too', () => {
+    const previousMode = process.env.BOT_BUFFET_AUTH_MODE;
+    const previousAllowlist = process.env.BOT_BUFFET_PROVIDER_ENV_ALLOWLIST;
+    process.env.BOT_BUFFET_AUTH_MODE = 'production';
+    process.env.BOT_BUFFET_PROVIDER_ENV_ALLOWLIST = 'OPENAI_API_KEY';
+    try {
+      expect(() =>
+        validateProviderEnvironmentCredential(
+          'ollama',
+          'http://127.0.0.1:11434/v1',
+          'UNAPPROVED_PROVIDER_TOKEN',
+        ),
+      ).toThrow('provider_environment_variable_not_allowlisted');
+      expect(() =>
+        validateProviderEnvironmentCredential(
+          'ollama',
+          'http://127.0.0.1:11434/v1',
+          'OPENAI_API_KEY',
+        ),
+      ).not.toThrow();
+    } finally {
+      if (previousMode === undefined) delete process.env.BOT_BUFFET_AUTH_MODE;
+      else process.env.BOT_BUFFET_AUTH_MODE = previousMode;
+      if (previousAllowlist === undefined) delete process.env.BOT_BUFFET_PROVIDER_ENV_ALLOWLIST;
+      else process.env.BOT_BUFFET_PROVIDER_ENV_ALLOWLIST = previousAllowlist;
+    }
+  });
+
   it('revalidates persisted environment references when an adapter is created', () => {
     const previous = process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
     const persisted = {
