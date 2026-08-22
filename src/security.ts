@@ -202,6 +202,14 @@ export function assertOffline(offline: boolean, local: boolean): void {
 }
 
 const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+
+/**
+ * URL.hostname keeps the brackets on an IPv6 literal ("[::1]"), which matches
+ * none of the bare forms above. Both the loopback check and the private-range
+ * check must compare against the same normalised value, or an address is
+ * classified differently depending on which check looks at it.
+ */
+const normalizeHost = (host: string): string => host.toLowerCase().replace(/^\[|\]$/g, '');
 const privateIpv4 = (host: string): boolean => {
   const parts = host.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255))
@@ -216,7 +224,7 @@ const privateIpv4 = (host: string): boolean => {
   );
 };
 const privateHost = (host: string): boolean => {
-  const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
+  const normalized = normalizeHost(host);
   if (localHosts.has(normalized) || privateIpv4(normalized)) return true;
   if (isIP(normalized) === 6)
     return (
@@ -246,10 +254,24 @@ export function assertSafeEndpoint(endpoint: string, allowLocal = false): URL {
     (!allowLocal && privateHost(parsed.hostname))
   )
     throw new Error('endpoint_rejected:metadata_or_loopback');
-  if (allowLocal && !localHosts.has(parsed.hostname.toLowerCase()) && privateHost(parsed.hostname))
-    throw new Error('endpoint_rejected:private_network');
-  if (!allowLocal && parsed.protocol !== 'https:')
-    throw new Error('endpoint_rejected:tls_required');
+  if (allowLocal) {
+    // `allowLocal` means "this must be a local runtime", not "relax the rules".
+    //
+    // The previous form only rejected hostnames that were *private*, so a
+    // public host fell through every check: it is not metadata, not private,
+    // and the TLS requirement below is skipped for local endpoints. That let a
+    // model registered through the offline-only local path point at an
+    // arbitrary remote server over plaintext, which would send prompts
+    // off-host while the API still reported `offlineOnly: true`.
+    //
+    // Loopback is the whole meaning of the flag, and it is what local
+    // discovery probes, so require exactly that. Private LAN addresses were
+    // already rejected and still are.
+    if (!localHosts.has(normalizeHost(parsed.hostname)))
+      throw new Error('endpoint_rejected:not_loopback');
+    return parsed;
+  }
+  if (parsed.protocol !== 'https:') throw new Error('endpoint_rejected:tls_required');
   return parsed;
 }
 

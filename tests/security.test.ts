@@ -110,3 +110,62 @@ describe('security boundaries', () => {
     ).toContain('$.name:expected_string');
   });
 });
+
+describe('local endpoint policy', () => {
+  /**
+   * `allowLocal` previously meant "relax the rules" rather than "must be
+   * local": it rejected only *private* hostnames, so a public host passed
+   * every check — not metadata, not private, and the TLS requirement is
+   * skipped for local endpoints. A model registered through the offline-only
+   * local path could therefore point at an arbitrary remote server over
+   * plaintext while the API still reported `offlineOnly: true`.
+   */
+  it('accepts loopback hosts over plaintext, which is the point of the flag', () => {
+    for (const endpoint of [
+      'http://127.0.0.1:11434/v1',
+      'http://localhost:1234/v1',
+      'http://[::1]:8080/v1',
+      'https://localhost:8443/v1',
+    ]) {
+      expect(() => assertSafeEndpoint(endpoint, true), endpoint).not.toThrow();
+    }
+  });
+
+  it('refuses a public endpoint even when local endpoints are allowed', () => {
+    for (const endpoint of [
+      'http://attacker.example/v1',
+      'https://attacker.example/v1',
+      'http://192.0.2.10:11434/v1',
+      'https://api.openai.com/v1',
+    ]) {
+      expect(() => assertSafeEndpoint(endpoint, true), endpoint).toThrow(
+        /endpoint_rejected:not_loopback/,
+      );
+    }
+  });
+
+  it('still refuses private LAN addresses under the local flag', () => {
+    for (const endpoint of [
+      'http://192.168.1.10:11434/v1',
+      'http://10.0.0.5:11434/v1',
+      'http://172.16.0.9:11434/v1',
+      'http://169.254.169.254/latest/meta-data',
+    ]) {
+      expect(() => assertSafeEndpoint(endpoint, true), endpoint).toThrow();
+    }
+  });
+
+  it('still refuses metadata, embedded credentials, and non-http schemes', () => {
+    expect(() => assertSafeEndpoint('http://metadata.google.internal/', true)).toThrow();
+    expect(() => assertSafeEndpoint('http://user:pass@127.0.0.1:11434/v1', true)).toThrow(
+      /embedded_credentials/,
+    );
+    expect(() => assertSafeEndpoint('file:///etc/passwd', true)).toThrow(/unsupported_protocol/);
+    expect(() => assertSafeEndpoint('not a url', true)).toThrow(/invalid_url/);
+  });
+
+  it('keeps requiring TLS when local endpoints are not allowed', () => {
+    expect(() => assertSafeEndpoint('http://example.com/v1')).toThrow(/tls_required/);
+    expect(() => assertSafeEndpoint('https://example.com/v1')).not.toThrow();
+  });
+});
