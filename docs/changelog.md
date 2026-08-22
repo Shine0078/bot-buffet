@@ -14,6 +14,7 @@
 - Artifact registry pass: content hashing, credential/size export scanning, scoped artifact APIs, and tamper-evident checkpoint manifests.
 - Evaluation pass: regex/numeric/schema/normalized graders, separated LLM-as-judge support with fail-closed verdicts, golden-baseline regression comparison, and an audited release gate.
 - Observability pass: OTLP/JSON run traces derived from durable steps and a Prometheus-style `/metrics` endpoint.
+- Browser/accessibility pass: Playwright + axe-core suite over the served UI, CI Chromium install, and WCAG contrast fixes to the design tokens.
 - Provider compatibility pass: native Anthropic Messages and Gemini generateContent adapters with normalized usage/tool-call responses and regression coverage.
 - Runtime wiring pass: the service entrypoint now honors the provider adapter factory for online models.
 - Credential hardening pass: development vaults now use random per-file keys, keep them out of backups, and verify reload behavior; the current security scan records only the remaining external sandbox gate.

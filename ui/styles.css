@@ -1,11 +1,11 @@
 :root {
   --ink: #1d272b;
-  --muted: #67767b;
+  --muted: #556166;
   --paper: #f7f8f6;
   --panel: #fff;
   --line: #dfe5e2;
   --mint: #c9e8d9;
-  --mint-strong: #238461;
+  --mint-strong: #1c6b4f;
   --amber: #f2d79c;
   --red: #d96b5f;
   --navy: #20343b;
@@ -244,7 +244,7 @@ h1 {
   justify-content: space-between;
 }
 .live-dot {
-  color: #2e966b;
+  color: #1c6b4f;
   font-size: 9px;
   letter-spacing: 0.05em;
 }
@@ -272,7 +272,7 @@ h1 {
   background: #fffdf6;
 }
 .whiteboard .room-label span {
-  color: #b78634;
+  color: #7a5610;
 }
 .criteria {
   margin-top: 20px;

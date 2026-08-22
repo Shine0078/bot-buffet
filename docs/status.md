@@ -65,6 +65,8 @@ The profile-audit working-tree diff was reviewed in scan `be142bc7-f697-411d-a7f
 
 - Observability is now collector-ready. `GET /api/v1/runs/:id/trace` renders a run and its durable steps as an OTLP/JSON payload with deterministic trace/span ids, parent-child structure, client spans for model and tool calls, error status mapping, and redacted error messages, so traces survive process restarts because they derive from persisted state rather than in-memory spans. `GET /metrics` exposes scrapeable gauges for total/active/failed runs, cumulative cost, and unacknowledged alerts. Both are covered by unit, API, and live smoke checks.
 
+- Browser and accessibility testing is now real rather than string matching. A Playwright suite (pinned `playwright@1.62.1`, `axe-core@4.12.1`, Chromium installed in CI) loads the served Office UI, asserts zero console/page errors, exercises every table view including the new budget/workflow/alert/usage views, verifies keyboard focus reaches interactive controls with a visible focus indicator, checks the 390px mobile layout for horizontal overflow, and runs axe against WCAG 2 A/AA on both the office floor and a table view. axe is evaluated over CDP rather than injected as a script tag, so the application's real Content-Security-Policy stays enforced during the audit. The suite immediately found six genuine serious-impact WCAG contrast failures in `--muted`, `--mint-strong`, the live indicator, and the whiteboard label; the design tokens were darkened at source and the audit now reports zero violations.
+
 ## Completion assessment (2026-08-21)
 
 Measured against the master prompt's acceptance criteria, not against effort spent.

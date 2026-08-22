@@ -4,7 +4,9 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist'],
-    testTimeout: 15_000,
+    // Browser tests launch Chromium and run axe audits; the API/unit suites finish far sooner.
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'lcov'],

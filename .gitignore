@@ -10,3 +10,4 @@ coverage/
 sbom.cyclonedx.json
 provenance.json
 results.sarif
+browser-out.log
