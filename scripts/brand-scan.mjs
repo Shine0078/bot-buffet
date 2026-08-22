@@ -16,8 +16,11 @@ import process from 'node:process';
  *      pattern, so a genuine leftover anywhere else still fails the gate.
  */
 
-/** This file names the brand terms by necessity; exclude it by path only. */
-const SELF_PATH = 'scripts/brand-scan.mjs';
+/** The gate's own implementation and its regression suite must name the brand
+ *  terms in order to hunt for them and to prove the hunt works. Both are
+ *  excluded by exact path only — never by loosening the pattern — so a genuine
+ *  leftover in any other file still fails the build. */
+export const GATE_PATHS = ['scripts/brand-scan.mjs', 'tests/brand-scan.test.ts'];
 
 export const BRAND_TERMS = ['munder', 'difflin'];
 export const BRAND_PATTERN = BRAND_TERMS.join('|');
@@ -72,13 +75,13 @@ export function isAllowed(hit, allowed = ALLOWED) {
 }
 
 /** Reduce raw `git grep` output to the hits that should fail the build. */
-export function filterHits(output, allowed = ALLOWED, selfPath = SELF_PATH) {
+export function filterHits(output, allowed = ALLOWED, gatePaths = GATE_PATHS) {
   if (!output) return [];
   return output
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => parseHit(line) ?? { path: '<unparsed>', line: 0, content: line })
-    .filter((hit) => hit.path !== selfPath)
+    .filter((hit) => !gatePaths.includes(hit.path))
     .filter((hit) => !isAllowed(hit, allowed));
 }
 
@@ -86,7 +89,17 @@ function runGrep() {
   try {
     return execFileSync(
       'git',
-      ['grep', '-E', '-i', '-I', '-n', BRAND_PATTERN, '--', '.', `:(exclude)${SELF_PATH}`],
+      [
+        'grep',
+        '-E',
+        '-i',
+        '-I',
+        '-n',
+        BRAND_PATTERN,
+        '--',
+        '.',
+        ...GATE_PATHS.map((path) => `:(exclude)${path}`),
+      ],
       { encoding: 'utf8' },
     ).trim();
   } catch (error) {

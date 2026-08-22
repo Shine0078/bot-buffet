@@ -8,9 +8,16 @@ Requires Node.js 20+.
 
 ```sh
 npm ci
+npm run preflight
 npm run verify
 npm run dev
 ```
+
+`npm run preflight` classifies this machine before anything else runs: it
+enforces the supported Node floor from `package.json`, confirms npm,
+dependencies, and a writable data directory, and reports git, Docker, and the
+Playwright browser as degraded optional features rather than failures. Every
+blocker and warning carries the exact remediation for your platform.
 
 Open <http://127.0.0.1:8787>. The first run creates a local workspace, a project, a supervised local agent, and an offline-safe mock model. State is stored atomically in `.data/state.json` (mode `0600`). Set `BOT_BUFFET_OFFLINE=true` to make the router reject all cloud models.
 

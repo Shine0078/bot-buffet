@@ -13,6 +13,9 @@ jobs:
         with: { node-version: '22', cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      # Fail fast with an actionable report if the runner lacks a prerequisite,
+      # instead of surfacing it later as an opaque failure inside a gate.
+      - run: npm run preflight
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm test -- --coverage

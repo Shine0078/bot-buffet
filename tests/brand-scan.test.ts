@@ -47,8 +47,12 @@ describe('brand scan', () => {
     expect(hits.at(0)?.path).toBe('src/api.ts');
   });
 
-  it('excludes only the scanner itself, by path and never by pattern', () => {
+  it('excludes only the gate implementation, by path and never by pattern', () => {
     expect(filterHits("scripts/brand-scan.mjs:21:export const BRAND_TERMS = ['munder'];")).toEqual(
+      [],
+    );
+    // The gate's own regression suite is excluded on the same grounds.
+    expect(filterHits("tests/brand-scan.test.ts:20:expect(re.test('Munder Difflin'));")).toEqual(
       [],
     );
     // A leftover in another script is still a failure.

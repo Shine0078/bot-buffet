@@ -19,6 +19,9 @@ export interface BrandAllowance {
 export declare const BRAND_TERMS: readonly string[];
 export declare const BRAND_PATTERN: string;
 export declare const ALLOWED: readonly BrandAllowance[];
+/** Paths of the gate implementation and its regression suite, excluded by
+ *  exact path because they must name the brand terms to do their job. */
+export declare const GATE_PATHS: readonly string[];
 
 /** Throws if the pattern stopped matching the brand or grew too broad. */
 export declare function selfTest(pattern?: string): true;
@@ -35,7 +38,7 @@ export declare function isAllowed(
 export declare function filterHits(
   output: string,
   allowed?: readonly BrandAllowance[],
-  selfPath?: string,
+  gatePaths?: readonly string[],
 ): BrandHit[];
 
 export declare function main(): void;
