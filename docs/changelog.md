@@ -111,3 +111,6 @@ An audit of every field on the agent profile, approval policy, and tool definiti
   copies with remapped IDs, reset active state, disabled schedules/workflows/
   budgets, sanitized collision-safe slugs, and explicit exclusion of secrets,
   live runs, files, memory, artifacts, webhooks, and audit history.
+- Pagination pass: project, task, run, and audit list routes now accept bounded
+  cursor pagination while retaining backward-compatible array responses for
+  callers that do not request a page.

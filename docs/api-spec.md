@@ -4,6 +4,13 @@ The Node service exposes versioned JSON endpoints under `/api/v1`, `/healthz`, `
 
 Core resources include projects, providers, models, memory, plugins, MCP servers, files, sources, schedules, webhooks, evaluation datasets/cases, runs, approvals, audit, and observability. Projects can be archived or safely deleted after active runs are stopped; deletion revokes child credentials and preserves audit events. Run creation accepts an `Idempotency-Key`; the key is hashed and the 202 response is durably replayable for 24 hours. SSE requires a project scope in production, checks project authorization, caps subscribers, and emits heartbeats.
 
+The project, task, run, and audit list endpoints preserve their historical array
+response when no paging query is supplied. Supplying `limit` (1-100) or an
+opaque `cursor` returns `{ items, total, limit, nextCursor? }`; cursors encode a
+bounded offset over the already authorization-filtered result, so pagination
+cannot widen tenant visibility. Malformed cursors and out-of-range limits are
+rejected before the list is read.
+
 SSE now requires a project scope in every mode and drops events that do not carry an authenticated project scope; an unscoped event is never treated as a wildcard broadcast.
 
 `GET /api/v1/local-models/discover` probes only the configured loopback OpenAI-compatible runtimes and returns `{ providers, offlineOnly: true }`; each result includes provider kind, endpoint, reachability, and discovered model names. It is authenticated and never falls back to cloud discovery.

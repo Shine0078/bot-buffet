@@ -113,6 +113,57 @@ const MAX_SSE_CONNECTIONS = 100;
 const MAX_SSE_PER_ACTOR = 10;
 const MAX_SSE_PER_PROJECT = 25;
 const MAX_SSE_LIFETIME_MS = 30 * 60_000;
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+interface PaginationOptions {
+  limit: number;
+  offset: number;
+}
+const parsePagination = (url: URL): PaginationOptions | undefined => {
+  const rawLimit = url.searchParams.get('limit');
+  const rawCursor = url.searchParams.get('cursor');
+  if (rawLimit === null && rawCursor === null) return undefined;
+  const limit = rawLimit === null ? DEFAULT_PAGE_SIZE : Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE_SIZE)
+    throw new Error('pagination_limit_invalid');
+  let offset = 0;
+  if (rawCursor !== null) {
+    let decoded: string;
+    try {
+      decoded = Buffer.from(rawCursor, 'base64url').toString('utf8');
+    } catch {
+      throw new Error('pagination_cursor_invalid');
+    }
+    offset = Number(decoded);
+    if (!/^\d+$/.test(decoded) || !Number.isSafeInteger(offset))
+      throw new Error('pagination_cursor_invalid');
+  }
+  return { limit, offset };
+};
+const paginate = <T>(
+  values: T[],
+  url: URL,
+):
+  | T[]
+  | {
+      items: T[];
+      total: number;
+      limit: number;
+      nextCursor?: string;
+    } => {
+  const options = parsePagination(url);
+  if (!options) return values;
+  const items = values.slice(options.offset, options.offset + options.limit);
+  const nextOffset = options.offset + items.length;
+  return {
+    items,
+    total: values.length,
+    limit: options.limit,
+    ...(nextOffset < values.length
+      ? { nextCursor: Buffer.from(String(nextOffset), 'utf8').toString('base64url') }
+      : {}),
+  };
+};
 const parseBody = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
   const declaredLength = Number(req.headers['content-length'] ?? 0);
   if (declaredLength > MAX_BODY_BYTES) throw new Error('request_body_too_large');
@@ -463,6 +514,7 @@ export function createApi(deps: ApiDeps) {
           );
         req.headers['x-bot-buffet-idempotency-scope'] = idempotencyScope;
       }
+      const page = <T>(values: T[]) => paginate(values, url);
       if (path === '/metrics' && req.method === 'GET') {
         const runs = await visible(
           actorId,
@@ -996,7 +1048,7 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await visible(actorId, await deps.store.list<Project>((x) => x.kind === 'project')),
+          page(await visible(actorId, await deps.store.list<Project>((x) => x.kind === 'project'))),
         );
       if (path === '/api/v1/projects' && req.method === 'POST') {
         const body = await parseBody(req);
@@ -1405,7 +1457,7 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await visible(actorId, await deps.store.list<Task>((x) => x.kind === 'task')),
+          page(await visible(actorId, await deps.store.list<Task>((x) => x.kind === 'task'))),
         );
       if (path === '/api/v1/tasks' && req.method === 'POST') {
         const body = await parseBody(req);
@@ -3265,7 +3317,7 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await visible(actorId, await deps.store.list((x) => x.kind === 'run'), 'read'),
+          page(await visible(actorId, await deps.store.list((x) => x.kind === 'run'), 'read')),
         );
       const runMatch = path.match(
         /^\/api\/v1\/runs\/([^/]+)\/(pause|resume|cancel|stop|fork|rollback)$/,
@@ -3348,7 +3400,7 @@ export function createApi(deps: ApiDeps) {
         return send(
           res,
           200,
-          await visible(actorId, await deps.store.list((x) => x.kind === 'audit-event')),
+          page(await visible(actorId, await deps.store.list((x) => x.kind === 'audit-event'))),
         );
       if (path === '/api/v1/audit/verify' && req.method === 'GET')
         return send(res, 200, await deps.store.verifyAuditChain());

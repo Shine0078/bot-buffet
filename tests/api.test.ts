@@ -1051,6 +1051,35 @@ describe('API boundary controls', () => {
     expect(second.status).toBe(201);
     await expect(second.json()).resolves.toMatchObject({ project: { slug: 'copy-2' } });
   });
+  it('paginates project lists with bounded opaque cursors', async () => {
+    const base = await start();
+    for (const slug of ['page-a', 'page-b', 'page-c']) {
+      const response = await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: slug, slug }),
+      });
+      expect(response.status).toBe(201);
+    }
+    const first = await fetch(`${base}/api/v1/projects?limit=2`);
+    expect(first.status).toBe(200);
+    const firstPage = (await first.json()) as {
+      items: Array<{ slug: string }>;
+      total: number;
+      limit: number;
+      nextCursor?: string;
+    };
+    expect(firstPage.items).toHaveLength(2);
+    expect(firstPage.total).toBe(3);
+    expect(firstPage.limit).toBe(2);
+    expect(firstPage.nextCursor).toMatch(/^[A-Za-z0-9_-]+$/);
+    const second = await fetch(
+      `${base}/api/v1/projects?limit=2&cursor=${encodeURIComponent(firstPage.nextCursor!)}`,
+    );
+    await expect(second.json()).resolves.toMatchObject({ items: [{ slug: 'page-c' }], total: 3 });
+    expect((await fetch(`${base}/api/v1/projects?limit=0`)).status).toBe(400);
+    expect((await fetch(`${base}/api/v1/projects?cursor=not-a-cursor`)).status).toBe(400);
+  });
   it('keeps plugin updates disabled and supports integrity-pinned rollback/delete', async () => {
     const base = await start();
     const createdResponse = await fetch(`${base}/api/v1/plugins`, {
