@@ -25,6 +25,9 @@ describe('sandboxed builtin tools', () => {
     );
     await tools.invoke('filesystem.write', { path: 'note.txt', content: 'safe' }, context);
     expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('safe');
+    await expect(
+      store.list((value) => value.kind === 'audit-event' && value.action === 'tool.executed'),
+    ).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ resourceId: 'r' })]));
   });
   it('returns durable file hashes and rejects stale write preconditions', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-'));
@@ -139,5 +142,53 @@ describe('sandboxed builtin tools', () => {
         },
       ),
     ).rejects.toThrow('tool_timeout');
+  });
+
+  it('rejects disabled tools before invoking their implementation', async () => {
+    const registry = new ToolRegistry();
+    const definition = entity({
+      kind: 'tool',
+      ownerId: 'u',
+      scope: 'p',
+      name: 'disabled',
+      description: 'disabled test tool',
+      inputSchema: { type: 'object' },
+      outputSchema: { type: 'object' },
+      requiredScope: 'project',
+      resourceScope: 'project',
+      risk: 'safe' as const,
+      reversible: true,
+      authRequired: false,
+      timeoutMs: 100,
+      rateLimitPerMinute: 60,
+      outputLimitBytes: 1000,
+      releaseVersion: '1.0.0',
+      owner: 'test',
+      enabled: false,
+    }) as ToolDefinition;
+    let invoked = false;
+    registry.register({
+      definition,
+      execute: async () => {
+        invoked = true;
+        return {};
+      },
+    });
+    await expect(
+      registry.invoke(
+        'disabled',
+        {},
+        {
+          actorId: 'u',
+          runId: 'r',
+          projectId: 'p',
+          workspaceRoot: '.',
+          allowedPaths: ['.'],
+          protectedPaths: [],
+          network: 'blocked',
+        },
+      ),
+    ).rejects.toThrow('tool_disabled');
+    expect(invoked).toBe(false);
   });
 });

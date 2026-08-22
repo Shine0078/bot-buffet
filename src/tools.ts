@@ -43,6 +43,14 @@ export interface RegisteredTool {
   definition: ToolDefinition;
   execute: (input: unknown, context: ToolContext) => Promise<unknown>;
 }
+export interface ToolInvocationAudit {
+  (record: {
+    context: ToolContext;
+    definition: ToolDefinition;
+    decision: 'denied' | 'executed';
+    metadata: Record<string, unknown>;
+  }): Promise<void>;
+}
 
 const sha256Text = (value: string): string => createHash('sha256').update(value).digest('hex');
 const isSha256 = (value: unknown): value is string =>
@@ -94,7 +102,10 @@ export class RateLimiter {
 export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
   private readonly limiter: RateLimiter;
-  constructor(clock: () => number = () => Date.now()) {
+  constructor(
+    clock: () => number = () => Date.now(),
+    private readonly audit?: ToolInvocationAudit,
+  ) {
     this.limiter = new RateLimiter(clock);
   }
   register(tool: RegisteredTool): void {
@@ -109,12 +120,28 @@ export class ToolRegistry {
   async invoke(name: string, input: unknown, context: ToolContext): Promise<unknown> {
     const tool = this.tools.get(name);
     if (!tool) throw new Error(`tool_not_found:${name}`);
+    const record = async (
+      decision: 'denied' | 'executed',
+      metadata: Record<string, unknown>,
+    ): Promise<void> => {
+      if (this.audit)
+        await this.audit({ context, definition: tool.definition, decision, metadata });
+    };
+    if (!tool.definition.enabled) {
+      await record('denied', { error: 'tool_disabled' });
+      throw new Error(`tool_disabled:${name}`);
+    }
     const errors = validateJsonSchema(tool.definition.inputSchema, input);
-    if (errors.length) throw new Error(`tool_input_invalid:${errors.join(',')}`);
+    if (errors.length) {
+      await record('denied', { error: 'tool_input_invalid', violations: errors });
+      throw new Error(`tool_input_invalid:${errors.join(',')}`);
+    }
     // Checked after schema validation so a malformed call is reported as
     // malformed rather than consuming budget and being reported as throttled.
-    if (!this.limiter.check(`${name}:${context.projectId}`, tool.definition.rateLimitPerMinute))
+    if (!this.limiter.check(`${name}:${context.projectId}`, tool.definition.rateLimitPerMinute)) {
+      await record('denied', { error: 'tool_rate_limited' });
       throw new Error(`tool_rate_limited:${name}`);
+    }
     let timeout: NodeJS.Timeout | undefined;
     try {
       const deadline = new Promise<never>((_, reject) => {
@@ -127,7 +154,13 @@ export class ToolRegistry {
       const serialized = JSON.stringify(output);
       if (serialized.length > tool.definition.outputLimitBytes)
         throw new Error('tool_output_too_large');
+      await record('executed', { outputBytes: Buffer.byteLength(serialized) });
       return output;
+    } catch (error) {
+      await record('denied', {
+        error: redactSecrets((error as Error).message) as string,
+      });
+      throw error;
     } finally {
       if (timeout) clearTimeout(timeout);
     }
@@ -173,7 +206,20 @@ export function createBuiltinTools(
   store: JsonStateStore,
   clock: () => number = () => Date.now(),
 ): ToolRegistry {
-  const registry = new ToolRegistry(clock);
+  const registry = new ToolRegistry(clock, async ({ context, definition, decision, metadata }) => {
+    await store.audit({
+      kind: 'audit-event',
+      ownerId: context.actorId,
+      scope: context.projectId,
+      actorId: context.actorId,
+      action: decision === 'executed' ? 'tool.executed' : 'tool.denied',
+      resourceType: 'run',
+      resourceId: context.runId,
+      risk: definition.risk,
+      decision,
+      metadata: { tool: definition.name, ...metadata },
+    });
+  });
   const runtimes = new Map<string, SandboxRuntime>();
   const sandbox = (workspaceRoot: string): SandboxRuntime => {
     let runtime = runtimes.get(workspaceRoot);

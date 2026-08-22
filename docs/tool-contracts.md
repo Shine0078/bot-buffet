@@ -20,7 +20,9 @@ part of the contract:
 
 Approval, run-mode constraints, and the agent's tool allowlist are enforced by
 the orchestrator _before_ it reaches this point — the registry's job is the
-contract, not the authority.
+contract, not the authority. Built-in invocations additionally write a scoped
+`tool.executed` or `tool.denied` audit event without persisting raw inputs or
+outputs; tool-specific actions may add a more detailed audit record.
 
 The model-facing tool list is also filtered before each model call: only enabled
 definitions whose stable name or ID is in the agent profile's `allowedToolIds`
