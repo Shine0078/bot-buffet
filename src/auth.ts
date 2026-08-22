@@ -1,5 +1,6 @@
 import { createPublicKey, timingSafeEqual, verify as verifySignature } from 'node:crypto';
 import { IncomingMessage } from 'node:http';
+import { isIP } from 'node:net';
 
 const CLOCK_SKEW_SECONDS = 60;
 const JWKS_CACHE_MS = 5 * 60_000;
@@ -35,6 +36,31 @@ export class AuthenticationError extends Error {
   ) {
     super(code);
   }
+}
+
+function isLoopbackBindHost(value: string): boolean {
+  const host = value
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  if (host === 'localhost') return true;
+  const family = isIP(host);
+  if (family === 4) return host.startsWith('127.');
+  if (family === 6) return host === '::1' || /^::ffff:127\./.test(host);
+  return false;
+}
+
+/** Fail closed before serving requests when identity mode and bind posture disagree. */
+export function assertDeploymentAuthConfiguration(
+  host: string,
+  mode: string,
+  nodeEnv = process.env.NODE_ENV,
+): void {
+  const exposed = !isLoopbackBindHost(host);
+  if ((nodeEnv === 'production' || exposed) && mode !== 'production')
+    throw new Error('production_auth_required_for_exposed_deployment');
+  if (!['development', 'bootstrap', 'production'].includes(mode))
+    throw new Error('auth_mode_invalid');
 }
 
 const unauthorized = (code: string): never => {

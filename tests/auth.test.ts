@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage } from 'node:http';
-import { AuthenticationError, authenticateRequest } from '../src/auth.js';
+import {
+  assertDeploymentAuthConfiguration,
+  AuthenticationError,
+  authenticateRequest,
+} from '../src/auth.js';
 
 /**
  * Authentication is the boundary every other control sits behind, so the
@@ -425,6 +429,44 @@ describe('bootstrap and development modes', () => {
       authenticateRequest(request(), 'anything-else'),
       'auth_mode_invalid',
       503,
+    );
+  });
+});
+
+describe('deployment authentication posture', () => {
+  it('rejects development auth on a published bind', () => {
+    expect(() =>
+      assertDeploymentAuthConfiguration('0.0.0.0', 'development', 'development'),
+    ).toThrow('production_auth_required_for_exposed_deployment');
+    expect(() =>
+      assertDeploymentAuthConfiguration('192.0.2.10', 'bootstrap', 'development'),
+    ).toThrow('production_auth_required_for_exposed_deployment');
+  });
+
+  it('rejects non-production auth from a production process', () => {
+    expect(() =>
+      assertDeploymentAuthConfiguration('127.0.0.1', 'development', 'production'),
+    ).toThrow('production_auth_required_for_exposed_deployment');
+  });
+
+  it('permits development only on loopback and production everywhere', () => {
+    expect(() =>
+      assertDeploymentAuthConfiguration('127.0.0.1', 'development', 'development'),
+    ).not.toThrow();
+    expect(() =>
+      assertDeploymentAuthConfiguration('::1', 'development', 'development'),
+    ).not.toThrow();
+    expect(() =>
+      assertDeploymentAuthConfiguration('0.0.0.0', 'production', 'production'),
+    ).not.toThrow();
+    expect(() =>
+      assertDeploymentAuthConfiguration('example.internal', 'production', 'production'),
+    ).not.toThrow();
+  });
+
+  it('rejects unknown modes even on loopback', () => {
+    expect(() => assertDeploymentAuthConfiguration('127.0.0.1', 'unknown', 'development')).toThrow(
+      'auth_mode_invalid',
     );
   });
 });

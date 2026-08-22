@@ -4,6 +4,13 @@ Local: `npm ci && npm run verify && npm run dev`. Staging: build the pinned cont
 
 The Docker image runs as an unprivileged user with a read-only root filesystem, dropped capabilities, no-new-privileges, and a healthcheck. The current JSON store is a local/dev adapter; do not present it as multi-replica production persistence.
 
+The image binds `0.0.0.0` because the port is published by Docker and defaults to
+`BOT_BUFFET_AUTH_MODE=production`. Compose explicitly overrides any `.env`
+development value. Supply the production OIDC issuer, audience, and HTTPS JWKS
+configuration before starting; the server refuses a production image or any
+non-loopback bind in development/bootstrap mode. Local smoke and restore checks
+set an explicit loopback development environment.
+
 ## Image pinning
 
 Both the runtime image's base layers and the agent sandbox image are pinned by

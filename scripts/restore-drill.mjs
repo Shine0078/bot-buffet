@@ -25,7 +25,14 @@ const step = (ok, label, detail = '') => {
 
 const startServer = async (dataDir) => {
   const child = spawn(process.execPath, ['dist/index.js'], {
-    env: { ...process.env, PORT: port, BOT_BUFFET_DATA_DIR: dataDir },
+    env: {
+      ...process.env,
+      NODE_ENV: 'development',
+      BOT_BUFFET_AUTH_MODE: 'development',
+      BOT_BUFFET_HOST: '127.0.0.1',
+      PORT: port,
+      BOT_BUFFET_DATA_DIR: dataDir,
+    },
     stdio: 'ignore',
   });
   for (let attempt = 0; attempt < 40; attempt += 1) {

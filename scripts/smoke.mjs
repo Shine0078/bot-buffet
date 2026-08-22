@@ -6,7 +6,14 @@ const port = process.env.SMOKE_PORT ?? '8791';
 const headers = { 'x-bot-buffet-user': 'local-user', 'content-type': 'application/json' };
 const base = `http://127.0.0.1:${port}`;
 const child = spawn(process.execPath, ['dist/index.js'], {
-  env: { ...process.env, PORT: port, BOT_BUFFET_DATA_DIR: '.data-smoke' },
+  env: {
+    ...process.env,
+    NODE_ENV: 'development',
+    BOT_BUFFET_AUTH_MODE: 'development',
+    BOT_BUFFET_HOST: '127.0.0.1',
+    PORT: port,
+    BOT_BUFFET_DATA_DIR: '.data-smoke',
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 

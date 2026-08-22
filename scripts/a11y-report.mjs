@@ -9,7 +9,14 @@ const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 const port = '8795';
 const child = spawn(process.execPath, ['dist/index.js'], {
-  env: { ...process.env, PORT: port, BOT_BUFFET_DATA_DIR: '.data-a11y' },
+  env: {
+    ...process.env,
+    NODE_ENV: 'development',
+    BOT_BUFFET_AUTH_MODE: 'development',
+    BOT_BUFFET_HOST: '127.0.0.1',
+    PORT: port,
+    BOT_BUFFET_DATA_DIR: '.data-a11y',
+  },
   stdio: 'ignore',
 });
 await delay(2500);

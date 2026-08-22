@@ -21,7 +21,7 @@ FROM node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa3
 # loopback inside a container makes the published port unreachable, while
 # defaulting to loopback on a workstation keeps a credential-holding control
 # plane off the network unless someone deliberately exposes it.
-ENV NODE_ENV=production PORT=8787 BOT_BUFFET_HOST=0.0.0.0 BOT_BUFFET_DATA_DIR=/data
+ENV NODE_ENV=production BOT_BUFFET_AUTH_MODE=production PORT=8787 BOT_BUFFET_HOST=0.0.0.0 BOT_BUFFET_DATA_DIR=/data
 WORKDIR /app
 COPY --from=build /app/package*.json ./
 RUN npm ci --omit=dev

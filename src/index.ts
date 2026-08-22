@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApi } from './api.js';
+import { assertDeploymentAuthConfiguration } from './auth.js';
 import { adapterFor, MockLocalAdapter, resolveProviderToken } from './providers.js';
 import { ModelRouter } from './router.js';
 import { Orchestrator } from './orchestrator.js';
@@ -16,6 +17,9 @@ import { Model, ModelProvider, Organization, Project, Workspace, entity } from '
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = process.env.BOT_BUFFET_DATA_DIR ?? join(root, '.data');
 const workspaceDir = resolveWorkspaceDir(dataDir, process.env.BOT_BUFFET_WORKSPACE_DIR);
+const host = process.env.BOT_BUFFET_HOST ?? '127.0.0.1';
+const authMode = process.env.BOT_BUFFET_AUTH_MODE ?? 'development';
+assertDeploymentAuthConfiguration(host, authMode);
 assertSandboxConfiguration();
 const store = createStore(dataDir);
 await store.load();
@@ -218,7 +222,6 @@ const port = Number(process.env.PORT ?? 8787);
  * sets `BOT_BUFFET_HOST=0.0.0.0` explicitly, which is safe precisely because
  * the operator chose which host port to publish it on.
  */
-const host = process.env.BOT_BUFFET_HOST ?? '127.0.0.1';
 server.listen(port, host, () =>
   console.log(`Samuel Abraham — Bot Buffet listening on http://${host}:${port}`),
 );
