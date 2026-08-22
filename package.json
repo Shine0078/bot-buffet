@@ -20,13 +20,14 @@
     "format": "prettier --write .",
     "audit": "npm audit --audit-level=high",
     "security:scan": "node scripts/security-scan.mjs",
+    "brand:scan": "node scripts/brand-scan.mjs",
     "sbom": "node scripts/sbom.mjs",
     "provenance": "node scripts/provenance.mjs",
     "backup": "node scripts/backup.mjs",
     "restore": "node scripts/restore.mjs",
     "smoke": "node scripts/smoke.mjs",
     "restore:drill": "node scripts/restore-drill.mjs",
-    "verify": "npm run typecheck && npm test && npm run build"
+    "verify": "npm run typecheck && npm test && npm run build && npm run brand:scan"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
