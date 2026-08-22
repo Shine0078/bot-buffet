@@ -317,6 +317,59 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('registers scanned artifacts and builds a tamper-evident manifest', async () => {
+    const base = await start();
+    const project = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Artifact project' }),
+      })
+    ).json()) as { id: string };
+    const created = await fetch(`${base}/api/v1/artifacts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        name: 'report.md',
+        content: '# Findings\n\nAll checks passed.',
+      }),
+    });
+    expect(created.status).toBe(201);
+    const artifact = (await created.json()) as { id: string; sha256: string; scanStatus: string };
+    expect(artifact.scanStatus).toBe('clean');
+    expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+
+    const blocked = await fetch(`${base}/api/v1/artifacts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        name: 'leak.md',
+        content: `token ${['sk', 'a1b2c3d4e5f6g7h8'].join('-')}`,
+      }),
+    });
+    expect(blocked.status).toBe(400);
+    await expect(blocked.json()).resolves.toMatchObject({
+      message: 'artifact_contains_credential',
+    });
+
+    const manifest = await fetch(`${base}/api/v1/projects/${project.id}/artifact-manifest`);
+    expect(manifest.status).toBe(200);
+    const body = (await manifest.json()) as {
+      manifestSha256: string;
+      artifacts: Array<{ id: string }>;
+    };
+    expect(body.artifacts).toHaveLength(1);
+    expect(body.artifacts[0]?.id).toBe(artifact.id);
+    expect(body.manifestSha256).toMatch(/^[a-f0-9]{64}$/);
+
+    const listed = (await (
+      await fetch(`${base}/api/v1/artifacts?projectId=${project.id}`)
+    ).json()) as unknown[];
+    expect(listed).toHaveLength(1);
+  });
+
   it('creates validated workflow graphs and plans ready nodes', async () => {
     const base = await start();
     const project = (await (

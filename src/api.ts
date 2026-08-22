@@ -7,6 +7,7 @@ import {
   Agent,
   Alert,
   ApprovalRequest,
+  Artifact,
   BaseEntity,
   Budget,
   BudgetPeriod,
@@ -65,6 +66,7 @@ import { evaluateCases } from './evaluations.js';
 import { budgetStatus, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { CostGrouping, costReport, forecastCents } from './reporting.js';
 import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
+import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1648,6 +1650,68 @@ export function createApi(deps: ApiDeps) {
           budgets: decision.statuses,
         });
       }
+      if (path === '/api/v1/artifacts' && req.method === 'GET') {
+        const projectId = url.searchParams.get('projectId');
+        return send(
+          res,
+          200,
+          await visible(
+            actorId,
+            await deps.store.list<Artifact>(
+              (x) =>
+                x.kind === 'artifact' && (!projectId || (x as Artifact).projectId === projectId),
+            ),
+          ),
+        );
+      }
+      if (path === '/api/v1/artifacts' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId)),
+          'write',
+          'project',
+        );
+        const content = String(body.content ?? '');
+        const scan = scanArtifact(content);
+        if (scan.status === 'blocked') throw new Error(scan.reasons[0] ?? 'artifact_blocked');
+        const runId = body.runId ? String(body.runId) : undefined;
+        if (runId) {
+          const run = await required(actorId, await deps.store.get<Run>(runId), 'read', 'run');
+          if (run.projectId !== project.id) throw new Error('artifact_scope_mismatch');
+        }
+        const artifact = entity({
+          kind: 'artifact',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          runId,
+          name: String(body.name ?? 'artifact').slice(0, 200),
+          path: String(body.path ?? `artifacts/${String(body.name ?? 'artifact')}`).slice(0, 400),
+          mimeType: String(body.mimeType ?? 'text/plain').slice(0, 120),
+          size: Buffer.byteLength(content, 'utf8'),
+          sha256: sha256(content),
+          scanStatus: scan.status,
+        }) as Artifact;
+        await deps.store.insert(artifact);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: project.id,
+          actorId,
+          action: 'artifact.registered',
+          resourceType: 'artifact',
+          resourceId: artifact.id,
+          risk: 'low',
+          decision: 'executed',
+          metadata: {
+            size: artifact.size,
+            sha256: artifact.sha256,
+            scanStatus: artifact.scanStatus,
+          },
+        });
+        return send(res, 201, artifact);
+      }
       if (path === '/api/v1/workflows' && req.method === 'GET') {
         return send(
           res,
@@ -2265,6 +2329,22 @@ export function createApi(deps: ApiDeps) {
           latencyMs: runs.reduce((sum, run) => sum + run.latencyMs, 0),
           auditValid: (await deps.store.verifyAuditChain()).valid,
         });
+      }
+      const manifestMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/artifact-manifest$/);
+      if (manifestMatch && req.method === 'GET') {
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(manifestMatch[1]!),
+          'read',
+          'project',
+        );
+        const artifacts = await visible(
+          actorId,
+          await deps.store.list<Artifact>(
+            (x) => x.kind === 'artifact' && (x as Artifact).projectId === project.id,
+          ),
+        );
+        return send(res, 200, checkpointManifest(project.id, artifacts, now()));
       }
       const workflowPlanMatch = path.match(/^\/api\/v1\/workflows\/([^/]+)\/plan$/);
       if (workflowPlanMatch && req.method === 'GET') {
