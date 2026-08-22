@@ -1,14 +1,12 @@
 import { spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
 
 const MAX_OUTPUT_BYTES = 1_000_000;
 export const MAX_FILE_READ_BYTES = 1_000_000;
 const MAX_RUNTIME_MS = 30_000;
 
 /**
- * Default sandbox image for local development only.
+ * Default sandbox image for development only.
  *
  * A tag is a mutable pointer: `node:22-alpine` resolves to different bytes
  * week to week, so the thing agent code executes inside can change without a
@@ -50,11 +48,10 @@ export function resolveSandboxImage(
 /**
  * Variables a child process needs to run at all. Everything else is withheld.
  *
- * The local runtime previously called execFile with no `env`, so a sandboxed
- * command inherited the entire parent environment — including
- * BOT_BUFFET_MASTER_KEY, the OIDC configuration, and any provider credentials
- * exported into the shell. `environmentKeys` on the agent profile exists to
- * control exactly this and was never consulted.
+ * The sandbox runtime must never inherit the entire parent environment — that
+ * would expose BOT_BUFFET_MASTER_KEY, OIDC configuration, or provider
+ * credentials to generated code. `environmentKeys` on the agent profile
+ * controls the small explicit set forwarded into the container.
  */
 const BASE_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'ComSpec', 'LANG'];
 
@@ -80,7 +77,8 @@ export function sandboxEnvironment(
   return env;
 }
 
-export type SandboxMode = 'local' | 'docker';
+/** Agent code always runs in a container; there is no host-process fallback. */
+export type SandboxMode = 'docker';
 export type SandboxNetwork = 'blocked' | 'allowlist' | 'open';
 
 export type SandboxResult = { stdout: string; stderr: string; code: number };
@@ -309,94 +307,16 @@ class DockerSandbox implements SandboxRuntime {
   }
 }
 
-class LocalSandbox implements SandboxRuntime {
-  readonly mode = 'local' as const;
-  constructor(private readonly workspaceRoot: string) {}
-
-  async readFile(relativePath: string, signal?: AbortSignal): Promise<string> {
-    const path = `${this.workspaceRoot}/${relativePath}`;
-    const noFollow = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
-    const handle = await open(path, constants.O_RDONLY | noFollow);
-    try {
-      const info = await handle.stat();
-      if (!info.isFile() || info.size > MAX_FILE_READ_BYTES)
-        throw new Error('sandbox_read_too_large');
-      if (signal?.aborted) throw new Error('sandbox_aborted');
-      const bytes = Buffer.alloc(info.size);
-      let offset = 0;
-      while (offset < bytes.length) {
-        if (signal?.aborted) throw new Error('sandbox_aborted');
-        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
-        if (!bytesRead) break;
-        offset += bytesRead;
-      }
-      return bytes.subarray(0, offset).toString('utf8');
-    } finally {
-      await handle.close();
-    }
-  }
-  async writeFile(relativePath: string, content: string): Promise<void> {
-    const { lstat, mkdir } = await import('node:fs/promises');
-    const path = `${this.workspaceRoot}/${relativePath}`;
-    await mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true });
-    try {
-      if ((await lstat(path)).isSymbolicLink()) throw new Error('sandbox_symlink_rejected');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    const noFollow = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
-    const handle = await open(
-      path,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollow,
-      0o600,
-    );
-    try {
-      await handle.writeFile(content, 'utf8');
-    } finally {
-      await handle.close();
-    }
-  }
-  async stat(relativePath: string): Promise<{ size: number; isFile: boolean }> {
-    const { stat } = await import('node:fs/promises');
-    const info = await stat(`${this.workspaceRoot}/${relativePath}`);
-    return { size: info.size, isFile: info.isFile() };
-  }
-  async run(
-    command: string,
-    args: string[],
-    network: SandboxNetwork,
-    _signal?: AbortSignal,
-    environmentKeys: string[] = [],
-  ): Promise<SandboxResult> {
-    // The container runtime already refuses any policy but `blocked`, because
-    // there is no egress proxy to enforce an allowlist against. The local
-    // runtime ignored the policy entirely, so `allowlist` and `open` were
-    // strictly weaker than `blocked` with nothing compensating: they relaxed
-    // the network-shaped command check in the shell tool without introducing
-    // any host restriction at all. Both runtimes now refuse identically, so a
-    // policy cannot mean one thing in development and another in production,
-    // and adding real allowlist support has to be a deliberate change here.
-    if (network !== 'blocked') throw new Error('sandbox_network_policy_unavailable');
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const result = await promisify(execFile)(command, args, {
-      cwd: this.workspaceRoot,
-      timeout: MAX_RUNTIME_MS,
-      maxBuffer: MAX_OUTPUT_BYTES,
-      windowsHide: true,
-      // Explicit, never inherited.
-      env: sandboxEnvironment(environmentKeys),
-    });
-    return { stdout: result.stdout, stderr: result.stderr, code: 0 };
-  }
-}
-
 export function createSandboxRuntime(workspaceRoot: string): SandboxRuntime {
-  const mode = (process.env.BOT_BUFFET_SANDBOX_MODE ?? 'local') as SandboxMode;
-  if (mode !== 'local' && mode !== 'docker') throw new Error('sandbox_mode_invalid');
-  if (process.env.BOT_BUFFET_AUTH_MODE === 'production' && mode !== 'docker')
+  const configured = process.env.BOT_BUFFET_SANDBOX_MODE?.trim().toLowerCase();
+  // A host-process fallback cannot provide a reliable boundary on Windows or
+  // POSIX: ancestor junctions/symlinks can change between validation and use,
+  // and descriptor-relative no-follow traversal is not portable in Node. Make
+  // the safe runtime the only runtime instead of retaining a bypass for local
+  // development. This also makes an accidental `local` setting fail closed.
+  if (configured !== undefined && configured !== 'docker')
     throw new Error('sandbox_runtime_required');
-  return mode === 'docker' ? new DockerSandbox(workspaceRoot) : new LocalSandbox(workspaceRoot);
+  return new DockerSandbox(workspaceRoot);
 }
 
 export function assertSandboxConfiguration(): void {

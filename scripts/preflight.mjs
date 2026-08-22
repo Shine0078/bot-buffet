@@ -56,9 +56,9 @@ export function nodeRemediation(platform) {
 /** Docker is absent entirely. */
 export function dockerRemediation(platform) {
   if (platform === 'win32') {
-    return 'Install Docker Desktop to enable BOT_BUFFET_SANDBOX_MODE=docker. Without it the sandbox refuses to run in production mode.';
+    return 'Install Docker Desktop to enable BOT_BUFFET_SANDBOX_MODE=docker. Agent file and shell tools fail closed without the container runtime, including for local/offline projects.';
   }
-  return 'Install Docker to enable BOT_BUFFET_SANDBOX_MODE=docker. Without it the sandbox refuses to run in production mode.';
+  return 'Install Docker to enable BOT_BUFFET_SANDBOX_MODE=docker. Agent file and shell tools fail closed without the container runtime, including for local/offline projects.';
 }
 
 /** Docker is installed but nothing is listening. A different action entirely:
