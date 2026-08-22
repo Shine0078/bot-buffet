@@ -67,12 +67,22 @@ export function dockerRunArgs(
   command: string,
   args: string[],
   network: SandboxNetwork,
+  /**
+   * Whether the container needs to read stdin.
+   *
+   * `docker run` attaches no stdin unless `--interactive` is passed. Without
+   * it a container that reads stdin sees an immediate EOF, so a sandboxed
+   * write produced an empty file and still exited 0 — silent data loss that no
+   * unit test could see, because the argument list looked correct either way.
+   */
+  withStdin = false,
 ): string[] {
   if (network !== 'blocked') throw new Error('sandbox_network_policy_unavailable');
   return [
     'run',
     '--rm',
     '--init',
+    ...(withStdin ? ['--interactive'] : []),
     '--read-only',
     '--network',
     'none',
@@ -106,9 +116,13 @@ async function runDocker(
   input: string | undefined,
   signal?: AbortSignal,
 ): Promise<SandboxResult> {
-  const child = spawn('docker', dockerRunArgs(workspaceRoot, command, args, network), {
-    windowsHide: true,
-  });
+  const child = spawn(
+    'docker',
+    dockerRunArgs(workspaceRoot, command, args, network, input !== undefined),
+    {
+      windowsHide: true,
+    },
+  );
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   let stdoutBytes = 0;
