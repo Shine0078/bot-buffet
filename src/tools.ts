@@ -25,6 +25,9 @@ export interface ToolContext {
   network: 'blocked' | 'allowlist' | 'open';
   /** The agent's memory policy, which decides what it may record. */
   memoryPolicy?: MemoryPolicy;
+  /** Environment variable names this agent may see. Anything not listed is
+   *  withheld from the sandbox, in both runtimes. */
+  environmentKeys?: string[];
   signal?: AbortSignal;
 }
 export interface RegisteredTool {
@@ -388,6 +391,7 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
         data.args ?? [],
         context.network,
         context.signal,
+        context.environmentKeys ?? [],
       );
       return {
         stdout: redactSecrets(result.stdout),

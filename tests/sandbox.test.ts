@@ -4,6 +4,7 @@ import {
   dockerRunArgs,
   isDigestPinned,
   resolveSandboxImage,
+  sandboxEnvironment,
 } from '../src/sandbox.js';
 
 const previousMode = process.env.BOT_BUFFET_SANDBOX_MODE;
@@ -142,5 +143,70 @@ describe('network policy is refused identically by both runtimes', () => {
     const runtime = createSandboxRuntime(process.cwd());
     const result = await runtime.run('node', ['--version'], 'blocked');
     expect(result.stdout).toMatch(/^v\d+\./);
+  });
+});
+
+describe('sandbox environment is explicit, never inherited', () => {
+  /**
+   * The local runtime called execFile with no `env`, so a sandboxed command
+   * inherited the whole parent environment — the master key, the OIDC
+   * configuration, and any provider credentials exported into the shell.
+   * `environmentKeys` on the agent profile exists to control exactly that and
+   * was never consulted.
+   */
+  const source = {
+    PATH: '/usr/bin',
+    HOME: '/home/agent',
+    BOT_BUFFET_MASTER_KEY: 'super-secret',
+    OPENAI_API_KEY: 'sk-secret',
+    BUILD_CHANNEL: 'nightly',
+  };
+
+  it('passes through only the variables needed to execute', () => {
+    const env = sandboxEnvironment([], source);
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.HOME).toBe('/home/agent');
+  });
+
+  it('withholds every secret that was not explicitly allowed', () => {
+    const env = sandboxEnvironment([], source);
+    expect(env.BOT_BUFFET_MASTER_KEY).toBeUndefined();
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.BUILD_CHANNEL).toBeUndefined();
+  });
+
+  it('includes a variable the profile explicitly allows, and nothing more', () => {
+    const env = sandboxEnvironment(['BUILD_CHANNEL'], source);
+    expect(env.BUILD_CHANNEL).toBe('nightly');
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.BOT_BUFFET_MASTER_KEY).toBeUndefined();
+  });
+
+  it('cannot invent a variable that does not exist on the host', () => {
+    const env = sandboxEnvironment(['NOT_SET_ANYWHERE'], source);
+    expect('NOT_SET_ANYWHERE' in env).toBe(false);
+  });
+
+  it('never returns the ambient environment object itself', () => {
+    const env = sandboxEnvironment([], source);
+    expect(env).not.toBe(source);
+    expect(Object.keys(env).length).toBeLessThan(Object.keys(source).length);
+  });
+
+  it('forwards allowed variables to the container by name, not by value', () => {
+    // `--env NAME=value` would put the secret in the process argument list,
+    // where any other process on the host can read it.
+    const args = dockerRunArgs('/w', 'node', [], 'blocked', false, ['BUILD_CHANNEL']);
+    expect(args).toContain('--env');
+    expect(args).toContain('BUILD_CHANNEL');
+    // The mount argument legitimately contains '=', so assert the precise
+    // claim: no argument carries the variable's value.
+    expect(args.some((arg) => arg.startsWith('BUILD_CHANNEL='))).toBe(false);
+    expect(args.join(' ')).not.toContain('nightly');
+  });
+
+  it('adds no env flags when the profile allows nothing', () => {
+    const args = dockerRunArgs('/w', 'node', [], 'blocked');
+    expect(args).not.toContain('--env');
   });
 });

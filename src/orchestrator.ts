@@ -484,6 +484,7 @@ export class Orchestrator extends EventEmitter {
               agentId: run.agentId,
               taskId: run.taskId,
               memoryPolicy: agent.profile.memoryPolicy,
+              environmentKeys: agent.profile.environmentKeys,
               workspaceRoot: this.deps.workspaceRoot(project),
               allowedPaths: agent.profile.allowedPaths,
               protectedPaths: agent.profile.protectedPaths,

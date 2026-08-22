@@ -44,6 +44,39 @@ export function resolveSandboxImage(
   return candidate;
 }
 
+/**
+ * Variables a child process needs to run at all. Everything else is withheld.
+ *
+ * The local runtime previously called execFile with no `env`, so a sandboxed
+ * command inherited the entire parent environment — including
+ * BOT_BUFFET_MASTER_KEY, the OIDC configuration, and any provider credentials
+ * exported into the shell. `environmentKeys` on the agent profile exists to
+ * control exactly this and was never consulted.
+ */
+const BASE_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'ComSpec', 'LANG'];
+
+/**
+ * Build the environment a sandboxed command may see: the minimum needed to
+ * execute, plus explicitly allowlisted keys. Never the ambient environment.
+ */
+export function sandboxEnvironment(
+  allowedKeys: string[] = [],
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of BASE_ENV_KEYS) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  for (const key of allowedKeys) {
+    // An agent profile cannot widen the base set by naming a variable that
+    // does not exist, and cannot reach anything it did not explicitly list.
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 export type SandboxMode = 'local' | 'docker';
 export type SandboxNetwork = 'blocked' | 'allowlist' | 'open';
 
@@ -59,6 +92,9 @@ export interface SandboxRuntime {
     args: string[],
     network: SandboxNetwork,
     signal?: AbortSignal,
+    /** Environment variable names this agent profile permits. Anything not
+     *  listed is withheld, including from the local runtime. */
+    environmentKeys?: string[],
   ): Promise<SandboxResult>;
 }
 
@@ -76,6 +112,7 @@ export function dockerRunArgs(
    * unit test could see, because the argument list looked correct either way.
    */
   withStdin = false,
+  environmentKeys: string[] = [],
 ): string[] {
   if (network !== 'blocked') throw new Error('sandbox_network_policy_unavailable');
   return [
@@ -102,6 +139,10 @@ export function dockerRunArgs(
     `type=bind,source=${workspaceRoot},target=/workspace`,
     '--workdir',
     '/workspace',
+    // `--env NAME` without a value forwards it from the docker CLI's own
+    // environment. Writing `NAME=value` here would put the secret in the
+    // process argument list, where any other process on the host can read it.
+    ...environmentKeys.flatMap((key) => ['--env', key]),
     resolveSandboxImage(),
     command,
     ...args,
@@ -115,12 +156,17 @@ async function runDocker(
   network: SandboxNetwork,
   input: string | undefined,
   signal?: AbortSignal,
+  environmentKeys: string[] = [],
 ): Promise<SandboxResult> {
   const child = spawn(
     'docker',
-    dockerRunArgs(workspaceRoot, command, args, network, input !== undefined),
+    dockerRunArgs(workspaceRoot, command, args, network, input !== undefined, environmentKeys),
     {
       windowsHide: true,
+      // The docker CLI itself gets only the allowlisted values, so the
+      // forwarded `--env NAME` flags have something to read and nothing else
+      // leaks into the container.
+      env: sandboxEnvironment(environmentKeys),
     },
   );
   const stdout: Buffer[] = [];
@@ -245,8 +291,17 @@ class DockerSandbox implements SandboxRuntime {
     args: string[],
     network: SandboxNetwork,
     signal?: AbortSignal,
+    environmentKeys: string[] = [],
   ): Promise<SandboxResult> {
-    return runDocker(this.workspaceRoot, command, args, network, undefined, signal);
+    return runDocker(
+      this.workspaceRoot,
+      command,
+      args,
+      network,
+      undefined,
+      signal,
+      environmentKeys,
+    );
   }
 }
 
@@ -269,7 +324,13 @@ class LocalSandbox implements SandboxRuntime {
     const info = await stat(`${this.workspaceRoot}/${relativePath}`);
     return { size: info.size, isFile: info.isFile() };
   }
-  async run(command: string, args: string[], network: SandboxNetwork): Promise<SandboxResult> {
+  async run(
+    command: string,
+    args: string[],
+    network: SandboxNetwork,
+    _signal?: AbortSignal,
+    environmentKeys: string[] = [],
+  ): Promise<SandboxResult> {
     // The container runtime already refuses any policy but `blocked`, because
     // there is no egress proxy to enforce an allowlist against. The local
     // runtime ignored the policy entirely, so `allowlist` and `open` were
@@ -286,6 +347,8 @@ class LocalSandbox implements SandboxRuntime {
       timeout: MAX_RUNTIME_MS,
       maxBuffer: MAX_OUTPUT_BYTES,
       windowsHide: true,
+      // Explicit, never inherited.
+      env: sandboxEnvironment(environmentKeys),
     });
     return { stdout: result.stdout, stderr: result.stderr, code: 0 };
   }
