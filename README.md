@@ -34,6 +34,11 @@ Open <http://127.0.0.1:8787>. The first run creates a local workspace, a project
 - Supervised orchestrator loop with approvals, deterministic evidence checks, usage/cost counters, retries-by-resume, and SSE events.
 - Accessible responsive Office UI with a list/table alternative, reduced-motion mode, keyboard focus, and global stop.
 - Health/readiness APIs, Docker hardening, CI checks, SBOM generation, and operational documentation.
+- Checksum-verified local model artifact import: no digest means no import, the digest is recomputed by streaming the file, and free space is checked before any transfer. `POST /api/v1/local-models/import/plan` previews size, space, and host resources first.
+- Portable local model configuration export/import that carries no credential material and revalidates every endpoint on import.
+- An optional, permission-scoped connector catalog for GitHub, Cloudflare, Figma, Asana, Canva, SciSpace, Consensus, and Wolfram. Installing one produces a disabled, host-allowlisted plugin that grants no authority; see `docs/connectors.md`.
+- Container sandbox verified against a real Docker daemon: non-root execution, no network, read-only root filesystem, and workspace-confined reads and writes.
+- Installation preflight (`npm run preflight`) that classifies the machine before anything runs.
 
 Production deployments should replace the JSON adapter with the Postgres/D1 adapter described in `docs/data-model.md`, configure an external identity provider, and complete the owner gates in `docs/owner-gates.md`. No external credentials or provider accounts are bundled.
 
