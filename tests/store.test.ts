@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JsonStateStore } from '../src/store.js';
@@ -65,5 +65,22 @@ describe('durable state and tamper-evident audit', () => {
     ]);
     expect(claims.filter((claim) => claim.claimed)).toHaveLength(1);
     expect(claims.filter((claim) => !claim.claimed)).toHaveLength(1);
+  });
+  it('normalizes legacy state and rejects a future schema version', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-schema-'));
+    const path = join(dir, 'state.json');
+    await writeFile(path, JSON.stringify({ schemaVersion: 0, entities: {} }), { mode: 0o600 });
+    const migrated = new JsonStateStore(path);
+    await migrated.load();
+    await expect(migrated.snapshot()).resolves.toMatchObject({
+      schemaVersion: 1,
+      runState: {},
+      locks: {},
+      idempotency: {},
+      auditTail: 'GENESIS',
+    });
+    const futurePath = join(dir, 'future.json');
+    await writeFile(futurePath, JSON.stringify({ schemaVersion: 2 }), { mode: 0o600 });
+    await expect(new JsonStateStore(futurePath).load()).rejects.toThrow('state_schema_newer');
   });
 });

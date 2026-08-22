@@ -3,14 +3,42 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { AuditEvent, BaseEntity, Entity, ID, ISODate, RuntimeState, now, id } from './types.js';
 
+export const CURRENT_SCHEMA_VERSION = 1;
+
 const emptyState = (): RuntimeState => ({
   entities: {},
   runState: {},
   locks: {},
   idempotency: {},
   auditTail: 'GENESIS',
-  schemaVersion: 1,
+  schemaVersion: CURRENT_SCHEMA_VERSION,
 });
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+/**
+ * Normalize a persisted document at the version boundary. Missing fields are
+ * legacy defaults; a future schema is rejected instead of being silently
+ * interpreted as the current shape.
+ */
+export function migrateRuntimeState(value: unknown): RuntimeState {
+  if (!isRecord(value)) throw new Error('state_schema_invalid');
+  const rawVersion = value.schemaVersion === undefined ? 0 : value.schemaVersion;
+  if (!Number.isSafeInteger(rawVersion) || (rawVersion as number) < 0)
+    throw new Error('state_schema_invalid');
+  if ((rawVersion as number) > CURRENT_SCHEMA_VERSION) throw new Error('state_schema_newer');
+  return {
+    entities: isRecord(value.entities) ? (value.entities as RuntimeState['entities']) : {},
+    runState: isRecord(value.runState) ? (value.runState as RuntimeState['runState']) : {},
+    locks: isRecord(value.locks) ? (value.locks as RuntimeState['locks']) : {},
+    idempotency: isRecord(value.idempotency)
+      ? (value.idempotency as RuntimeState['idempotency'])
+      : {},
+    auditTail: typeof value.auditTail === 'string' ? value.auditTail : 'GENESIS',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+  };
+}
 
 /** Durable, atomic JSON state for the local/dev profile. The interface is intentionally
  * storage-neutral so production can swap in Postgres/D1 without changing the control plane. */
@@ -27,12 +55,9 @@ export class JsonStateStore {
     if (this.loaded) return;
     try {
       const raw = await readFile(this.filePath, 'utf8');
-      this.state = JSON.parse(raw) as RuntimeState;
-      this.state.entities ??= {};
-      this.state.runState ??= {};
-      this.state.locks ??= {};
-      this.state.idempotency ??= {};
-      this.state.auditTail ??= 'GENESIS';
+      const parsed = JSON.parse(raw) as unknown;
+      this.state = migrateRuntimeState(parsed);
+      if (JSON.stringify(parsed) !== JSON.stringify(this.state)) await this.persist();
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') throw error;
