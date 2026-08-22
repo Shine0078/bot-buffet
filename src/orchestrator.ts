@@ -9,6 +9,7 @@ import {
   Checkpoint,
   CostRecord,
   Environment,
+  MemoryItem,
   Model,
   ModelRoute,
   Project,
@@ -25,11 +26,12 @@ import { ModelAdapter, ModelRequest, ModelResponse } from './providers.js';
 import { ModelRouter } from './router.js';
 import { ToolContext, ToolRegistry } from './tools.js';
 import { decidePolicy, redactSecrets } from './security.js';
-import { assembleContext } from './context.js';
+import { assembleContext, memoryToContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { labelUntrusted } from './injection.js';
 import { canStartInMode, decideMode } from './modes.js';
 import { verifyDeterministic } from './verification.js';
+import { selectReadableMemory } from './memoryScope.js';
 
 export interface OrchestratorDeps {
   store: JsonStateStore;
@@ -176,6 +178,24 @@ export class Orchestrator extends EventEmitter {
           return;
         }
         const state = await this.deps.store.getRunState(runId);
+        // Load the memory this agent is permitted to see. The policy's
+        // readable scopes are paired with this run's own identities, so a
+        // readable namespace means this project's memory rather than every
+        // project's — without that pairing a readable scope is a cross-tenant
+        // read.
+        const memorySelection = selectReadableMemory(
+          await this.deps.store.list<MemoryItem>((x) => x.kind === 'memory'),
+          agent.profile.memoryPolicy,
+          {
+            ownerId: run.ownerId,
+            workspaceId: project.workspaceId,
+            projectId: run.projectId,
+            environmentId: run.environmentId,
+            agentId: run.agentId,
+            taskId: run.taskId,
+            runId: run.id,
+          },
+        );
         const assembled = assembleContext(
           [
             {
@@ -192,6 +212,10 @@ export class Orchestrator extends EventEmitter {
               relevance: 0.8,
               sourceIds: [],
             },
+            // Memory competes for the same budget as everything else and is
+            // ranked below the task and current state, so a large memory store
+            // compacts rather than crowding out the work in hand.
+            ...memorySelection.readable.map((item) => memoryToContext(item, 0.6)),
           ],
           Math.max(128, Math.min(2048, Math.floor(agent.profile.tokenLimit / 4))),
         );
