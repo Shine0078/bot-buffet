@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { stopServer } from './lib/stop-server.mjs';
 
 const port = process.env.SMOKE_PORT ?? '8791';
 const headers = { 'x-bot-buffet-user': 'local-user', 'content-type': 'application/json' };
@@ -8,6 +9,18 @@ const child = spawn(process.execPath, ['dist/index.js'], {
   env: { ...process.env, PORT: port, BOT_BUFFET_DATA_DIR: '.data-smoke' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
+
+// The child's output must be consumed. A piped stream with no reader fills its
+// buffer and blocks the writer, so a server that logs enough would hang here
+// rather than fail. Keep the tail so a failure can be explained.
+const serverLog = [];
+const record = (chunk) => {
+  serverLog.push(String(chunk));
+  if (serverLog.length > 200) serverLog.shift();
+};
+child.stdout.on('data', record);
+child.stderr.on('data', record);
+
 let failures = 0;
 const check = async (label, path, options = {}) => {
   const response = await fetch(base + path, { headers, ...options });
@@ -87,7 +100,15 @@ try {
     }),
   });
 } finally {
-  child.kill();
+  await stopServer(child);
 }
-console.log(failures === 0 ? 'Smoke suite passed.' : `Smoke suite failed: ${failures} check(s).`);
-process.exit(failures === 0 ? 0 : 1);
+if (failures === 0) {
+  console.log('Smoke suite passed.');
+} else {
+  console.error(`Smoke suite failed: ${failures} check(s).`);
+  console.error('--- server output ---');
+  console.error(serverLog.join(''));
+}
+// Set the code rather than calling process.exit, so Node closes its handles
+// normally instead of tearing down mid-teardown.
+process.exitCode = failures === 0 ? 0 : 1;

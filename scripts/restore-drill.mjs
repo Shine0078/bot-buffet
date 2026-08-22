@@ -3,6 +3,7 @@
  * backup, destroys the live data directory, restores from the backup, restarts the server, and
  * proves the state and the tamper-evident audit chain survived. Exits non-zero on any failure.
  */
+import { stopServer } from './lib/stop-server.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,7 +36,7 @@ const startServer = async (dataDir) => {
     }
     await delay(250);
   }
-  child.kill();
+  await stopServer(child);
   throw new Error('server_did_not_become_ready');
 };
 
@@ -65,7 +66,7 @@ try {
   const beforeAudit = await (await fetch(`${base}/api/v1/audit/verify`, { headers })).json();
   step(beforeAudit.valid === true, 'audit chain valid before backup');
 
-  child.kill();
+  await stopServer(child);
   await delay(500);
 
   await execFileAsync(process.execPath, ['scripts/backup.mjs', backupDir], {
@@ -103,4 +104,5 @@ try {
   await rm(root, { recursive: true, force: true });
 }
 console.log(failures === 0 ? 'Restore drill passed.' : `Restore drill failed: ${failures}`);
-process.exit(failures === 0 ? 0 : 1);
+// Set the code rather than exiting, so Node closes handles normally.
+process.exitCode = failures === 0 ? 0 : 1;

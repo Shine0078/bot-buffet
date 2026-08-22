@@ -1,3 +1,4 @@
+import { stopServer } from './lib/stop-server.mjs';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
@@ -31,4 +32,4 @@ const violations = await page.evaluate(async () => {
 });
 console.log(JSON.stringify(violations, null, 2));
 await browser.close();
-child.kill();
+await stopServer(child);
