@@ -205,8 +205,22 @@ const server = createApi({
   registerProvider: (provider) => providers.set(provider.id, provider),
 });
 const port = Number(process.env.PORT ?? 8787);
-server.listen(port, '127.0.0.1', () =>
-  console.log(`Samuel Abraham — Bot Buffet listening on http://127.0.0.1:${port}`),
+/**
+ * Bind address.
+ *
+ * The default stays loopback so running Bot Buffet on a laptop never puts a
+ * control plane on the network by accident — it holds credentials and can
+ * execute code, so exposure must be a deliberate act.
+ *
+ * A container needs the opposite: binding loopback *inside* the container
+ * makes the service unreachable through its published port, because the
+ * mapping arrives on the container's external interface. The image therefore
+ * sets `BOT_BUFFET_HOST=0.0.0.0` explicitly, which is safe precisely because
+ * the operator chose which host port to publish it on.
+ */
+const host = process.env.BOT_BUFFET_HOST ?? '127.0.0.1';
+server.listen(port, host, () =>
+  console.log(`Samuel Abraham — Bot Buffet listening on http://${host}:${port}`),
 );
 
 export { store, orchestrator, server };
