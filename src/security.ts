@@ -25,6 +25,8 @@ const NON_SECRET_OPERATIONAL_KEYS = new Set([
   'tokenlimit',
   'tokensin',
   'tokensout',
+  'totaltokensin',
+  'totaltokensout',
   'totaltokens',
 ]);
 const SECRET_VALUE =

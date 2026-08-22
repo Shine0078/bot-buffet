@@ -33,6 +33,21 @@ describe('security boundaries', () => {
       accessToken: '[REDACTED]',
     });
   });
+  it('preserves aggregate usage totals in cost reports', () => {
+    expect(
+      redactSecrets({
+        totalTokensIn: 1200,
+        totalTokensOut: 340,
+        totalCostCents: 55,
+        refreshToken: 'opaque-refresh-token',
+      }),
+    ).toEqual({
+      totalTokensIn: 1200,
+      totalTokensOut: 340,
+      totalCostCents: 55,
+      refreshToken: '[REDACTED]',
+    });
+  });
   it('rejects traversal and absolute paths', () => {
     expect(() => assertWorkspacePath('C:\\workspace', '..\\outside')).toThrow('traversal');
     expect(() => assertWorkspacePath('C:\\workspace', 'C:\\outside')).toThrow('absolute_path');

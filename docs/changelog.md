@@ -10,6 +10,7 @@
 - Cost observability pass: project/agent/model/run cost aggregation with window filtering and run-rate forecasting, authenticated `GET /api/v1/usage` and `GET /api/v1/alerts` endpoints, and durable redacted budget alerts raised from the orchestrator.
 - Workflow graph pass: DAG validation with cycle/self-loop/duplicate/unknown-edge rejection and size bounds, dependency-level scheduling, failure-aware ready-node computation, and scoped workflow create/list/plan APIs.
 - Office UI pass: budget, usage, workflow, and alert table views with bootstrap and live usage data.
+- Runtime smoke suite executed against the built server in CI, plus a redaction fix for aggregate usage counters.
 - Provider compatibility pass: native Anthropic Messages and Gemini generateContent adapters with normalized usage/tool-call responses and regression coverage.
 - Runtime wiring pass: the service entrypoint now honors the provider adapter factory for online models.
 - Credential hardening pass: development vaults now use random per-file keys, keep them out of backups, and verify reload behavior; the current security scan records only the remaining external sandbox gate.
