@@ -97,6 +97,18 @@ describe('deterministic evaluation engine', () => {
     expect(results[0]?.evidence).toContain('grader:regex-unsafe');
   });
 
+  it('rejects nested quantifiers through deeper groups while keeping simple groups valid', () => {
+    const results = evaluateCases(
+      [
+        evaluationCase('deep-nested', '^((a?)){30}a{30}$', ['regex']),
+        evaluationCase('simple-group', '^(ab){2}$', ['regex']),
+      ],
+      { 'deep-nested': 'a'.repeat(30) + '!', 'simple-group': 'abab' },
+    );
+    expect(results[0]?.evidence).toContain('grader:regex-unsafe');
+    expect(results[1]).toMatchObject({ passed: true, score: 1 });
+  });
+
   it('uses a separated judge and fails closed when the judge misbehaves', () => {
     const results = evaluateCases(
       [

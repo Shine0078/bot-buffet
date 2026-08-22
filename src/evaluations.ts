@@ -48,6 +48,70 @@ const containsNormalized = (expected: unknown, actual: unknown): boolean => {
 };
 
 /**
+ * Detect a quantifier nested inside a group that is itself quantified. A
+ * regular expression heuristic must account for nested groups and escaped or
+ * character-class syntax; otherwise a deeper shape can bypass a flat pattern
+ * check and reach the synchronous RegExp engine.
+ */
+const hasNestedQuantifier = (pattern: string): boolean => {
+  const groups: Array<{ hasQuantifier: boolean }> = [];
+  let escaped = false;
+  let inClass = false;
+  const isQuantifierAt = (index: number): boolean => {
+    const character = pattern[index];
+    if (character === '+' || character === '*' || character === '?') return true;
+    return character === '{' && /^\{\d/.test(pattern.slice(index));
+  };
+
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === '[') {
+      inClass = true;
+      continue;
+    }
+    if (character === ']' && inClass) {
+      inClass = false;
+      continue;
+    }
+    if (inClass) continue;
+    if (character === '(') {
+      groups.push({ hasQuantifier: false });
+      continue;
+    }
+    if (character === ')') {
+      const group = groups.pop();
+      if (!group) continue;
+      let next = index + 1;
+      while (/\s/.test(pattern[next] ?? '')) next += 1;
+      if (isQuantifierAt(next) && group.hasQuantifier) return true;
+      if (group.hasQuantifier && groups.length) groups[groups.length - 1]!.hasQuantifier = true;
+      if (isQuantifierAt(next) && groups.length) groups[groups.length - 1]!.hasQuantifier = true;
+      continue;
+    }
+    // `?:`, `?=`, `?!`, and `?<` are group syntax, not quantifiers.
+    if (
+      character === '?' &&
+      pattern[index - 1] === '(' &&
+      [':', '=', '!', '<'].includes(pattern[index + 1] ?? '')
+    )
+      continue;
+    if (groups.length && (character === '+' || character === '*' || character === '?'))
+      groups[groups.length - 1]!.hasQuantifier = true;
+    if (groups.length && character === '{' && /^\{\d/.test(pattern.slice(index)))
+      groups[groups.length - 1]!.hasQuantifier = true;
+  }
+  return false;
+};
+
+/**
  * Regex grader. The pattern comes from the dataset, not the model. Length alone
  * does not prevent catastrophic backtracking (for example, `^(a+)+$`), so a
  * deliberately conservative structural check rejects the constructs most
@@ -59,6 +123,7 @@ export const isSafeRegexPattern = (pattern: string): boolean => {
   // Backreferences and lookarounds make execution cost/data dependencies hard
   // to bound and are unnecessary for evaluation matching.
   if (/\\(?:[1-9]\d*|k<[^>]+>)/u.test(pattern) || /\(\?[=!<]/u.test(pattern)) return false;
+  if (hasNestedQuantifier(pattern)) return false;
   // A quantified group/character class followed by another quantifier is the
   // classic nested-quantifier shape (`(a+)+`, `(?:a{1,3})*`).
   if (/(?:\([^()]*[+*?{][^()]*\)|\[[^\]]*\][+*?])\s*(?:[+*?]|\{\d)/u.test(pattern)) return false;

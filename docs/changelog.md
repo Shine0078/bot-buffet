@@ -48,6 +48,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Built-in tool invocations now enforce the enabled flag inside `ToolRegistry` and write scoped `tool.executed`/`tool.denied` audit events without raw input/output material.
 - Executor run-state commits now use compare-and-swap with terminal-state guards; rollback aborts in-flight execution and cannot be overwritten by a stale model/tool result.
 - MCP server enable/disable transitions now require current-version CAS tokens and write high-risk audit events, preventing stale administrative toggles.
+- Evaluation regex matching now structurally walks nested groups, escapes, and character classes so nested quantifiers cannot bypass the synchronous backtracking guard; deeper-group regression coverage was added.
 
 ### Verified
 
