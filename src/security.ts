@@ -219,8 +219,16 @@ const privateIpv4 = (host: string): boolean => {
     parts[0]! === 127 ||
     parts[0]! === 0 ||
     (parts[0]! === 169 && parts[1]! === 254) ||
+    (parts[0]! === 100 && parts[1]! >= 64 && parts[1]! <= 127) ||
     (parts[0]! === 172 && parts[1]! >= 16 && parts[1]! <= 31) ||
-    (parts[0]! === 192 && parts[1]! === 168)
+    (parts[0]! === 192 && parts[1]! === 168) ||
+    (parts[0]! === 192 && parts[1]! === 0 && parts[2]! === 0) ||
+    (parts[0]! === 192 && parts[1]! === 0 && parts[2]! === 2) ||
+    (parts[0]! === 192 && parts[1]! === 88 && parts[2]! === 99) ||
+    (parts[0]! === 198 && parts[1]! >= 18 && parts[1]! <= 19) ||
+    (parts[0]! === 198 && parts[1]! === 51 && parts[2]! === 100) ||
+    (parts[0]! === 203 && parts[1]! === 0 && parts[2]! === 113) ||
+    parts[0]! >= 240
   );
 };
 const mappedIpv4 = (host: string): string | undefined => {
@@ -242,6 +250,7 @@ const privateHost = (host: string): boolean => {
     const embeddedIpv4 = mappedIpv4(normalized);
     if (embeddedIpv4 && privateIpv4(embeddedIpv4)) return true;
     return (
+      normalized === '::' ||
       normalized === '::1' ||
       normalized.startsWith('fc') ||
       normalized.startsWith('fd') ||
