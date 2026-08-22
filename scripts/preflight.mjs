@@ -53,11 +53,21 @@ export function nodeRemediation(platform) {
   return 'Install the current Node.js LTS from https://nodejs.org or your distribution package manager (nodesource, nvm, asdf).';
 }
 
+/** Docker is absent entirely. */
 export function dockerRemediation(platform) {
   if (platform === 'win32') {
-    return 'Start Docker Desktop to enable BOT_BUFFET_SANDBOX_MODE=docker. Without it the sandbox refuses to run in production mode.';
+    return 'Install Docker Desktop to enable BOT_BUFFET_SANDBOX_MODE=docker. Without it the sandbox refuses to run in production mode.';
   }
-  return 'Install and start Docker to enable BOT_BUFFET_SANDBOX_MODE=docker. Without it the sandbox refuses to run in production mode.';
+  return 'Install Docker to enable BOT_BUFFET_SANDBOX_MODE=docker. Without it the sandbox refuses to run in production mode.';
+}
+
+/** Docker is installed but nothing is listening. A different action entirely:
+ *  the operator needs to start a service, not install software. */
+export function dockerDaemonRemediation(platform) {
+  if (platform === 'win32') {
+    return 'Start Docker Desktop and wait for the engine to report running, then re-run preflight. The CLI answers `--version` without a daemon, so container operations fail later rather than here.';
+  }
+  return 'Start the Docker daemon (`sudo systemctl start docker`) and confirm your user is in the `docker` group, then re-run preflight.';
 }
 
 /**
@@ -156,15 +166,28 @@ export function evaluateEnvironment(facts) {
   }
 
   // ---- Docker: optional locally, required for the production sandbox mode.
+  // The CLI being on PATH proves nothing: `docker --version` answers from the
+  // client alone, so a machine with Docker Desktop installed but not running
+  // reports a version and then fails every actual container operation. The
+  // daemon is what the sandbox needs, so the daemon is what is checked, and the
+  // two failure modes get different remediation because they need different
+  // actions from the operator.
   if (!facts.dockerVersion) {
     add({
       name: 'docker',
       status: 'warning',
-      detail: 'Docker is unavailable; container sandbox mode cannot be exercised on this machine.',
+      detail: 'Docker is not installed; container sandbox mode cannot be exercised here.',
       remediation: dockerRemediation(platform),
     });
+  } else if (facts.dockerDaemonReachable === false) {
+    add({
+      name: 'docker',
+      status: 'warning',
+      detail: `${facts.dockerVersion} is installed but the daemon is not reachable.`,
+      remediation: dockerDaemonRemediation(platform),
+    });
   } else {
-    add({ name: 'docker', status: 'ok', detail: facts.dockerVersion });
+    add({ name: 'docker', status: 'ok', detail: `${facts.dockerVersion} (daemon reachable).` });
   }
 
   // ---- Playwright browser: optional; only the browser/a11y suite needs it.
@@ -265,6 +288,9 @@ export function gatherFacts(repoRoot = REPO_ROOT, platform = process.platform) {
     npmVersion: probe(npmCommand, ['--version'], { shim: true }),
     gitVersion: probe('git', ['--version']),
     dockerVersion: probe('docker', ['--version']),
+    // `docker info` is the cheapest call that the daemon, not the client alone,
+    // has to answer — which is the distinction the sandbox actually depends on.
+    dockerDaemonReachable: probe('docker', ['info', '--format', '{{.ServerVersion}}']) !== null,
     dependenciesInstalled: exists(join(repoRoot, 'node_modules')),
     dataDir,
     dataDirWritable: dataDirWritable(dataDir),

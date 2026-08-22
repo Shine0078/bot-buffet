@@ -28,6 +28,8 @@ export interface PreflightFacts {
   npmVersion?: string | null;
   gitVersion?: string | null;
   dockerVersion?: string | null;
+  /** Whether the Docker daemon answers, not merely whether the CLI exists. */
+  dockerDaemonReachable?: boolean;
   dependenciesInstalled?: boolean;
   dataDir?: string;
   dataDirWritable?: boolean;
@@ -39,6 +41,7 @@ export declare function readEngineFloor(repoRoot?: string): number | null;
 export declare function majorOf(version: unknown): number | null;
 export declare function nodeRemediation(platform: string): string;
 export declare function dockerRemediation(platform: string): string;
+export declare function dockerDaemonRemediation(platform: string): string;
 export declare function evaluateEnvironment(facts: PreflightFacts): PreflightResult;
 export declare function formatReport(result: PreflightResult): string;
 export declare function gatherFacts(repoRoot?: string, platform?: string): PreflightFacts;

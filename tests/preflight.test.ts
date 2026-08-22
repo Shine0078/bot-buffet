@@ -21,6 +21,7 @@ const healthy: PreflightFacts = {
   npmVersion: '10.9.0',
   gitVersion: 'git version 2.45.0',
   dockerVersion: 'Docker version 27.0.0',
+  dockerDaemonReachable: true,
   dependenciesInstalled: true,
   dataDir: '/srv/bot-buffet/.data',
   dataDirWritable: true,
@@ -80,6 +81,40 @@ describe('preflight classification', () => {
       'dependencies',
       'npm',
     ]);
+  });
+
+  it('distinguishes an absent Docker from an installed one whose daemon is down', () => {
+    // `docker --version` answers from the client alone, so CLI presence is not
+    // evidence the sandbox can run. The two states need different actions.
+    const absent = evaluateEnvironment({ ...healthy, dockerVersion: null });
+    expect(absent.warnings[0]?.detail).toMatch(/not installed/);
+    expect(absent.warnings[0]?.remediation).toMatch(/Install Docker/);
+
+    const stopped = evaluateEnvironment({
+      ...healthy,
+      dockerVersion: 'Docker version 29.5.3',
+      dockerDaemonReachable: false,
+    });
+    expect(stopped.warnings[0]?.detail).toMatch(/daemon is not reachable/);
+    expect(stopped.warnings[0]?.remediation).toMatch(/Start the Docker daemon/);
+  });
+
+  it('gives the Windows daemon warning its own remediation', () => {
+    const result = evaluateEnvironment({
+      ...healthy,
+      platform: 'win32',
+      dockerVersion: 'Docker version 29.5.3',
+      dockerDaemonReachable: false,
+    });
+    expect(result.warnings[0]?.remediation).toMatch(/Start Docker Desktop/);
+  });
+
+  it('reports Docker healthy only when the daemon actually answers', () => {
+    const result = evaluateEnvironment({ ...healthy, dockerDaemonReachable: true });
+    expect(result.warnings).toEqual([]);
+    expect(result.checks.find((check) => check.name === 'docker')?.detail).toMatch(
+      /daemon reachable/,
+    );
   });
 
   it('treats git, docker, and Chromium as degraded features, never as failures', () => {
