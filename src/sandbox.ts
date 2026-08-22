@@ -3,7 +3,46 @@ import { Buffer } from 'node:buffer';
 
 const MAX_OUTPUT_BYTES = 1_000_000;
 const MAX_RUNTIME_MS = 30_000;
-const SANDBOX_IMAGE = process.env.BOT_BUFFET_SANDBOX_IMAGE ?? 'node:22-alpine';
+
+/**
+ * Default sandbox image for local development only.
+ *
+ * A tag is a mutable pointer: `node:22-alpine` resolves to different bytes
+ * week to week, so the thing agent code executes inside can change without a
+ * single line of this repository changing. That is acceptable while developing
+ * against a throwaway workspace and is not acceptable in production, where the
+ * sandbox is the boundary containing untrusted generated code. Production
+ * therefore requires a digest.
+ */
+const DEFAULT_SANDBOX_IMAGE = 'node:22-alpine';
+
+/**
+ * `name@sha256:<64 hex>`. Registry, port, and path segments are permitted
+ * before the digest; the digest itself is what makes the reference immutable.
+ */
+const DIGEST_PINNED = /^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$/;
+
+export function isDigestPinned(image: string): boolean {
+  return DIGEST_PINNED.test(image);
+}
+
+/**
+ * Resolve the sandbox image, refusing an unpinned one in production.
+ *
+ * Fail closed: an unset or tag-only image in production throws rather than
+ * silently falling back, because a sandbox whose contents can change is not a
+ * boundary anyone can reason about.
+ */
+export function resolveSandboxImage(
+  image: string | undefined = process.env.BOT_BUFFET_SANDBOX_IMAGE,
+  production: boolean = process.env.BOT_BUFFET_AUTH_MODE === 'production',
+): string {
+  const candidate = image && image.trim().length > 0 ? image.trim() : undefined;
+  if (!production) return candidate ?? DEFAULT_SANDBOX_IMAGE;
+  if (!candidate) throw new Error('sandbox_image_required');
+  if (!isDigestPinned(candidate)) throw new Error('sandbox_image_not_pinned');
+  return candidate;
+}
 
 export type SandboxMode = 'local' | 'docker';
 export type SandboxNetwork = 'blocked' | 'allowlist' | 'open';
@@ -53,7 +92,7 @@ export function dockerRunArgs(
     `type=bind,source=${workspaceRoot},target=/workspace`,
     '--workdir',
     '/workspace',
-    SANDBOX_IMAGE,
+    resolveSandboxImage(),
     command,
     ...args,
   ];
@@ -238,6 +277,9 @@ export function createSandboxRuntime(workspaceRoot: string): SandboxRuntime {
 }
 
 export function assertSandboxConfiguration(): void {
-  if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
-    createSandboxRuntime(process.env.BOT_BUFFET_DATA_DIR ?? '.data');
+  if (process.env.BOT_BUFFET_AUTH_MODE !== 'production') return;
+  createSandboxRuntime(process.env.BOT_BUFFET_DATA_DIR ?? '.data');
+  // Fail at startup rather than at the first agent command: an unpinned image
+  // is a configuration error the operator must fix before anything executes.
+  resolveSandboxImage();
 }
