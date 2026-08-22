@@ -256,6 +256,16 @@ parser and deeper-group regression now reject the broader nested-quantifier
 class. Its canonical report is at
 `C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\3b2c812b06787198cccbb17d8814b2e06cf4b481_20260822T164744Z_15qrh36b`.
 
+The clean-commit Standard scan `0a8798a5-3908-4dc5-ad2f-c8daef7243d3`
+reviewed revision `bd0afe1c55c740a92898cf5c5ca99a18f5d91135` after the
+destructive-lifecycle hardening and reported zero reportable findings. Its
+coverage is intentionally partial only for live provider, staging/production,
+attestation, external backup custody, webhook receiver/replay, and
+kernel/microVM escape evidence. The independent worker packets were attempted
+but unavailable in this host session; the parent review and local regression
+evidence are recorded rather than overstated. Canonical artifacts and SARIF:
+`C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\bd0afe1c55c740a92898cf5c5ca99a18f5d91135_20260822T185245Z_jz1pfihb`.
+
 The post-remediation repository gate is authoritative at 628 passing tests
 across 64 files; the longer historical coverage sentence below predates the
 latest mutation-path CAS regressions.
