@@ -185,6 +185,64 @@ describe('verified local model artifact import', () => {
     await expect(response.json()).resolves.toMatchObject({ code: 'model_artifact_unreadable' });
   });
 
+  it('previews size, free space, and fit before any download starts', async () => {
+    const { base, modelStoreRoot } = await start();
+    const modelId = await registerModel(base);
+
+    const response = await fetch(`${base}/api/v1/local-models/import/plan`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        modelId,
+        fileName: 'llama.gguf',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 4 * 1024 ** 3,
+      }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      ok: boolean;
+      sizeHuman: string;
+      freeBytes: number;
+      freeBytesHuman: string;
+      host: { gpu: { detection: string }; detection: { gpu: boolean; memory: boolean } };
+      fit: { verdict: string };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.sizeHuman).toBe('4.0 GiB');
+    expect(body.freeBytes).toBeGreaterThan(0);
+    expect(body.freeBytesHuman).toMatch(/(B|KiB|MiB|GiB|TiB)$/);
+    // GPU must be reported as undetected rather than fabricated.
+    expect(body.host.gpu.detection).toBe('unknown');
+    expect(body.host.detection.gpu).toBe(false);
+    expect(body.host.detection.memory).toBe(true);
+    expect(['fits', 'tight', 'insufficient', 'unknown']).toContain(body.fit.verdict);
+
+    // A dry run must not have written anything.
+    const { readdir } = await import('node:fs/promises');
+    await expect(readdir(modelStoreRoot)).resolves.toEqual([]);
+  });
+
+  it('reports the same refusals in a preview as the import would enforce', async () => {
+    const { base } = await start();
+    const modelId = await registerModel(base);
+    const response = await fetch(`${base}/api/v1/local-models/import/plan`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ modelId, fileName: '../escape.gguf' }),
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; refusals: string[] };
+    expect(body.ok).toBe(false);
+    expect(body.refusals).toEqual(
+      expect.arrayContaining([
+        'model_artifact_name_invalid',
+        'model_artifact_digest_required',
+        'model_artifact_size_required',
+      ]),
+    );
+  });
+
   it('rejects an import against an unknown model', async () => {
     const { base } = await start();
     const response = await importArtifact(base, {

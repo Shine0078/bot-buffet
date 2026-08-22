@@ -70,6 +70,7 @@ import { CostGrouping, costReport, forecastCents } from './reporting.js';
 import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
 import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
 import { formatBytes, planModelImport, verifyArtifact, volumeSpace } from './modelArtifacts.js';
+import { assessModelFit, detectHostResources } from './hostResources.js';
 import { renderMetrics, runToOtlp } from './telemetry.js';
 import { researchBrief, validateCitations } from './research.js';
 import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
@@ -553,6 +554,47 @@ export function createApi(deps: ApiDeps) {
             }) as Model,
           )) as Model);
         return send(res, existing ? 200 : 201, { provider, model, offlineOnly: true });
+      }
+      if (path === '/api/v1/local-models/import/plan' && req.method === 'POST') {
+        // Dry run. The specification requires showing size and available
+        // storage *before* a download starts, so this answers the same
+        // question the import does without writing anything or transferring
+        // any bytes. It reuses the identical decision function, so the preview
+        // cannot drift from the enforcement.
+        const body = await parseBody(req);
+        const model = await deps.store.get<Model>(String(body.modelId ?? ''));
+        if (!model || model.kind !== 'model') throw new Error('model_not_found');
+        await required(actorId, model, 'read', 'model');
+
+        const storeRoot = resolve(modelStoreRoot);
+        await mkdir(storeRoot, { recursive: true });
+        const space = await volumeSpace(storeRoot);
+        const resources = await detectHostResources(storeRoot);
+        const decision = planModelImport(
+          {
+            fileName: String(body.fileName ?? ''),
+            sha256: body.sha256 == null ? null : String(body.sha256),
+            sizeBytes: body.sizeBytes == null ? null : Number(body.sizeBytes),
+            sourceUrl: body.sourceUrl == null ? null : String(body.sourceUrl),
+            quantization: body.quantization == null ? null : String(body.quantization),
+            license: body.license == null ? null : String(body.license),
+          },
+          storeRoot,
+          space,
+        );
+        const declaredBytes = Number(body.sizeBytes ?? Number.NaN);
+        return send(res, 200, {
+          ok: decision.ok,
+          refusals: decision.refusals,
+          sizeBytes: Number.isFinite(declaredBytes) ? declaredBytes : null,
+          sizeHuman: formatBytes(declaredBytes),
+          freeBytes: space.freeBytes,
+          freeBytesHuman: formatBytes(space.freeBytes),
+          totalBytes: space.totalBytes,
+          freeBytesAfter: decision.plan?.freeBytesAfter ?? null,
+          host: resources,
+          fit: assessModelFit(declaredBytes, resources),
+        });
       }
       if (path === '/api/v1/local-models/import' && req.method === 'POST') {
         const body = await parseBody(req);
