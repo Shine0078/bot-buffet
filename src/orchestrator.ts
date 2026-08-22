@@ -29,7 +29,7 @@ import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext, memoryToContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { labelUntrusted } from './injection.js';
-import { canStartInMode, decideMode, escalationOutcome } from './modes.js';
+import { buildSystemPrompt, canStartInMode, decideMode, escalationOutcome } from './modes.js';
 import { verifyDeterministic } from './verification.js';
 import { selectReadableMemory } from './memoryScope.js';
 
@@ -224,7 +224,7 @@ export class Orchestrator extends EventEmitter {
           messages: [
             {
               role: 'system',
-              content: `${agent.profile.systemInstructions}\nProject rules: ${agent.profile.projectRules.join('\n')}`,
+              content: buildSystemPrompt(agent.profile),
             },
             {
               role: 'user',
