@@ -26,6 +26,23 @@ export const BRAND_TERMS = ['munder', 'difflin'];
 export const BRAND_PATTERN = BRAND_TERMS.join('|');
 
 /**
+ * Whole documents that legitimately discuss the upstream product by name.
+ *
+ * This is a narrower category than it looks. The gate exists to keep the
+ * upstream brand out of Bot Buffet's own product surface — its UI, package
+ * metadata, source, and user-facing docs. A review *of* that product cannot be
+ * written without naming it, and is not product surface. Each entry carries a
+ * reason, and only documentation may be listed: adding a source or UI file here
+ * would defeat the gate rather than scope it.
+ */
+export const EXEMPT_FILES = [
+  {
+    path: 'docs/munder-difflin-review.md',
+    reason: 'An adversarial review of the upstream product must name the product it reviews.',
+  },
+];
+
+/**
  * Reviewed references that attest the brand is gone rather than reintroducing
  * it. Matched by path plus required substring, not by line number, so ordinary
  * edits above them cannot silently disable the exemption.
@@ -74,6 +91,13 @@ export function isAllowed(hit, allowed = ALLOWED) {
   return allowed.some((entry) => entry.path === hit.path && hit.content.includes(entry.needle));
 }
 
+/** Is this hit inside a document exempted in full, and is that exemption legal?
+ *  Only Markdown documentation may be exempted wholesale; anything else would
+ *  hide a real leftover, so the entry is ignored and the hit still fails. */
+export function isExemptFile(hit, exemptFiles = EXEMPT_FILES) {
+  return exemptFiles.some((entry) => entry.path === hit.path && entry.path.endsWith('.md'));
+}
+
 /** Reduce raw `git grep` output to the hits that should fail the build. */
 export function filterHits(output, allowed = ALLOWED, gatePaths = GATE_PATHS) {
   if (!output) return [];
@@ -82,6 +106,7 @@ export function filterHits(output, allowed = ALLOWED, gatePaths = GATE_PATHS) {
     .filter(Boolean)
     .map((line) => parseHit(line) ?? { path: '<unparsed>', line: 0, content: line })
     .filter((hit) => !gatePaths.includes(hit.path))
+    .filter((hit) => !isExemptFile(hit))
     .filter((hit) => !isAllowed(hit, allowed));
 }
 

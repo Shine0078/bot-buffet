@@ -23,6 +23,17 @@ export declare const ALLOWED: readonly BrandAllowance[];
  *  exact path because they must name the brand terms to do their job. */
 export declare const GATE_PATHS: readonly string[];
 
+export interface BrandFileExemption {
+  path: string;
+  reason: string;
+}
+/** Documents that legitimately name the upstream product in full. */
+export declare const EXEMPT_FILES: readonly BrandFileExemption[];
+export declare function isExemptFile(
+  hit: Pick<BrandHit, 'path'>,
+  exemptFiles?: readonly BrandFileExemption[],
+): boolean;
+
 /** Throws if the pattern stopped matching the brand or grew too broad. */
 export declare function selfTest(pattern?: string): true;
 

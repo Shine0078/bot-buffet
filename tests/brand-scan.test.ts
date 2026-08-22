@@ -3,6 +3,7 @@ import {
   BRAND_PATTERN,
   filterHits,
   isAllowed,
+  isExemptFile,
   parseHit,
   selfTest,
 } from '../scripts/brand-scan.mjs';
@@ -73,6 +74,29 @@ describe('brand scan', () => {
     expect(isAllowed({ path: 'README.md', content: 'No Munder Difflin branding remains' })).toBe(
       false,
     );
+  });
+
+  it('exempts a review document in full, because it must name what it reviews', () => {
+    expect(
+      filterHits('docs/munder-difflin-review.md:1:# Adversarial review: Munder Difflin'),
+    ).toEqual([]);
+    expect(isExemptFile({ path: 'docs/munder-difflin-review.md' })).toBe(true);
+  });
+
+  it('refuses to exempt anything that is not documentation', () => {
+    // A whole-file exemption on source or UI would hide a real leftover, so the
+    // entry is ignored and the hit still fails the gate.
+    expect(isExemptFile({ path: 'src/api.ts' }, [{ path: 'src/api.ts', reason: 'nope' }])).toBe(
+      false,
+    );
+    expect(isExemptFile({ path: 'ui/app.js' }, [{ path: 'ui/app.js', reason: 'nope' }])).toBe(
+      false,
+    );
+    expect(isExemptFile({ path: 'notes.md' }, [{ path: 'notes.md', reason: 'ok' }])).toBe(true);
+  });
+
+  it('does not exempt an unlisted document', () => {
+    expect(filterHits('docs/user-guide.md:5:Install Munder Difflin first.')).toHaveLength(1);
   });
 
   it('treats an unparsable grep line as a failure rather than dropping it', () => {
