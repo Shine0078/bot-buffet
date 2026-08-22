@@ -254,3 +254,117 @@ describe('verified local model artifact import', () => {
     expect(response.status).toBeGreaterThanOrEqual(400);
   });
 });
+
+describe('local model configuration over the API', () => {
+  const configUrl = (base: string) => `${base}/api/v1/local-models/config`;
+
+  it('exports a registered local model as a portable document with no secrets', async () => {
+    const { base } = await start();
+    await registerModel(base);
+
+    const response = await fetch(configUrl(base));
+    expect(response.status).toBe(200);
+    const doc = (await response.json()) as {
+      version: number;
+      providers: Array<{ providerKind: string; endpoint: string }>;
+      models: Array<{ modelName: string }>;
+    };
+    expect(doc.version).toBe(1);
+    expect(doc.providers[0]?.endpoint).toBe('http://127.0.0.1:11434/v1');
+    expect(doc.models.map((m) => m.modelName)).toContain('llama-3-8b');
+
+    const serialised = JSON.stringify(doc);
+    for (const forbidden of ['apiKey', 'token', 'secret', 'credential']) {
+      expect(serialised.toLowerCase()).not.toContain(forbidden.toLowerCase());
+    }
+  });
+
+  it('round-trips an exported document back into a fresh instance', async () => {
+    const source = await start();
+    await registerModel(source.base);
+    const doc = await (await fetch(configUrl(source.base))).json();
+
+    const target = await start();
+    const response = await fetch(configUrl(target.base), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ config: doc }),
+    });
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      created: Array<{ modelName: string }>;
+      rejections: unknown[];
+      offlineOnly: boolean;
+    };
+    expect(body.created.map((m) => m.modelName)).toContain('llama-3-8b');
+    expect(body.rejections).toEqual([]);
+    expect(body.offlineOnly).toBe(true);
+  });
+
+  it('is idempotent: importing the same document twice creates nothing new', async () => {
+    const { base } = await start();
+    await registerModel(base);
+    const doc = await (await fetch(configUrl(base))).json();
+
+    const target = await start();
+    const post = () =>
+      fetch(configUrl(target.base), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ config: doc }),
+      });
+    const first = (await (await post()).json()) as { created: unknown[] };
+    const second = (await (await post()).json()) as { created: unknown[] };
+    expect(first.created).toHaveLength(1);
+    expect(second.created).toHaveLength(0);
+  });
+
+  it('refuses a configuration naming a remote endpoint', async () => {
+    const { base, store } = await start();
+    const response = await fetch(configUrl(base), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        config: {
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          providers: [
+            { providerKind: 'ollama', name: 'exfil', endpoint: 'http://attacker.example/v1' },
+          ],
+          models: [
+            {
+              providerKind: 'ollama',
+              endpoint: 'http://attacker.example/v1',
+              modelName: 'x',
+              name: 'x',
+            },
+          ],
+        },
+      }),
+    });
+    // Partial-success status: nothing was created and the reasons are reported.
+    expect(response.status).toBe(207);
+    const body = (await response.json()) as {
+      created: unknown[];
+      rejections: Array<{ reason: string }>;
+    };
+    expect(body.created).toEqual([]);
+    expect(body.rejections.map((r) => r.reason)).toContain('endpoint_not_local');
+
+    // No provider pointing at the remote host may exist afterwards.
+    const providers = await store.list((x) => x.kind === 'model-provider');
+    expect(JSON.stringify(providers)).not.toContain('attacker.example');
+  });
+
+  it('refuses an unsupported document version', async () => {
+    const { base } = await start();
+    const response = await fetch(configUrl(base), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ config: { version: 99, providers: [], models: [] } }),
+    });
+    expect(response.status).toBe(207);
+    const body = (await response.json()) as { rejections: Array<{ reason: string }> };
+    expect(body.rejections.map((r) => r.reason)).toContain('config_version_unsupported');
+  });
+});

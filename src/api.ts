@@ -71,6 +71,7 @@ import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
 import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
 import { formatBytes, planModelImport, verifyArtifact, volumeSpace } from './modelArtifacts.js';
 import { assessModelFit, detectHostResources } from './hostResources.js';
+import { exportLocalConfig, parseLocalConfig } from './localModelConfig.js';
 import { renderMetrics, runToOtlp } from './telemetry.js';
 import { researchBrief, validateCitations } from './research.js';
 import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
@@ -554,6 +555,139 @@ export function createApi(deps: ApiDeps) {
             }) as Model,
           )) as Model);
         return send(res, existing ? 200 : 201, { provider, model, offlineOnly: true });
+      }
+      if (path === '/api/v1/local-models/config' && req.method === 'GET') {
+        // Export is filtered through the same authorization as any other read,
+        // so a user only ever exports the providers and models they can see.
+        const providers = await visible(
+          actorId,
+          await deps.store.list<ModelProvider>(
+            (x) =>
+              x.kind === 'model-provider' &&
+              localDiscoveryCandidates().some(
+                ([kind]) => kind === (x as ModelProvider).providerKind,
+              ),
+          ),
+        );
+        const models = await visible(
+          actorId,
+          await deps.store.list<Model>((x) => x.kind === 'model' && (x as Model).local),
+        );
+        return send(res, 200, exportLocalConfig(providers, models));
+      }
+      if (path === '/api/v1/local-models/config' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const scope = String(body.scope ?? 'workspace_local');
+        const scopeEntity = await deps.store.get(scope);
+        if (scopeEntity) await required(actorId, scopeEntity, 'write', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('local_model_scope_required');
+
+        // Endpoint validation is delegated to the same guard the registration
+        // route uses, so an imported configuration cannot reach anywhere a
+        // directly registered one could not.
+        const parsed = parseLocalConfig(
+          body.config,
+          (kind) => localDiscoveryCandidates().some(([candidate]) => candidate === kind),
+          (endpoint) => {
+            try {
+              assertSafeEndpoint(endpoint, true);
+              return true;
+            } catch {
+              return false;
+            }
+          },
+        );
+
+        const created: Array<{ providerId: string; modelId: string; modelName: string }> = [];
+        for (const entry of parsed.models) {
+          let provider = (
+            await deps.store.list<ModelProvider>(
+              (x) =>
+                x.kind === 'model-provider' &&
+                x.scope === scope &&
+                (x as ModelProvider).providerKind === entry.providerKind &&
+                (x as ModelProvider).endpoint === entry.endpoint,
+            )
+          )[0];
+          if (!provider) {
+            const definition = parsed.providers.find(
+              (candidate) =>
+                candidate.providerKind === entry.providerKind &&
+                candidate.endpoint === entry.endpoint,
+            );
+            provider = entity({
+              kind: 'model-provider',
+              ownerId: actorId,
+              scope,
+              name: definition?.name ?? `${entry.providerKind} local`,
+              providerKind: entry.providerKind as ModelProvider['providerKind'],
+              endpoint: entry.endpoint,
+              enabled: true,
+              health: 'unknown',
+              capabilities: defaultCapabilities(),
+            }) as ModelProvider;
+            await deps.store.insert(provider);
+            deps.registerProvider?.(provider);
+          } else await required(actorId, provider, 'write', 'model-provider');
+
+          const existing = (
+            await deps.store.list<Model>(
+              (x) =>
+                x.kind === 'model' &&
+                (x as Model).providerId === provider!.id &&
+                (x as Model).modelName === entry.modelName,
+            )
+          )[0];
+          if (existing) continue;
+
+          const model = (await deps.store.insert(
+            entity({
+              kind: 'model',
+              ownerId: actorId,
+              scope,
+              providerId: provider.id,
+              name: entry.name,
+              modelName: entry.modelName,
+              local: true,
+              capabilities: provider.capabilities,
+              inputCostPerMillionCents: 0,
+              outputCostPerMillionCents: 0,
+              available: true,
+              ...(entry.quantization ? { quantization: entry.quantization } : {}),
+              ...(entry.license ? { license: entry.license } : {}),
+              ...(entry.sizeBytes ? { sizeBytes: entry.sizeBytes } : {}),
+            }) as Model,
+          )) as Model;
+          created.push({
+            providerId: provider.id,
+            modelId: model.id,
+            modelName: model.modelName,
+          });
+        }
+
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope,
+          actorId,
+          action: 'local_model.config_import',
+          resourceType: 'model',
+          resourceId: scope,
+          risk: 'medium',
+          decision: parsed.rejections.length ? 'approval-required' : 'allowed',
+          metadata: {
+            created: created.length,
+            rejected: parsed.rejections.length,
+            reasons: parsed.rejections.map((item) => item.reason),
+          },
+        });
+
+        return send(res, parsed.rejections.length ? 207 : 201, {
+          created,
+          rejections: parsed.rejections,
+          offlineOnly: true,
+        });
       }
       if (path === '/api/v1/local-models/import/plan' && req.method === 'POST') {
         // Dry run. The specification requires showing size and available
