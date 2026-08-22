@@ -269,7 +269,16 @@ class LocalSandbox implements SandboxRuntime {
     const info = await stat(`${this.workspaceRoot}/${relativePath}`);
     return { size: info.size, isFile: info.isFile() };
   }
-  async run(command: string, args: string[], _network: SandboxNetwork): Promise<SandboxResult> {
+  async run(command: string, args: string[], network: SandboxNetwork): Promise<SandboxResult> {
+    // The container runtime already refuses any policy but `blocked`, because
+    // there is no egress proxy to enforce an allowlist against. The local
+    // runtime ignored the policy entirely, so `allowlist` and `open` were
+    // strictly weaker than `blocked` with nothing compensating: they relaxed
+    // the network-shaped command check in the shell tool without introducing
+    // any host restriction at all. Both runtimes now refuse identically, so a
+    // policy cannot mean one thing in development and another in production,
+    // and adding real allowlist support has to be a deliberate change here.
+    if (network !== 'blocked') throw new Error('sandbox_network_policy_unavailable');
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const result = await promisify(execFile)(command, args, {

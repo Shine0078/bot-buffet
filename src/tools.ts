@@ -279,10 +279,11 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
         args.length === 1 &&
         ['--version', '--help'].includes(args[0]!);
       if (!safeReadOnlyInvocation) throw new Error('shell_denied:command_not_permitted');
-      if (
-        context.network === 'blocked' &&
-        /curl|wget|Invoke-WebRequest|npm|pnpm|npx|git/i.test(fullCommand)
-      )
+      // Not conditional on the policy any more. Every sandbox refuses a policy
+      // other than `blocked`, so gating this on `blocked` only created a path
+      // where setting `allowlist` on a profile would relax the check while
+      // introducing no host restriction to replace it.
+      if (/curl|wget|Invoke-WebRequest|npm|pnpm|npx|git/i.test(fullCommand))
         throw new Error('shell_denied:network_blocked');
       const result = await sandbox(context.workspaceRoot).run(
         data.command,

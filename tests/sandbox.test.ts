@@ -102,3 +102,45 @@ describe('sandbox image pinning', () => {
     expect(args).toContain('none');
   });
 });
+
+describe('network policy is refused identically by both runtimes', () => {
+  /**
+   * `allowlist` and `open` have no host enforcement anywhere: there is no
+   * egress proxy to enforce an allowlist against. The container runtime always
+   * refused them; the local runtime ignored the policy, which made a
+   * non-blocked policy strictly weaker than `blocked` with nothing
+   * compensating. Both refuse now, so a policy cannot mean one thing in
+   * development and another in production.
+   */
+  const previous = process.env.BOT_BUFFET_SANDBOX_MODE;
+  afterEach(() => {
+    if (previous === undefined) delete process.env.BOT_BUFFET_SANDBOX_MODE;
+    else process.env.BOT_BUFFET_SANDBOX_MODE = previous;
+  });
+
+  it('refuses a non-blocked policy in the local runtime', async () => {
+    process.env.BOT_BUFFET_SANDBOX_MODE = 'local';
+    const runtime = createSandboxRuntime(process.cwd());
+    expect(runtime.mode).toBe('local');
+    for (const network of ['allowlist', 'open'] as const) {
+      await expect(runtime.run('node', ['--version'], network)).rejects.toThrow(
+        'sandbox_network_policy_unavailable',
+      );
+    }
+  });
+
+  it('refuses a non-blocked policy when building container arguments', () => {
+    for (const network of ['allowlist', 'open'] as const) {
+      expect(() => dockerRunArgs('/w', 'node', [], network)).toThrow(
+        'sandbox_network_policy_unavailable',
+      );
+    }
+  });
+
+  it('still permits the blocked policy in the local runtime', async () => {
+    process.env.BOT_BUFFET_SANDBOX_MODE = 'local';
+    const runtime = createSandboxRuntime(process.cwd());
+    const result = await runtime.run('node', ['--version'], 'blocked');
+    expect(result.stdout).toMatch(/^v\d+\./);
+  });
+});
