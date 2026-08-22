@@ -35,8 +35,46 @@ export interface RegisteredTool {
   execute: (input: unknown, context: ToolContext) => Promise<unknown>;
 }
 
+/**
+ * Sliding-window rate limiter for tool invocations.
+ *
+ * `rateLimitPerMinute` was declared on every tool definition and enforced
+ * nowhere, so a looping agent could call a tool without limit. The window is
+ * keyed per tool *and* per project, so one project exhausting a tool's budget
+ * cannot starve another.
+ *
+ * The clock is injectable so the behaviour is testable without waiting a
+ * minute for a window to roll.
+ */
+export class RateLimiter {
+  private readonly hits = new Map<string, number[]>();
+  constructor(private readonly clock: () => number = () => Date.now()) {}
+
+  /** Records an invocation and reports whether it is within the limit. */
+  check(key: string, limitPerMinute: number): boolean {
+    // A limit of zero or less means unlimited rather than "nothing allowed";
+    // a tool with no declared limit must not become unusable.
+    if (!Number.isFinite(limitPerMinute) || limitPerMinute <= 0) return true;
+    const now = this.clock();
+    const cutoff = now - 60_000;
+    const recent = (this.hits.get(key) ?? []).filter((at) => at > cutoff);
+    if (recent.length >= limitPerMinute) {
+      // Keep the pruned window so a refused call does not extend the block.
+      this.hits.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    this.hits.set(key, recent);
+    return true;
+  }
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
+  private readonly limiter: RateLimiter;
+  constructor(clock: () => number = () => Date.now()) {
+    this.limiter = new RateLimiter(clock);
+  }
   register(tool: RegisteredTool): void {
     this.tools.set(tool.definition.name, tool);
   }
@@ -51,6 +89,10 @@ export class ToolRegistry {
     if (!tool) throw new Error(`tool_not_found:${name}`);
     const errors = validateJsonSchema(tool.definition.inputSchema, input);
     if (errors.length) throw new Error(`tool_input_invalid:${errors.join(',')}`);
+    // Checked after schema validation so a malformed call is reported as
+    // malformed rather than consuming budget and being reported as throttled.
+    if (!this.limiter.check(`${name}:${context.projectId}`, tool.definition.rateLimitPerMinute))
+      throw new Error(`tool_rate_limited:${name}`);
     let timeout: NodeJS.Timeout | undefined;
     try {
       const deadline = new Promise<never>((_, reject) => {
@@ -105,8 +147,11 @@ const toolBase = (
   enabled: true,
 });
 
-export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
-  const registry = new ToolRegistry();
+export function createBuiltinTools(
+  store: JsonStateStore,
+  clock: () => number = () => Date.now(),
+): ToolRegistry {
+  const registry = new ToolRegistry(clock);
   const runtimes = new Map<string, SandboxRuntime>();
   const sandbox = (workspaceRoot: string): SandboxRuntime => {
     let runtime = runtimes.get(workspaceRoot);
