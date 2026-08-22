@@ -1,6 +1,6 @@
 {
   "name": "bot-buffet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Samuel Abraham's Bot Buffet: a model-agnostic, user-controlled AI agent control plane.",
   "author": "Samuel Abraham",
