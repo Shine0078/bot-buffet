@@ -3349,11 +3349,30 @@ export function createApi(deps: ApiDeps) {
           'admin',
           'mcp-server',
         );
-        const saved = await deps.store.put({
-          ...serverEntity,
-          enabled: mcpMatch[2] === 'enable',
-          version: serverEntity.version,
-        } as MCPServer);
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== serverEntity.version)
+          throw new Error('mcp_server_version_required');
+        const saved = await deps.store.putIfVersion(
+          {
+            ...serverEntity,
+            enabled: mcpMatch[2] === 'enable',
+            version: serverEntity.version,
+          } as MCPServer,
+          expectedVersion,
+        );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: serverEntity.scope,
+          actorId,
+          action: `mcp.${mcpMatch[2]}`,
+          resourceType: 'mcp-server',
+          resourceId: serverEntity.id,
+          risk: 'high',
+          decision: 'executed',
+          metadata: { enabled: saved.enabled, version: saved.version },
+        });
         return send(res, 200, saved);
       }
       if (path === '/api/v1/schedules' && req.method === 'GET')

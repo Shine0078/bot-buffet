@@ -1202,6 +1202,63 @@ describe('API boundary controls', () => {
     });
     expect(deletedResponse.status).toBe(204);
   });
+  it('uses CAS and audit records for MCP enable and disable transitions', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/mcp-servers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Local MCP', transport: 'stdio' }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as {
+      id: string;
+      version: number;
+      enabled: boolean;
+    };
+    expect(created.enabled).toBe(false);
+
+    const stale = await fetch(`${base}/api/v1/mcp-servers/${created.id}/enable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version + 1 }),
+    });
+    expect(stale.status).toBe(400);
+
+    const enabledResponse = await fetch(`${base}/api/v1/mcp-servers/${created.id}/enable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version }),
+    });
+    expect(enabledResponse.status).toBe(200);
+    const enabled = (await enabledResponse.json()) as { version: number; enabled: boolean };
+    expect(enabled).toMatchObject({ version: created.version + 1, enabled: true });
+
+    const staleDisable = await fetch(`${base}/api/v1/mcp-servers/${created.id}/disable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version }),
+    });
+    expect(staleDisable.status).toBe(400);
+
+    const disabledResponse = await fetch(`${base}/api/v1/mcp-servers/${created.id}/disable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: enabled.version }),
+    });
+    expect(disabledResponse.status).toBe(200);
+    await expect(disabledResponse.json()).resolves.toMatchObject({ enabled: false });
+
+    const auditResponse = await fetch(`${base}/api/v1/audit?action=mcp.enable`);
+    expect(auditResponse.status).toBe(200);
+    await expect(auditResponse.json()).resolves.toEqual([
+      expect.objectContaining({
+        action: 'mcp.enable',
+        resourceId: created.id,
+        risk: 'high',
+        decision: 'executed',
+      }),
+    ]);
+  });
   it('records an environment credential reference without persisting or accepting its secret', async () => {
     process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN = 'env-secret-that-must-not-cross-the-api';
     // A public endpoint paired with an arbitrary environment variable is an
