@@ -1,6 +1,6 @@
 # Product requirements
 
-Bot Buffet is a model-agnostic, user-controlled agent harness. The harness—not a provider—owns durable run state, context budgets, tool contracts, permissions, approvals, sandbox policy, verification, checkpoints, replay, and redacted observability.
+Samuel Abraham's Bot Buffet is a model-agnostic, user-controlled agent harness. The harness—not a provider—owns durable run state, context budgets, tool contracts, permissions, approvals, sandbox policy, verification, checkpoints, replay, and redacted observability.
 
 The local profile supports multiple workspaces/projects, local model discovery, offline-only routing, typed filesystem tools, durable JSON state, an accessible Office UI, and portable backup/restore. Production profiles must replace the local adapters with a relational/object/queue/vector stack and an edge identity provider before exposure to multiple users.
 

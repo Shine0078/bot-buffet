@@ -14,6 +14,9 @@ describe('Office UI accessibility contract', () => {
     expect(html).toContain('<main id="main"');
     expect(html).toContain('aria-label="Primary navigation"');
     expect(html).toContain('<table>');
+    expect(html).toContain('Samuel Abraham');
+    expect(html).toContain('Bot Buffet');
+    expect(html).not.toContain('Munder Difflin');
   });
 
   it('makes generated agent desks keyboard-operable and safely labelled', () => {

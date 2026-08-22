@@ -38,7 +38,7 @@ async function bootstrap(): Promise<void> {
     ownerId: 'local-user',
     scope: org.id,
     organizationId: org.id,
-    name: 'Bot Buffet Workspace',
+    name: "Samuel Abraham's Bot Buffet",
     slug: 'bot-buffet',
     offlineMode: process.env.BOT_BUFFET_OFFLINE === 'true',
   }) as Workspace;
@@ -206,7 +206,7 @@ const server = createApi({
 });
 const port = Number(process.env.PORT ?? 8787);
 server.listen(port, '127.0.0.1', () =>
-  console.log(`Bot Buffet listening on http://127.0.0.1:${port}`),
+  console.log(`Samuel Abraham — Bot Buffet listening on http://127.0.0.1:${port}`),
 );
 
 export { store, orchestrator, server };

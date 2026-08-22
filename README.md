@@ -1,6 +1,6 @@
-# Bot Buffet
+# Samuel Abraham — Bot Buffet
 
-Bot Buffet is a model-agnostic agent control plane: the harness owns state, tools, permissions, approvals, isolation, verification, routing, and recovery while models remain replaceable.
+Samuel Abraham's Bot Buffet is a model-agnostic agent control plane: the harness owns state, tools, permissions, approvals, isolation, verification, routing, and recovery while models remain replaceable.
 
 ## Quick start
 

@@ -57,4 +57,5 @@
 - Office run pass: inspector Start run and scoped chat now post a run and agent memory through the control plane, and Settings is a real table view of workspace/project/auth state.
 - Office add pass: the table Add button now creates memory notes, local model registrations, monthly budgets, and workflow graphs for the active project, with browser coverage for each path.
 - Office run-control pass: the inspector now pauses, resumes, and stops the selected agent's active run through the existing run-command API, with browser coverage for pause and stop.
+- Brand pass: the product is now Samuel Abraham's Bot Buffet in the Office chrome, README, package metadata, and bootstrap workspace name. No Munder Difflin branding remains in the Bot Buffet UI.
 - Workspace path pass: agent scratch now lives under the durable data directory so a read-only container root does not fail startup.

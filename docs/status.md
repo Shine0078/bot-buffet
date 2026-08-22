@@ -1,4 +1,4 @@
-# Bot Buffet status ledger
+# Samuel Abraham — Bot Buffet status ledger
 
 Updated 2026-08-21. This is the source of truth for implementation evidence.
 
