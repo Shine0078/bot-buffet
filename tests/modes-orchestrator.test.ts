@@ -7,120 +7,14 @@ import { ModelRouter } from '../src/router.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { createStore } from '../src/store.js';
 import { createBuiltinTools } from '../src/tools.js';
-import {
-  entity,
-  type Agent,
-  type AuditEvent,
-  type Model,
-  type Project,
-  type Run,
-  type RunMode,
-  type Task,
-} from '../src/types.js';
+import type { AuditEvent, Run, RunMode } from '../src/types.js';
+import { fixtures } from './helpers/orchestrator-fixtures.js';
 
 /**
  * Wiring evidence for run modes. The unit suite proves the decision function;
  * this proves the orchestrator actually consults it, which is the part that
  * was missing when the mode was declared but never read.
  */
-
-function fixtures(mode: RunMode) {
-  const project = entity({
-    kind: 'project',
-    ownerId: 'u',
-    scope: 'w',
-    workspaceId: 'w',
-    name: 'P',
-    slug: 'p',
-    archived: false,
-  }) as Project;
-  const agent = entity({
-    kind: 'agent',
-    ownerId: 'u',
-    scope: project.id,
-    projectId: project.id,
-    environmentId: 'e',
-    status: 'idle',
-    profile: {
-      name: 'A',
-      mission: 'test',
-      systemInstructions: 'test',
-      projectRules: [],
-      skills: [],
-      allowedModels: ['m'],
-      fallbackModelIds: [],
-      // Every built-in tool is permitted, so any refusal below comes from the
-      // mode rather than from the profile's tool allowlist.
-      allowedToolIds: ['fs.read', 'fs.write', 'shell.run'],
-      allowedPluginIds: [],
-      allowedPaths: ['.'],
-      protectedPaths: ['.env'],
-      network: 'blocked',
-      environmentKeys: [],
-      maxSteps: 2,
-      timeLimitMs: 5000,
-      tokenLimit: 1000,
-      costLimitCents: 0,
-      concurrencyLimit: 1,
-      approvalPolicy: {
-        requiredRisks: ['critical'],
-        autoApproveReversible: false,
-        expiryMs: 1000,
-        delegates: [],
-      },
-      verificationPolicy: { deterministic: [], inferential: [], requireEvidence: false },
-      memoryPolicy: {
-        readableScopes: ['project'],
-        writableScopes: [],
-        requireApproval: true,
-        retentionDays: 1,
-      },
-      outputFormat: 'text',
-      escalationPolicy: 'pause',
-      mode,
-      version: 1,
-      changelog: [],
-    },
-  }) as Agent;
-  const model = entity({
-    kind: 'model',
-    ownerId: 'u',
-    scope: project.id,
-    providerId: 'p',
-    name: 'm',
-    modelName: 'm',
-    local: true,
-    capabilities: {
-      streaming: true,
-      toolCalling: true,
-      structuredOutput: true,
-      vision: false,
-      audio: false,
-      embeddings: false,
-      reranking: false,
-      contextTokens: 8192,
-      outputTokens: 2048,
-    },
-    inputCostPerMillionCents: 0,
-    outputCostPerMillionCents: 0,
-    available: true,
-  }) as Model;
-  const task = entity({
-    kind: 'task',
-    ownerId: 'u',
-    scope: project.id,
-    projectId: project.id,
-    environmentId: 'e',
-    title: 'repo',
-    description: 'repository',
-    acceptanceCriteria: ['repository'],
-    status: 'ready',
-    priority: 1,
-    dependencyIds: [],
-    labels: [],
-  }) as Task;
-  return { project, agent, model, task };
-}
 
 async function runInMode(mode: RunMode) {
   const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-mode-'));
