@@ -317,6 +317,129 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('validates citations against source state and builds a research brief', async () => {
+    const base = await start();
+    const project = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Research project' }),
+      })
+    ).json()) as { id: string };
+    const good = (await (
+      await fetch(`${base}/api/v1/sources`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: project.id,
+          uri: 'https://example.test/a',
+          status: 'available',
+          retrievedAt: '2026-08-20T00:00:00.000Z',
+          contentHash: 'a'.repeat(64),
+        }),
+      })
+    ).json()) as { id: string; status: string };
+
+    const created = await fetch(`${base}/api/v1/citations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sourceId: good.id,
+        claim: 'The harness owns the agent loop',
+        // A caller claiming verification must not be believed.
+        verified: true,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const citation = (await created.json()) as {
+      verified: boolean;
+      validation: { valid: boolean };
+    };
+    expect(citation.validation.valid).toBe(good.status === 'available');
+    expect(citation.verified).toBe(citation.validation.valid);
+
+    const emptyClaim = await fetch(`${base}/api/v1/citations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sourceId: good.id, claim: '   ' }),
+    });
+    expect(emptyClaim.status).toBe(400);
+
+    const orphan = await fetch(`${base}/api/v1/citations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sourceId: 'no-such-source', claim: 'unbacked claim' }),
+    });
+    expect(orphan.status).toBe(400);
+
+    const brief = await fetch(`${base}/api/v1/projects/${project.id}/research-brief`);
+    expect(brief.status).toBe(200);
+    await expect(brief.json()).resolves.toMatchObject({
+      projectId: project.id,
+      totalSources: 1,
+    });
+
+    const listed = (await (await fetch(`${base}/api/v1/citations`)).json()) as Array<{
+      validation: { valid: boolean };
+    }>;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.validation).toBeDefined();
+  });
+
+  it('retrieves source content over the pinned transport and refuses unsafe endpoints', async () => {
+    const base = await start();
+    const project = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Retrieval project' }),
+      })
+    ).json()) as { id: string };
+
+    // A source pointing at a loopback address must be refused, not silently fetched.
+    const unsafe = await fetch(`${base}/api/v1/sources`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, uri: 'http://127.0.0.1:9/secret' }),
+    });
+    expect(unsafe.status).toBe(400);
+
+    const source = (await (
+      await fetch(`${base}/api/v1/sources`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: project.id, uri: 'https://example.test/paper' }),
+      })
+    ).json()) as { id: string; status: string };
+    expect(source.status).toBe('pending');
+
+    // A claim on an unretrieved source cannot be verified.
+    const premature = (await (
+      await fetch(`${base}/api/v1/citations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sourceId: source.id, claim: 'premature claim' }),
+      })
+    ).json()) as { verified: boolean; validation: { reasons: string[] } };
+    expect(premature.verified).toBe(false);
+    expect(premature.validation.reasons).toContain('citation_source_pending');
+
+    // Retrieval of an unreachable host records inaccessible rather than inventing success.
+    const retrieved = await fetch(`${base}/api/v1/sources/${source.id}/retrieve`, {
+      method: 'POST',
+    });
+    expect(retrieved.status).toBe(200);
+    const body = (await retrieved.json()) as { status: string; contentHash?: string };
+    expect(body.status).toBe('inaccessible');
+    expect(body.contentHash).toBeUndefined();
+
+    const brief = (await (
+      await fetch(`${base}/api/v1/projects/${project.id}/research-brief`)
+    ).json()) as { inaccessibleSources: string[]; usableSources: number };
+    expect(brief.inaccessibleSources).toContain(source.id);
+    expect(brief.usableSources).toBe(0);
+  });
+
   it('exposes scrapeable metrics and OTLP run traces', async () => {
     const base = await start();
     const metrics = await fetch(`${base}/metrics`);

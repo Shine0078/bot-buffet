@@ -12,6 +12,7 @@ import {
   Budget,
   BudgetPeriod,
   Checkpoint,
+  Citation,
   CostRecord,
   Credential,
   Entity,
@@ -69,6 +70,7 @@ import { CostGrouping, costReport, forecastCents } from './reporting.js';
 import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
 import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
 import { renderMetrics, runToOtlp } from './telemetry.js';
+import { researchBrief, validateCitations } from './research.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1692,6 +1694,107 @@ export function createApi(deps: ApiDeps) {
           warnings: decision.warnings,
           budgets: decision.statuses,
         });
+      }
+      if (path === '/api/v1/citations' && req.method === 'GET') {
+        const citations = await visible(
+          actorId,
+          await deps.store.list<Citation>((x) => x.kind === 'citation'),
+        );
+        const sources = await visible(
+          actorId,
+          await deps.store.list<Source>((x) => x.kind === 'source'),
+        );
+        const validations = validateCitations(citations, sources);
+        const byId = new Map(validations.map((item) => [item.citationId, item]));
+        return send(
+          res,
+          200,
+          citations.map((citation) => ({ ...citation, validation: byId.get(citation.id) })),
+        );
+      }
+      if (path === '/api/v1/citations' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const source = await required(
+          actorId,
+          await deps.store.get<Source>(String(body.sourceId)),
+          'read',
+          'source',
+        );
+        const claim = String(body.claim ?? '').slice(0, 2000);
+        if (!claim.trim()) throw new Error('citation_claim_required');
+        const citation = entity({
+          kind: 'citation',
+          ownerId: actorId,
+          scope: source.projectId,
+          sourceId: source.id,
+          memoryId: body.memoryId ? String(body.memoryId) : undefined,
+          artifactId: body.artifactId ? String(body.artifactId) : undefined,
+          claim,
+          locator: body.locator ? String(body.locator).slice(0, 300) : undefined,
+          // Verification is decided by the harness, never asserted by the caller.
+          verified: false,
+        }) as Citation;
+        const [validation] = validateCitations([citation], [source]);
+        citation.verified = validation?.valid === true;
+        await deps.store.insert(citation);
+        return send(res, 201, { ...citation, validation });
+      }
+      const retrieveMatch = path.match(/^\/api\/v1\/sources\/([^/]+)\/retrieve$/);
+      if (retrieveMatch && req.method === 'POST') {
+        const source = await required(
+          actorId,
+          await deps.store.get<Source>(retrieveMatch[1]!),
+          'write',
+          'source',
+        );
+        // Retrieval uses the same SSRF-hardened, DNS-pinned transport as provider calls.
+        let status: Source['status'] = 'inaccessible';
+        let contentHash: string | undefined;
+        let retrievedAt: string | undefined;
+        try {
+          assertSafeEndpoint(source.uri);
+          const response = await fetchPinned(source.uri, { method: 'GET' });
+          if (response.ok) {
+            const body = (await response.text()).slice(0, 5_000_000);
+            contentHash = sha256(body);
+            retrievedAt = now();
+            status = 'available';
+          }
+        } catch {
+          status = 'inaccessible';
+        }
+        const updated = await deps.store.put({ ...source, status, contentHash, retrievedAt });
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: source.projectId,
+          actorId,
+          action: 'source.retrieved',
+          resourceType: 'source',
+          resourceId: source.id,
+          risk: 'low',
+          decision: status === 'available' ? 'executed' : 'denied',
+          metadata: { status, hashed: Boolean(contentHash) },
+        });
+        return send(res, 200, updated);
+      }
+      const briefMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/research-brief$/);
+      if (briefMatch && req.method === 'GET') {
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(briefMatch[1]!),
+          'read',
+          'project',
+        );
+        const sources = await visible(
+          actorId,
+          await deps.store.list<Source>((x) => x.kind === 'source'),
+        );
+        const citations = await visible(
+          actorId,
+          await deps.store.list<Citation>((x) => x.kind === 'citation'),
+        );
+        return send(res, 200, researchBrief(project.id, sources, citations));
       }
       if (path === '/api/v1/artifacts' && req.method === 'GET') {
         const projectId = url.searchParams.get('projectId');

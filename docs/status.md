@@ -71,6 +71,8 @@ The profile-audit working-tree diff was reviewed in scan `be142bc7-f697-411d-a7f
 
 - Cross-tenant and project isolation now has direct evidence in `tests/isolation.test.ts`: cross-workspace reads and writes are denied, project-scoped record filtering returns only the caller's tenant data, an actor with no membership is denied entirely, and role actions are enforced rather than granting blanket workspace access.
 
+- The research workspace is now enforced rather than declarative. `POST /api/v1/sources/:id/retrieve` fetches content over the same SSRF-hardened, DNS-pinned transport used for providers, records a SHA-256 content hash and retrieval timestamp on success, and durably marks the source `inaccessible` on failure instead of inventing analysis. Citation verification is decided by the harness, never asserted by the caller: `POST /api/v1/citations` rejects empty claims and unknown sources, and marks `verified` only when the backing source is available, retrieved, and hashed. `GET /api/v1/projects/:id/research-brief` reports usable/pending/inaccessible source counts, unsupported claims, and contradictions detected by negation or divergent numeric values across claims about the same subject.
+
 ## Completion assessment (2026-08-21)
 
 Measured against the master prompt's acceptance criteria, not against effort spent.
