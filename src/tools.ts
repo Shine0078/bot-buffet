@@ -1,6 +1,7 @@
 import { basename, relative, sep } from 'node:path';
 import { JsonStateStore } from './store.js';
-import { ToolDefinition, ID, JsonSchema } from './types.js';
+import { entity, MemoryItem, MemoryPolicy, ToolDefinition, ID, JsonSchema } from './types.js';
+import { canWriteMemory } from './memoryScope.js';
 import { createSandboxRuntime, SandboxRuntime } from './sandbox.js';
 import {
   assertWorkspacePath,
@@ -14,10 +15,16 @@ export interface ToolContext {
   actorId: ID;
   runId: ID;
   projectId: ID;
+  /** Identities a memory namespace is resolved against, so an agent can only
+   *  record memory against the run it is actually executing. */
+  agentId?: ID;
+  taskId?: ID;
   workspaceRoot: string;
   allowedPaths: string[];
   protectedPaths: string[];
   network: 'blocked' | 'allowlist' | 'open';
+  /** The agent's memory policy, which decides what it may record. */
+  memoryPolicy?: MemoryPolicy;
   signal?: AbortSignal;
 }
 export interface RegisteredTool {
@@ -124,6 +131,97 @@ export function createBuiltinTools(store: JsonStateStore): ToolRegistry {
         basename(relativePath).startsWith('.env')
       );
     })();
+  registry.register({
+    definition: toolBase(
+      'memory.write',
+      'Record a durable note in a memory namespace this agent may write to.',
+      'low',
+      {
+        type: 'object',
+        properties: {
+          namespace: {
+            type: 'string',
+            enum: ['project', 'agent', 'task', 'session'],
+          },
+          text: { type: 'string' },
+        },
+        required: ['namespace', 'text'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          namespace: { type: 'string' },
+          namespaceId: { type: 'string' },
+          approved: { type: 'boolean' },
+        },
+        required: ['id', 'namespace', 'namespaceId', 'approved'],
+        additionalProperties: false,
+      },
+    ),
+    execute: async (input, context) => {
+      const data = input as { namespace: MemoryItem['namespace']; text: string };
+      const policy = context.memoryPolicy;
+      // No policy means no authority. An agent invoked without one cannot
+      // write memory rather than defaulting to permitted.
+      if (!policy) throw new Error('memory_write_denied:no_policy');
+      if (!canWriteMemory(policy, data.namespace))
+        throw new Error(`memory_write_denied:namespace_not_writable:${data.namespace}`);
+
+      // The namespace identity comes from the run, never from the caller, so
+      // an agent cannot record a note against another project or agent.
+      const namespaceId = {
+        project: context.projectId,
+        agent: context.agentId,
+        task: context.taskId,
+        session: context.runId,
+      }[data.namespace as 'project' | 'agent' | 'task' | 'session'];
+      if (!namespaceId)
+        throw new Error(`memory_write_denied:namespace_unresolved:${data.namespace}`);
+
+      const text = String(data.text ?? '').slice(0, 4000);
+      if (!text.trim()) throw new Error('memory_write_denied:empty');
+
+      const memory = entity({
+        kind: 'memory',
+        ownerId: context.actorId,
+        scope: namespaceId,
+        namespace: data.namespace,
+        namespaceId,
+        text,
+        sourceIds: [],
+        // Approval before persistence: when the policy requires it the item is
+        // stored unapproved, which keeps it out of agent context until a human
+        // approves it. It is recorded either way so nothing is lost.
+        approved: !policy.requireApproval,
+        freshnessAt: new Date().toISOString(),
+      }) as MemoryItem;
+      await store.insert(memory);
+      await store.audit({
+        kind: 'audit-event',
+        ownerId: context.actorId,
+        scope: context.projectId,
+        actorId: context.actorId,
+        action: 'memory.written',
+        resourceType: 'memory',
+        resourceId: memory.id,
+        risk: 'low',
+        decision: 'allowed',
+        metadata: {
+          namespace: memory.namespace,
+          approved: memory.approved,
+          runId: context.runId,
+        },
+      });
+      return {
+        id: memory.id,
+        namespace: memory.namespace,
+        namespaceId: memory.namespaceId,
+        approved: memory.approved,
+      };
+    },
+  });
   registry.register({
     definition: toolBase(
       'filesystem.read',
