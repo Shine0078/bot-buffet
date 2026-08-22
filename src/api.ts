@@ -327,6 +327,17 @@ export function createApi(deps: ApiDeps) {
         for (const [bucketKey, bucket] of requestBuckets)
           if (nowMs - bucket.startedAt >= RATE_WINDOW_MS) requestBuckets.delete(bucketKey);
     }
+    // Health/readiness probes expose only liveness and a static status label.
+    // Keep them before actor authentication so a production Docker
+    // HEALTHCHECK can run without an OIDC bearer token.
+    if (path === '/healthz' && req.method === 'GET')
+      return send(res, 200, { status: 'ok', service: 'bot-buffet', time: now() });
+    if (path === '/readyz' && req.method === 'GET')
+      return send(res, 200, {
+        status: 'ready',
+        storage: 'durable-json',
+        auth: process.env.BOT_BUFFET_AUTH_MODE ?? 'development',
+      });
     try {
       const oauthCallback = path.match(/^\/api\/v1\/providers\/([^/]+)\/oauth\/callback$/);
       if (oauthCallback && req.method === 'GET') {
@@ -444,14 +455,6 @@ export function createApi(deps: ApiDeps) {
           );
         req.headers['x-bot-buffet-idempotency-scope'] = idempotencyScope;
       }
-      if (path === '/healthz')
-        return send(res, 200, { status: 'ok', service: 'bot-buffet', time: now() });
-      if (path === '/readyz')
-        return send(res, 200, {
-          status: 'ready',
-          storage: 'durable-json',
-          auth: process.env.BOT_BUFFET_AUTH_MODE ?? 'development',
-        });
       if (path === '/metrics' && req.method === 'GET') {
         const runs = await visible(
           actorId,

@@ -16,8 +16,11 @@ import type { AuditEvent, Plugin } from '../src/types.js';
  */
 
 const servers: Array<ReturnType<typeof createApi>> = [];
+const previousAuthMode = process.env.BOT_BUFFET_AUTH_MODE;
 
 afterEach(async () => {
+  if (previousAuthMode === undefined) delete process.env.BOT_BUFFET_AUTH_MODE;
+  else process.env.BOT_BUFFET_AUTH_MODE = previousAuthMode;
   for (const server of servers.splice(0))
     await new Promise<void>((resolve) => server.close(() => resolve()));
 });
@@ -29,7 +32,10 @@ async function start() {
     store,
     orchestrator: new EventEmitter() as unknown as Orchestrator,
     uiRoot: dir,
-    vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    vault: new CredentialVault(
+      join(dir, 'credentials.enc.json'),
+      '12345678901234567890123456789012',
+    ),
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
@@ -58,6 +64,14 @@ describe('connector API', () => {
       const response = await fetch(`${base}${path}`);
       expect(response.status, path).toBe(200);
     }
+  });
+
+  it('keeps health probes public when production auth is enabled', async () => {
+    process.env.BOT_BUFFET_AUTH_MODE = 'production';
+    const { base } = await start();
+    await expect(fetch(`${base}/healthz`)).resolves.toMatchObject({ status: 200 });
+    await expect(fetch(`${base}/readyz`)).resolves.toMatchObject({ status: 200 });
+    await expect(fetch(`${base}/api/v1/projects`)).resolves.toMatchObject({ status: 401 });
   });
 
   it('installs a connector as a disabled, allowlisted plugin that grants nothing', async () => {
