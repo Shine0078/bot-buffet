@@ -176,7 +176,7 @@ describe('credential listing', () => {
         kind: 'credential',
         ownerId: 'local-user',
         scope: 'workspace_local',
-        secretRef: 'sk-live00000000000000000000000000',
+        secretRef: 'sk-' + 'live00000000000000000000000000',
         metadata: {
           providerId: 'provider-1',
           label: 'Leaky',

@@ -273,7 +273,12 @@ export class Orchestrator extends EventEmitter {
           estimatedCostCents,
         );
         for (const warning of preflight.warnings) {
-          this.emit('run', { type: 'budget.warning', runId, budget: warning });
+          this.emit('run', {
+            type: 'budget.warning',
+            runId,
+            projectId: run.projectId,
+            budget: warning,
+          });
           await this.raiseAlert(run, 'warning', 'Budget warning', warning.budgetId, {
             budget: warning.name,
             projectedCents: warning.projectedCents,
@@ -286,7 +291,12 @@ export class Orchestrator extends EventEmitter {
             error: 'budget_exceeded',
             finishedAt: now(),
           });
-          this.emit('run', { type: 'budget.exceeded', runId, budget: preflight.blockedBy });
+          this.emit('run', {
+            type: 'budget.exceeded',
+            runId,
+            projectId: run.projectId,
+            budget: preflight.blockedBy,
+          });
           await this.raiseAlert(
             run,
             'critical',
@@ -506,7 +516,7 @@ export class Orchestrator extends EventEmitter {
               typeof output === 'string' ? output : JSON.stringify(output),
               `tool:${call.name}`,
             );
-            nextState[`tool:${call.name}`] = redactSecrets(output);
+            nextState[`tool:${call.name}`] = labeled.text;
             nextState[`tool:${call.name}:trust`] = labeled.trust;
             if (labeled.signals.length) {
               nextState[`tool:${call.name}:injection`] = labeled.signals.map(
@@ -522,11 +532,17 @@ export class Orchestrator extends EventEmitter {
               this.emit('run', {
                 type: 'injection.detected',
                 runId,
+                projectId: run.projectId,
                 tool: call.name,
                 signals: labeled.signals.map((signal) => signal.pattern),
               });
             }
-            this.emit('run', { type: 'tool.executed', runId, tool: call.name });
+            this.emit('run', {
+              type: 'tool.executed',
+              runId,
+              projectId: run.projectId,
+              tool: call.name,
+            });
           }
         }
         const verification = verifyDeterministic(agent.profile.verificationPolicy, {

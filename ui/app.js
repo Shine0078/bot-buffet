@@ -1,4 +1,6 @@
 const state = { data: null, selected: null, view: 'office' };
+let eventSource;
+let eventProjectId;
 const $ = (s) => document.querySelector(s);
 const esc = (v) =>
   String(v ?? '').replace(
@@ -20,6 +22,16 @@ async function api(path, options = {}) {
 async function load() {
   state.data = await api('/api/v1/bootstrap');
   render();
+  connectEvents();
+}
+function connectEvents() {
+  const project = selectedProject();
+  if (!project || project.id === eventProjectId) return;
+  eventSource?.close();
+  eventProjectId = project.id;
+  eventSource = new EventSource('/events?projectId=' + encodeURIComponent(project.id));
+  eventSource.onmessage = () => load();
+  eventSource.onerror = () => eventSource?.close();
 }
 function showError(message) {
   const activity = $('#activity');
@@ -389,6 +401,10 @@ document.addEventListener('keydown', (e) => {
   selectAgent(agent.dataset.agent);
 });
 $('#refresh').onclick = load;
+$('#projectSelect').onchange = () => {
+  eventProjectId = undefined;
+  connectEvents();
+};
 $('#newProject').onclick = () => createProject().catch((err) => showError(err.message));
 $('#viewAllRuns').onclick = () => switchView('runs');
 $('#tableAction').onclick = () => addScopedRecord().catch((err) => showError(err.message));
@@ -410,7 +426,6 @@ $('#chatForm').onsubmit = (e) => {
   sendChat(text).catch((err) => showError(err.message));
   $('#chatInput').value = '';
 };
-new EventSource('/events').onmessage = () => load();
 load().catch((err) => {
   const fileHint =
     location.protocol === 'file:' ? ' Open http://127.0.0.1:8787/ instead of this file.' : '';

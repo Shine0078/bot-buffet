@@ -95,6 +95,12 @@ describe('security boundaries', () => {
     );
     expect(assertSafeEndpoint('http://127.0.0.1:11434/v1', true).hostname).toBe('127.0.0.1');
     expect(() => assertSafeEndpoint('http://127.0.0.1:11434/v1')).toThrow('metadata_or_loopback');
+    expect(() => assertSafeEndpoint('https://[::ffff:127.0.0.1]/v1')).toThrow(
+      'metadata_or_loopback',
+    );
+    expect(() => assertSafeEndpoint('https://[::ffff:169.254.169.254]/v1')).toThrow(
+      'metadata_or_loopback',
+    );
   });
   it('validates typed tool schemas', () => {
     expect(

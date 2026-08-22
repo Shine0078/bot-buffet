@@ -48,13 +48,34 @@ const containsNormalized = (expected: unknown, actual: unknown): boolean => {
 };
 
 /**
- * Regex grader. The pattern comes from the dataset, not the model, and is length-bounded to
- * limit catastrophic backtracking on hostile datasets.
+ * Regex grader. The pattern comes from the dataset, not the model. Length alone
+ * does not prevent catastrophic backtracking (for example, `^(a+)+$`), so a
+ * deliberately conservative structural check rejects the constructs most
+ * commonly used to create exponential work before the synchronous RegExp API
+ * is reached.
  */
+export const isSafeRegexPattern = (pattern: string): boolean => {
+  if (pattern.length > 512) return false;
+  // Backreferences and lookarounds make execution cost/data dependencies hard
+  // to bound and are unnecessary for evaluation matching.
+  if (/\\(?:[1-9]\d*|k<[^>]+>)/u.test(pattern) || /\(\?[=!<]/u.test(pattern)) return false;
+  // A quantified group/character class followed by another quantifier is the
+  // classic nested-quantifier shape (`(a+)+`, `(?:a{1,3})*`).
+  if (/(?:\([^()]*[+*{][^()]*\)|\[[^\]]*\][+*?])\s*(?:[+*?]|\{\d)/u.test(pattern)) return false;
+  // Alternation of overlapping branches under a quantifier (`(a|aa)+`) also
+  // causes unbounded backtracking as the input grows.
+  if (/\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d)/u.test(pattern)) return false;
+  return true;
+};
+
 const matchesRegex = (expected: unknown, actual: unknown, evidence: string[]): boolean => {
   if (typeof expected !== 'string' || typeof actual !== 'string') return false;
   if (expected.length > 512) {
     evidence.push('grader:regex-too-long');
+    return false;
+  }
+  if (!isSafeRegexPattern(expected)) {
+    evidence.push('grader:regex-unsafe');
     return false;
   }
   try {

@@ -25,7 +25,8 @@ afterEach(() => {
   else process.env.BOT_BUFFET_MASTER_KEY = saved.master;
 });
 
-const vaultPath = async () => join(await mkdtemp(join(tmpdir(), 'bot-buffet-vault-')), 'creds.json');
+const vaultPath = async () =>
+  join(await mkdtemp(join(tmpdir(), 'bot-buffet-vault-')), 'creds.json');
 
 const STRONG_KEY = 'a-master-key-of-at-least-32-characters-long';
 
@@ -145,9 +146,7 @@ describe('production key requirements', () => {
   it('refuses to start with no master key', async () => {
     process.env.BOT_BUFFET_AUTH_MODE = 'production';
     const path = await vaultPath();
-    expect(() => new CredentialVault(path, undefined)).toThrow(
-      /strong_master_key_required/,
-    );
+    expect(() => new CredentialVault(path, undefined)).toThrow(/strong_master_key_required/);
   });
 
   it('refuses a key that is too short', async () => {

@@ -78,6 +78,14 @@ describe('deterministic evaluation engine', () => {
     expect(results[3]?.evidence.join('|')).toContain('grader:schema-failed');
   });
 
+  it('rejects nested-quantifier regexes before synchronous backtracking', () => {
+    const results = evaluateCases([evaluationCase('nested', '^(a+)+$', ['regex'])], {
+      nested: 'a'.repeat(100) + '!',
+    });
+    expect(results[0]?.passed).toBe(false);
+    expect(results[0]?.evidence).toContain('grader:regex-unsafe');
+  });
+
   it('uses a separated judge and fails closed when the judge misbehaves', () => {
     const results = evaluateCases(
       [

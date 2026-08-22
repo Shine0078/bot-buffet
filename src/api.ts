@@ -52,6 +52,7 @@ import {
   localDiscoveryCandidates,
   LocalDiscoveryResult,
   resolveProviderToken,
+  validateProviderEnvironmentCredential,
 } from './providers.js';
 import { assertSafeEndpoint, assertWorkspacePath, redactSecrets, fingerprint } from './security.js';
 import { CredentialVault } from './secrets.js';
@@ -192,12 +193,16 @@ export function createApi(deps: ApiDeps) {
     const run = safeEvent.run as Record<string, unknown> | undefined;
     const approval = safeEvent.approval as Record<string, unknown> | undefined;
     const eventProjectId = String(run?.projectId ?? approval?.scope ?? safeEvent.projectId ?? '');
+    // Events without an authenticated project scope are not routable. A
+    // wildcard here would turn a tenant-neutral operational event into a
+    // cross-project data leak through every matching webhook.
+    if (!eventProjectId) return;
     const webhooks = await deps.store.list<Webhook>(
       (candidate) =>
         candidate.kind === 'webhook' &&
         candidate.enabled &&
         candidate.events.includes(eventType) &&
-        (!eventProjectId || candidate.projectId === eventProjectId),
+        candidate.projectId === eventProjectId,
     );
     for (const webhook of webhooks) {
       const secret = deps.vault.getSync(`webhook:${webhook.id}`);
@@ -271,9 +276,10 @@ export function createApi(deps: ApiDeps) {
     const run = safeEvent.run as Record<string, unknown> | undefined;
     const approval = safeEvent.approval as Record<string, unknown> | undefined;
     const eventProjectId = String(run?.projectId ?? approval?.scope ?? safeEvent.projectId ?? '');
+    if (!eventProjectId) return;
     const data = `data: ${JSON.stringify(safeEvent)}\n\n`;
     for (const subscriber of subscribers)
-      if (!subscriber.projectId || !eventProjectId || subscriber.projectId === eventProjectId)
+      if (subscriber.projectId && subscriber.projectId === eventProjectId)
         try {
           subscriber.res.write(data);
         } catch {
@@ -866,8 +872,7 @@ export function createApi(deps: ApiDeps) {
       }
       if (path === '/events' && req.method === 'GET') {
         const projectId = url.searchParams.get('projectId') ?? undefined;
-        if (process.env.BOT_BUFFET_AUTH_MODE === 'production' && !projectId)
-          return send(res, 400, { code: 'project_scope_required' });
+        if (!projectId) return send(res, 400, { code: 'project_scope_required' });
         if (projectId)
           await required(actorId, await deps.store.get<Project>(projectId), 'read', 'project');
         if (subscribers.size >= 100) return send(res, 429, { code: 'sse_capacity_reached' });
@@ -1516,8 +1521,12 @@ export function createApi(deps: ApiDeps) {
         const authType = String(body.authType ?? 'api-key');
         if (!['api-key', 'env'].includes(authType)) throw new Error('provider_auth_type_invalid');
         const environmentVariable = String(body.environmentVariable ?? '');
-        if (authType === 'env' && !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(environmentVariable))
-          throw new Error('provider_environment_variable_invalid');
+        if (authType === 'env')
+          validateProviderEnvironmentCredential(
+            providerKind,
+            String(body.endpoint ?? 'http://127.0.0.1:11434/v1'),
+            environmentVariable,
+          );
         if (authType === 'env' && body.token !== undefined)
           throw new Error('provider_environment_secret_must_not_be_submitted');
         assertSafeEndpoint(

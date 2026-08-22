@@ -223,10 +223,24 @@ const privateIpv4 = (host: string): boolean => {
     (parts[0]! === 192 && parts[1]! === 168)
   );
 };
+const mappedIpv4 = (host: string): string | undefined => {
+  const match = /^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/iu.exec(host);
+  if (!match) return undefined;
+  const high = Number.parseInt(match[1]!, 16);
+  const low = Number.parseInt(match[2]!, 16);
+  return `${high >>> 8}.${high & 255}.${low >>> 8}.${low & 255}`;
+};
 const privateHost = (host: string): boolean => {
   const normalized = normalizeHost(host);
   if (localHosts.has(normalized) || privateIpv4(normalized)) return true;
-  if (isIP(normalized) === 6)
+  if (isIP(normalized) === 6) {
+    // IPv4-mapped/compatible IPv6 literals are still IPv4 destinations. A
+    // check that only recognises ::1 and RFC4193 prefixes lets
+    // ::ffff:127.0.0.1 and ::ffff:169.254.169.254 bypass the SSRF guard.
+    const dottedTail = normalized.slice(normalized.lastIndexOf(':') + 1);
+    if (privateIpv4(dottedTail)) return true;
+    const embeddedIpv4 = mappedIpv4(normalized);
+    if (embeddedIpv4 && privateIpv4(embeddedIpv4)) return true;
     return (
       normalized === '::1' ||
       normalized.startsWith('fc') ||
@@ -236,6 +250,7 @@ const privateHost = (host: string): boolean => {
       normalized.startsWith('fea') ||
       normalized.startsWith('feb')
     );
+  }
   return false;
 };
 

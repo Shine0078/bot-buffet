@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   createSandboxRuntime,
   dockerRunArgs,
   isDigestPinned,
+  MAX_FILE_READ_BYTES,
   resolveSandboxImage,
   sandboxEnvironment,
 } from '../src/sandbox.js';
@@ -51,6 +54,20 @@ describe('sandbox runtime policy', () => {
     process.env.BOT_BUFFET_AUTH_MODE = 'development';
     process.env.BOT_BUFFET_SANDBOX_MODE = 'local';
     expect(createSandboxRuntime('C:/workspace/project').mode).toBe('local');
+  });
+
+  it('rejects oversized local reads before allocating unbounded content', async () => {
+    const dir = await mkdtemp(join(process.cwd(), '.sandbox-read-'));
+    try {
+      await writeFile(join(dir, 'large.bin'), Buffer.alloc(MAX_FILE_READ_BYTES + 1));
+      process.env.BOT_BUFFET_AUTH_MODE = 'development';
+      process.env.BOT_BUFFET_SANDBOX_MODE = 'local';
+      await expect(createSandboxRuntime(dir).readFile('large.bin')).rejects.toThrow(
+        'sandbox_read_too_large',
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

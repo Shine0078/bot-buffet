@@ -4,8 +4,43 @@ Updated 2026-08-22. This is the source of truth for implementation evidence.
 
 ## 2026-08-22 session
 
-The container gate is closed. Docker Desktop on this machine was failing to
-start at all: its Inference manager could not remove a stale
+### Security-hardening verification update
+
+The initial repository-wide Codex Security scan was sealed before this pass and
+reported seven high-confidence findings (one critical, three high, three
+medium). The source fixes below were then implemented and covered by new
+regressions:
+
+- environment-backed public providers now require exact operator endpoint
+  allowlists; production additionally requires exact variable allowlists, and
+  control-plane/cloud credential names are rejected;
+- unscoped SSE/webhook events fail closed, and budget/injection/tool events carry
+  their project scope;
+- IPv4-mapped and IPv4-compatible IPv6 literals are treated as private/metadata
+  destinations;
+- tool output is stored in the fenced untrusted representation before it can
+  re-enter model context;
+- local and Docker filesystem reads are bounded to 1 MiB, with descriptor-based
+  local reads and no-follow flags where the host supports them;
+- evaluation regexes reject nested quantifiers, backreferences, and lookarounds
+  before the synchronous engine runs.
+
+Evidence after the fixes: `npm run verify` (61 files, 584 tests),
+`npm run preflight`, `npm run audit`, `npm run security:scan`, `npm run sbom`,
+`npm run provenance`, `npm run smoke`, `npm run restore:drill`, a Docker image
+build, a published-port container health/bootstrap check, and
+`BOT_BUFFET_REQUIRE_DOCKER_TESTS=1 npm test -- --run tests/sandbox-docker.integration.test.ts`
+(13 tests) all passed. The initial sealed scan artifacts remain the pre-fix
+baseline at `C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\56be5fb499ec013a766b86de6ae40094e6aaae8f_20260822T084905Z_bzkguj9s`;
+the post-fix local gates above are the current implementation evidence.
+
+Remote Desktop Commander inspection of the requested desktop-app download
+could not run because the only configured device (`AIONIX`) was offline. The
+read-only local review and its scope caveat are recorded in the dedicated
+upstream-review document under `docs/`; no unrelated remote files were modified.
+
+Earlier in this session Docker Desktop was failing to start: its Inference
+manager could not remove a stale
 `AppData/Local/Docker/run/dockerInference` socket whose reparse data was
 corrupt, so the engine never came up. Per-file deletion is impossible for those
 entries, so the socket directory was rotated aside and the optional Docker AI
@@ -81,12 +116,13 @@ broken: agents have no plugin invocation path yet, so there is nothing to
 constrain. It is recorded here rather than quietly enforced against a path that
 does not exist.
 
-Suite: 451 tests across 52 files, all passing, with `verify` covering format,
+Suite: 584 tests across 61 files, all passing, with `verify` covering format,
 lint, types, tests, build, and the brand gate. Coverage thresholds are ratcheted
 to the measured figures so a regression fails rather than eroding quietly.
 
 Still owner gates: staging and production deployment, real provider-account
-integration tests, off-host backup custody, and a production rollback drill.
+integration tests, off-host backup custody, signed provenance/attestation, and
+a production rollback drill.
 
 ## Delivered locally
 
@@ -180,24 +216,24 @@ After adding the bounded 10-second webhook request abort and rejection guard, th
 
 Measured against the master prompt's acceptance criteria, not against effort spent.
 
-| Area                                                       | State                                       | Evidence                                                                       |
-| ---------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| Control plane, entities, audit chain                       | Complete                                    | 162 tests, audit chain verification, cross-tenant isolation suite              |
-| Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete                                    | `tests/orchestrator.test.ts`                                                   |
-| Local model registry and offline enforcement               | Complete                                    | discovery/registration routes, offline-only contracts                          |
-| Online provider adapters                                   | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3                                |
-| Routing, budgets, cost/usage reporting                     | Complete                                    | `src/router.ts`, `src/budgets.ts`, `src/reporting.ts`                          |
-| Tools, permissions, approvals, audit                       | Complete                                    | typed contracts, CAS approvals, threshold policy tests, injection labeling     |
-| Sandboxing                                                 | Boundaries verified; kernel escape unproven | adversarial traversal/symlink/injection suite; Docker daemon unavailable       |
-| Memory, context budgeting, compaction                      | Complete                                    | context budgeting plus restart/compaction/failure durability evidence          |
-| Workflows and artifacts                                    | Complete                                    | DAG validation/scheduling, scanned artifact registry, manifests                |
-| Office UI and accessible tables                            | Complete                                    | browser-verified views, keyboard focus, mobile layout, contrast fixes          |
-| Browser and axe accessibility tests                        | Complete                                    | `tests/browser.test.ts`: Playwright + axe WCAG2 A/AA, zero violations          |
-| Observability                                              | Complete locally                            | OTLP run traces, `/metrics`, summary/usage/alerts endpoints                    |
-| Evaluations                                                | Complete                                    | 6 graders, separated judge, golden baseline + audited release gate             |
-| CI/CD                                                      | Complete locally                            | format, types, tests, lint, audit, secret scan, build, smoke, SBOM, provenance |
-| Deployment, backups, rollback                              | Restore drill verified; deploy unverified   | `npm run restore:drill` destroys and restores state in CI; no staging deploy   |
-| Documentation                                              | Complete for implemented surface            | 29 documents kept in sync per commit                                           |
+| Area                                                       | State                                       | Evidence                                                                            |
+| ---------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Control plane, entities, audit chain                       | Complete                                    | 162 tests, audit chain verification, cross-tenant isolation suite                   |
+| Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete                                    | `tests/orchestrator.test.ts`                                                        |
+| Local model registry and offline enforcement               | Complete                                    | discovery/registration routes, offline-only contracts                               |
+| Online provider adapters                                   | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3                                     |
+| Routing, budgets, cost/usage reporting                     | Complete                                    | `src/router.ts`, `src/budgets.ts`, `src/reporting.ts`                               |
+| Tools, permissions, approvals, audit                       | Complete                                    | typed contracts, CAS approvals, threshold policy tests, injection labeling          |
+| Sandboxing                                                 | Boundaries verified; kernel escape unproven | adversarial traversal/symlink/injection suite; live Docker daemon integration suite |
+| Memory, context budgeting, compaction                      | Complete                                    | context budgeting plus restart/compaction/failure durability evidence               |
+| Workflows and artifacts                                    | Complete                                    | DAG validation/scheduling, scanned artifact registry, manifests                     |
+| Office UI and accessible tables                            | Complete                                    | browser-verified views, keyboard focus, mobile layout, contrast fixes               |
+| Browser and axe accessibility tests                        | Complete                                    | `tests/browser.test.ts`: Playwright + axe WCAG2 A/AA, zero violations               |
+| Observability                                              | Complete locally                            | OTLP run traces, `/metrics`, summary/usage/alerts endpoints                         |
+| Evaluations                                                | Complete                                    | 6 graders, separated judge, golden baseline + audited release gate                  |
+| CI/CD                                                      | Complete locally                            | format, types, tests, lint, audit, secret scan, build, smoke, SBOM, provenance      |
+| Deployment, backups, rollback                              | Restore drill verified; deploy unverified   | `npm run restore:drill` destroys and restores state in CI; no staging deploy        |
+| Documentation                                              | Complete for implemented surface            | 29 documents kept in sync per commit                                                |
 
 Honest completion estimate: roughly 91 percent of the specification. The research workspace, durability recovery evidence, adversarial sandbox boundaries, cross-tenant isolation, prompt-injection defense, and signed webhook delivery path have now been implemented and verified locally, closing every locally feasible gap identified in the previous assessments. What remains cannot be truthfully claimed from this machine: live webhook endpoint delivery and replay/forgery evidence, real provider-account integration tests, kernel sandbox escape verification in a container or microVM, staging and production deployment, and a production rollback drill. Those are enumerated as owner gates below with exact actions. The estimate stays below 100 percent deliberately, because the acceptance criteria require verified staging deployment and production health, logs, alerts, and rollback evidence, which no amount of local work can supply.
 
@@ -212,4 +248,4 @@ Each gate has exact actions in `docs/owner-gates.md`.
 
 ## Verification limitation
 
-The local TypeScript, test, lint, audit, build, HTTP health/auth, UI delivery, run, audit-chain, and SBOM checks are rerun after each implementation commit. Production JWT validation is implemented, but real issuer configuration, tenant memberships, and provider accounts remain owner-supplied. Cohere, Azure OpenAI, and Bedrock have unit-level wire/signature coverage; the owner must still run real sandbox-account integration tests for each provider. Docker image build/runtime and container-escape verification are blocked by the local Docker daemon being unavailable (`dockerDesktopLinuxEngine` pipe not found). Owner action: start Docker Desktop or provide a staging container runner, pin and attest the sandbox image, run `docker build`, start with `BOT_BUFFET_AUTH_MODE=production` and `BOT_BUFFET_SANDBOX_MODE=docker`, call `/readyz`, execute a smoke run, inspect logs/mount/network policy, run the sandbox escape/TOCTOU suite, and perform rollback verification. These are explicit external gates, not completion claims.
+The local TypeScript, test, lint, audit, build, HTTP health/auth, UI delivery, run, audit-chain, SBOM, image-build, container-readiness, and Docker sandbox checks are rerun after each implementation commit. Production JWT validation is implemented, but real issuer configuration, tenant memberships, and provider accounts remain owner-supplied. Cohere, Azure OpenAI, and Bedrock have unit-level wire/signature coverage; the owner must still run real sandbox-account integration tests for each provider. The local daemon is now reachable and the image/runtime checks passed; kernel escape/TOCTOU verification, signed image attestation, staging deployment, external backup custody, and production rollback remain external gates. Owner action: provision the production identity/secret store and staging runner, pin and attest the sandbox image, start with `BOT_BUFFET_AUTH_MODE=production` and `BOT_BUFFET_SANDBOX_MODE=docker`, call `/readyz`, execute a smoke run, inspect logs/mount/network policy, run the sandbox escape/TOCTOU suite, and perform rollback verification. These are explicit external gates, not completion claims.

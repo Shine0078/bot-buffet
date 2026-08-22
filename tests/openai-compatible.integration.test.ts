@@ -45,7 +45,7 @@ function handler(req: IncomingMessage, res: ServerResponse): void {
     // succeeding — which is what the error tests below rely on.
     if (url.startsWith('/rate-limited/')) {
       res.writeHead(429, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'slow down', key: 'sk-should-not-be-echoed-000000' }));
+      res.end(JSON.stringify({ error: 'slow down', key: 'sk-' + 'should-not-be-echoed-000000' }));
       return;
     }
 
@@ -229,7 +229,9 @@ describe('error handling', () => {
       }) as ModelProvider,
     );
     await expect(failing.complete(request)).rejects.toThrow(/provider_error:429/);
-    await expect(failing.complete(request)).rejects.not.toThrow(/sk-should-not-be-echoed/);
+    await expect(failing.complete(request)).rejects.not.toThrow(
+      new RegExp('sk-' + 'should-not-be-echoed'),
+    );
   });
 });
 

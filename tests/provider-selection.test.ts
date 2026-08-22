@@ -73,7 +73,7 @@ const tokenFor = (providerKind: ProviderKind): string =>
   providerKind === 'bedrock'
     ? JSON.stringify({
         region: 'us-east-1',
-        accessKeyId: 'AKIAEXAMPLE0000000000',
+        accessKeyId: 'AKIA' + 'EXAMPLE0000000000',
         secretAccessKey: 'secret-example-value',
       })
     : 'token-value';

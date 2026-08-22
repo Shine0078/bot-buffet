@@ -42,6 +42,8 @@ afterEach(async () => {
   delete process.env.BOT_BUFFET_OIDC_AUDIENCE;
   delete process.env.BOT_BUFFET_OIDC_JWKS_JSON;
   delete process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN;
+  delete process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+  delete process.env.BOT_BUFFET_PROVIDER_ENV_ALLOWLIST;
 });
 
 async function start(
@@ -1006,6 +1008,10 @@ describe('API boundary controls', () => {
   });
   it('records an environment credential reference without persisting or accepting its secret', async () => {
     process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN = 'env-secret-that-must-not-cross-the-api';
+    // A public endpoint paired with an arbitrary environment variable is an
+    // exfiltration route, so the host must be on an operator-owned allowlist
+    // before an environment-backed provider may be created against it.
+    process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST = 'api.example.test';
     const base = await start();
     const createdResponse = await fetch(`${base}/api/v1/providers`, {
       method: 'POST',
@@ -1040,6 +1046,74 @@ describe('API boundary controls', () => {
       }),
     });
     expect(rejected.status).toBe(400);
+  });
+  it('refuses an environment provider whose endpoint is not allowlisted', async () => {
+    process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN = 'env-secret';
+    process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST = 'api.allowed.test';
+    const base = await start();
+    const response = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Exfiltration Provider',
+        providerKind: 'openai',
+        endpoint: 'https://attacker.example/v1',
+        authType: 'env',
+        environmentVariable: 'BOT_BUFFET_TEST_PROVIDER_TOKEN',
+      }),
+    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      message: 'provider_environment_endpoint_not_allowlisted',
+    });
+  });
+  it('refuses to reference a protected environment variable', async () => {
+    // The harness own secrets must never be reachable through a user-created
+    // provider reference, allowlisted endpoint or not.
+    process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST = 'api.example.test';
+    const base = await start();
+    for (const environmentVariable of [
+      'BOT_BUFFET_MASTER_KEY',
+      'BOT_BUFFET_BACKUP_KEY',
+      'BOT_BUFFET_BOOTSTRAP_TOKEN',
+      'AWS_SECRET_ACCESS_KEY',
+      'GOOGLE_APPLICATION_CREDENTIALS',
+    ]) {
+      const response = await fetch(`${base}/api/v1/providers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Protected Reference',
+          providerKind: 'openai',
+          endpoint: 'https://api.example.test/v1',
+          authType: 'env',
+          environmentVariable,
+        }),
+      });
+      expect(response.status, environmentVariable).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        message: 'provider_environment_variable_protected',
+      });
+    }
+  });
+  it('allows a loopback local provider without an endpoint allowlist entry', async () => {
+    // Loopback traffic cannot leave the host, so a local runtime needs no
+    // allowlist entry — otherwise every offline setup would need configuring.
+    delete process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+    process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN = 'env-secret';
+    const base = await start();
+    const response = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Local Runtime',
+        providerKind: 'ollama',
+        endpoint: 'http://127.0.0.1:11434/v1',
+        authType: 'env',
+        environmentVariable: 'BOT_BUFFET_TEST_PROVIDER_TOKEN',
+      }),
+    });
+    expect(response.status).toBe(201);
   });
   it('requires a versioned memory approval transition and audits the decision', async () => {
     const base = await start();

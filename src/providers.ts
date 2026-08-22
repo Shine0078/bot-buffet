@@ -68,6 +68,59 @@ export interface ModelAdapter {
 
 const ENVIRONMENT_VARIABLE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/u;
 
+const LOCAL_PROVIDER_KINDS = new Set<ProviderKind>([
+  'ollama',
+  'lmstudio',
+  'llamacpp',
+  'localai',
+  'vllm',
+  'jan',
+]);
+
+/** Names that must never be exposed to a model provider through a user-created reference. */
+const PROTECTED_ENVIRONMENT_VARIABLE =
+  /(?:^|_)(?:MASTER_KEY|BACKUP_KEY|BOOTSTRAP_TOKEN|OIDC_|PRIVATE_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|SESSION_TOKEN|APPLICATION_CREDENTIALS)(?:$|_)/u;
+
+const configuredList = (name: string): Set<string> =>
+  new Set(
+    String(process.env[name] ?? '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+/**
+ * Validate an environment-backed provider before it can be persisted or used.
+ *
+ * A syntactically valid variable name is not an authorization decision: without
+ * an endpoint allowlist, an attacker can pair a public endpoint with any
+ * process secret and exfiltrate it in an Authorization header. Public endpoints
+ * therefore require an operator-owned exact-host allowlist, and production
+ * additionally requires an exact variable allowlist. Loopback-only local
+ * runtimes do not need a host entry because their traffic cannot leave the host.
+ */
+export const validateProviderEnvironmentCredential = (
+  providerKind: ProviderKind,
+  endpoint: string,
+  environmentVariable: string,
+): void => {
+  if (!ENVIRONMENT_VARIABLE.test(environmentVariable))
+    throw new Error('provider_environment_variable_invalid');
+  if (PROTECTED_ENVIRONMENT_VARIABLE.test(environmentVariable.toUpperCase()))
+    throw new Error('provider_environment_variable_protected');
+  const local = LOCAL_PROVIDER_KINDS.has(providerKind);
+  const parsed = assertSafeEndpoint(endpoint, local);
+  if (local) return;
+  const hostAllowlist = configuredList('BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST');
+  if (!hostAllowlist.has(parsed.hostname.toLowerCase()))
+    throw new Error('provider_environment_endpoint_not_allowlisted');
+  if (process.env.BOT_BUFFET_AUTH_MODE === 'production') {
+    const variableAllowlist = configuredList('BOT_BUFFET_PROVIDER_ENV_ALLOWLIST');
+    if (!variableAllowlist.has(environmentVariable.toLowerCase()))
+      throw new Error('provider_environment_variable_not_allowlisted');
+  }
+};
+
 /** Resolve a configured provider credential without persisting environment secrets. */
 export const resolveProviderToken = (
   provider: ModelProvider,
@@ -77,6 +130,8 @@ export const resolveProviderToken = (
   if (!source) return vaultToken;
   if (!ENVIRONMENT_VARIABLE.test(source.environmentVariable))
     throw new Error('provider_environment_variable_invalid');
+  if (PROTECTED_ENVIRONMENT_VARIABLE.test(source.environmentVariable.toUpperCase()))
+    throw new Error('provider_environment_variable_protected');
   return process.env[source.environmentVariable];
 };
 
@@ -1201,6 +1256,16 @@ export class MockLocalAdapter implements ModelAdapter {
 }
 
 export const adapterFor = (provider: ModelProvider, token?: string): ModelAdapter => {
+  // Revalidate persisted/legacy records at the point where a credential could
+  // become an outbound Authorization header. API validation alone is not
+  // sufficient if state was restored from an older backup or imported by an
+  // administrative tool.
+  if (provider.credentialSource)
+    validateProviderEnvironmentCredential(
+      provider.providerKind,
+      provider.endpoint,
+      provider.credentialSource.environmentVariable,
+    );
   if (provider.providerKind === 'anthropic') return new AnthropicAdapter(provider, token);
   if (provider.providerKind === 'gemini') return new GeminiAdapter(provider, token);
   if (provider.providerKind === 'azure-openai') return new AzureOpenAIAdapter(provider, token);

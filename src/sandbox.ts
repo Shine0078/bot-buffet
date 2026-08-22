@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 
 const MAX_OUTPUT_BYTES = 1_000_000;
+export const MAX_FILE_READ_BYTES = 1_000_000;
 const MAX_RUNTIME_MS = 30_000;
 
 /**
@@ -235,8 +238,9 @@ class DockerSandbox implements SandboxRuntime {
       'node',
       [
         '-e',
-        "process.stdout.write(require('node:fs').readFileSync(process.argv[1], 'utf8'))",
+        "const fs=require('node:fs');const p=process.argv[1];const max=Number(process.argv[2]);const s=fs.statSync(p);if(!s.isFile()||s.size>max){process.stderr.write('sandbox_read_too_large');process.exit(2)}const fd=fs.openSync(p,'r');const b=Buffer.alloc(s.size);let o=0;while(o<b.length){const n=fs.readSync(fd,b,o,b.length-o, o);if(!n)break;o+=n}fs.closeSync(fd);process.stdout.write(b.subarray(0,o))",
         `/workspace/${relativePath}`,
+        String(MAX_FILE_READ_BYTES),
       ],
       'blocked',
       undefined,
@@ -309,15 +313,48 @@ class LocalSandbox implements SandboxRuntime {
   readonly mode = 'local' as const;
   constructor(private readonly workspaceRoot: string) {}
 
-  async readFile(relativePath: string): Promise<string> {
-    const { readFile } = await import('node:fs/promises');
-    return readFile(`${this.workspaceRoot}/${relativePath}`, 'utf8');
+  async readFile(relativePath: string, signal?: AbortSignal): Promise<string> {
+    const path = `${this.workspaceRoot}/${relativePath}`;
+    const noFollow = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+    const handle = await open(path, constants.O_RDONLY | noFollow);
+    try {
+      const info = await handle.stat();
+      if (!info.isFile() || info.size > MAX_FILE_READ_BYTES)
+        throw new Error('sandbox_read_too_large');
+      if (signal?.aborted) throw new Error('sandbox_aborted');
+      const bytes = Buffer.alloc(info.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        if (signal?.aborted) throw new Error('sandbox_aborted');
+        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+        if (!bytesRead) break;
+        offset += bytesRead;
+      }
+      return bytes.subarray(0, offset).toString('utf8');
+    } finally {
+      await handle.close();
+    }
   }
   async writeFile(relativePath: string, content: string): Promise<void> {
-    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { lstat, mkdir } = await import('node:fs/promises');
     const path = `${this.workspaceRoot}/${relativePath}`;
     await mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true });
-    await writeFile(path, content, 'utf8');
+    try {
+      if ((await lstat(path)).isSymbolicLink()) throw new Error('sandbox_symlink_rejected');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const noFollow = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+    const handle = await open(
+      path,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollow,
+      0o600,
+    );
+    try {
+      await handle.writeFile(content, 'utf8');
+    } finally {
+      await handle.close();
+    }
   }
   async stat(relativePath: string): Promise<{ size: number; isFile: boolean }> {
     const { stat } = await import('node:fs/promises');

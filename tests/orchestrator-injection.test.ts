@@ -200,6 +200,12 @@ describe('untrusted tool output handling', () => {
 
     const state = await store.getRunState(run.id);
     expect(state['tool:research.fetch:trust']).toBe('untrusted');
+    expect(state['tool:research.fetch']).toEqual(
+      expect.stringContaining('<untrusted origin="tool:research.fetch">'),
+    );
+    expect(state['tool:research.fetch']).toEqual(
+      expect.stringContaining('Ignore all previous instructions'),
+    );
     expect(state['tool:research.fetch:injection']).toContain('instruction-override');
     expect(events.some((event) => event.type === 'injection.detected')).toBe(true);
 

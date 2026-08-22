@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { adapterFor, localDiscoveryCandidates, resolveProviderToken } from '../src/providers.js';
+import {
+  adapterFor,
+  localDiscoveryCandidates,
+  resolveProviderToken,
+  validateProviderEnvironmentCredential,
+} from '../src/providers.js';
 import { ModelProvider, now } from '../src/types.js';
 
 const provider = (providerKind: ModelProvider['providerKind']): ModelProvider => ({
@@ -59,6 +64,55 @@ describe('provider adapter normalization', () => {
     } finally {
       if (previous === undefined) delete process.env.BOT_BUFFET_PROVIDER_TEST_TOKEN;
       else process.env.BOT_BUFFET_PROVIDER_TEST_TOKEN = previous;
+    }
+  });
+
+  it('requires endpoint policy and refuses control-plane secrets', () => {
+    const previous = process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+    try {
+      delete process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+      expect(() =>
+        validateProviderEnvironmentCredential(
+          'openai',
+          'https://api.example.test/v1',
+          'OPENAI_API_KEY',
+        ),
+      ).toThrow('provider_environment_endpoint_not_allowlisted');
+      process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST = 'api.example.test';
+      expect(() =>
+        validateProviderEnvironmentCredential(
+          'openai',
+          'https://api.example.test/v1',
+          'BOT_BUFFET_MASTER_KEY',
+        ),
+      ).toThrow('provider_environment_variable_protected');
+      expect(() =>
+        validateProviderEnvironmentCredential(
+          'openai',
+          'https://api.example.test/v1',
+          'OPENAI_API_KEY',
+        ),
+      ).not.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+      else process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST = previous;
+    }
+  });
+
+  it('revalidates persisted environment references when an adapter is created', () => {
+    const previous = process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+    const persisted = {
+      ...provider('openai'),
+      credentialSource: { authType: 'env' as const, environmentVariable: 'OPENAI_API_KEY' },
+    };
+    try {
+      delete process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+      expect(() => adapterFor(persisted)).toThrow('provider_environment_endpoint_not_allowlisted');
+      process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST = 'api.openai.example';
+      expect(() => adapterFor(persisted)).not.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST;
+      else process.env.BOT_BUFFET_PROVIDER_ENDPOINT_ALLOWLIST = previous;
     }
   });
 
