@@ -280,6 +280,8 @@ export interface Plugin extends BaseEntity {
   permissions: string[];
   integritySha256?: string;
   previousReleaseVersion?: string;
+  /** Metadata-only link to the encrypted vault record used by this plugin. */
+  credentialId?: ID;
 }
 export interface MCPServer extends BaseEntity {
   kind: 'mcp-server';

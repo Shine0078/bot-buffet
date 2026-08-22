@@ -8,7 +8,7 @@ import { CredentialVault } from '../src/secrets.js';
 import { createStore } from '../src/store.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { entity } from '../src/types.js';
-import type { AuditEvent, Plugin, Workspace } from '../src/types.js';
+import type { AuditEvent, Credential, Plugin, Workspace } from '../src/types.js';
 
 /**
  * Evidence for the acceptance criterion that the named integrations are
@@ -29,20 +29,21 @@ afterEach(async () => {
 async function start() {
   const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-connectors-'));
   const store = createStore(dir);
+  const vault = new CredentialVault(
+    join(dir, 'credentials.enc.json'),
+    '12345678901234567890123456789012',
+  );
   const server = createApi({
     store,
     orchestrator: new EventEmitter() as unknown as Orchestrator,
     uiRoot: dir,
-    vault: new CredentialVault(
-      join(dir, 'credentials.enc.json'),
-      '12345678901234567890123456789012',
-    ),
+    vault,
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('server_address_missing');
-  return { base: `http://127.0.0.1:${address.port}`, store };
+  return { base: `http://127.0.0.1:${address.port}`, store, vault };
 }
 
 describe('connector API', () => {
@@ -276,6 +277,102 @@ describe('connector API', () => {
       enabled: false,
     });
     // The audit chain must still verify after an install.
+    await expect(store.verifyAuditChain()).resolves.toMatchObject({ valid: true });
+  });
+
+  it('supports dependency and permission review plus encrypted plugin auth setup', async () => {
+    const { base, store, vault } = await start();
+    const plugin = (await (
+      await fetch(`${base}/api/v1/plugins`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Auth plugin', version: '2.0.0' }),
+      })
+    ).json()) as Plugin;
+
+    await expect(fetch(`${base}/api/v1/plugins/${plugin.id}/dependencies`)).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      fetch(`${base}/api/v1/plugins/${plugin.id}/permissions`).then((response) => response.json()),
+    ).resolves.toMatchObject({
+      pluginId: plugin.id,
+      permissions: [],
+      network: 'blocked',
+    });
+
+    const configured = await fetch(`${base}/api/v1/plugins/${plugin.id}/auth`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: plugin.version,
+        authType: 'api-key',
+        secret: 'plugin-secret',
+      }),
+    });
+    expect(configured.status).toBe(200);
+    const configuredText = await configured.text();
+    expect(configuredText).not.toContain('plugin-secret');
+    const configuredBody = JSON.parse(configuredText) as {
+      plugin: Plugin;
+      credential: { id: string; metadata: { authType: string; fingerprint: string } };
+    };
+    expect(configuredBody.plugin.credentialId).toBe(configuredBody.credential.id);
+    expect(configuredBody.credential.metadata.authType).toBe('api-key');
+    expect(configuredBody.credential.metadata.fingerprint).toHaveLength(16);
+    expect(vault.getSync(`plugin:${plugin.id}`)).toBe('plugin-secret');
+
+    const credentials = await store.list<Credential>(
+      (value) => value.kind === 'credential' && value.scope === plugin.scope,
+    );
+    expect(credentials).toHaveLength(1);
+    expect(JSON.stringify(credentials[0])).not.toContain('plugin-secret');
+
+    const reviewed = await (await fetch(`${base}/api/v1/plugins/${plugin.id}/auth`)).json();
+    expect(reviewed).toMatchObject({
+      pluginId: plugin.id,
+      configured: true,
+      credential: { id: configuredBody.credential.id },
+    });
+
+    const revoked = await fetch(`${base}/api/v1/plugins/${plugin.id}/auth`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: configuredBody.plugin.version }),
+    });
+    expect(revoked.status).toBe(200);
+    const revokedPlugin = (await revoked.json()) as Plugin;
+    expect(revokedPlugin.credentialId).toBeUndefined();
+    expect(vault.getSync(`plugin:${plugin.id}`)).toBeUndefined();
+    await expect(
+      store.list<Credential>(
+        (value) => value.kind === 'credential' && value.scope === plugin.scope,
+      ),
+    ).resolves.toHaveLength(0);
+    await expect(store.verifyAuditChain()).resolves.toMatchObject({ valid: true });
+  });
+
+  it('revokes plugin credentials during uninstall', async () => {
+    const { base, store, vault } = await start();
+    const plugin = (await (
+      await fetch(`${base}/api/v1/plugins`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Cleanup plugin' }),
+      })
+    ).json()) as Plugin;
+    const configured = (await (
+      await fetch(`${base}/api/v1/plugins/${plugin.id}/auth`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version: plugin.version, secret: 'cleanup-secret' }),
+      })
+    ).json()) as { plugin: Plugin; credential: { id: string } };
+
+    const deleted = await fetch(`${base}/api/v1/plugins/${plugin.id}`, { method: 'DELETE' });
+    expect(deleted.status).toBe(204);
+    expect(vault.getSync(`plugin:${plugin.id}`)).toBeUndefined();
+    await expect(store.get<Credential>(configured.credential.id)).resolves.toBeUndefined();
     await expect(store.verifyAuditChain()).resolves.toMatchObject({ valid: true });
   });
 

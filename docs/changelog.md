@@ -42,6 +42,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Run pause/resume/cancel/stop/rollback transitions now use compare-and-swap, so concurrent operator commands fail with a conflict instead of overwriting newer run state; the race is covered by a regression test.
 - Run-control commands now preserve the authenticated operator in their audit events and emit immediate scoped control events; fork/rollback events are part of the validated webhook catalog, and the executor no longer duplicates a pause event after an operator command.
 - State loading now has an explicit schema migration boundary: legacy documents are normalized and persisted, malformed state is rejected, and future schema versions fail closed instead of being silently misread.
+- Plugin lifecycle now exposes dependency, declared-permission/network/retention, and auth-status review; vault-backed API-key/custom auth uses version checks and short fingerprints, revoke/uninstall removes the credential, and arbitrary package execution remains disabled until an isolated host is supplied.
 
 ### Verified
 

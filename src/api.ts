@@ -45,6 +45,7 @@ import {
   Workspace,
   OAuthProviderConfig,
   entity,
+  id,
   now,
 } from './types.js';
 import { Orchestrator } from './orchestrator.js';
@@ -3071,10 +3072,208 @@ export function createApi(deps: ApiDeps) {
         } as Plugin);
         return send(res, 200, saved);
       }
+      const pluginDetails = path.match(
+        /^\/api\/v1\/plugins\/([^/]+)\/(dependencies|permissions|auth)$/,
+      );
+      if (pluginDetails && req.method === 'GET') {
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginDetails[1]!),
+          'read',
+          'plugin',
+        );
+        if (pluginDetails[2] === 'dependencies')
+          return send(res, 200, {
+            pluginId: plugin.id,
+            releaseVersion: plugin.releaseVersion,
+            pinned: plugin.pinned,
+            integritySha256: plugin.integritySha256,
+            dependencies: plugin.dependencies,
+          });
+        if (pluginDetails[2] === 'permissions')
+          return send(res, 200, {
+            pluginId: plugin.id,
+            enabled: plugin.enabled,
+            workspaceEnabled: plugin.workspaceEnabled,
+            projectIds: plugin.projectIds,
+            agentIds: plugin.agentIds,
+            permissions: plugin.permissions,
+            network: plugin.network,
+            retention: plugin.retention,
+          });
+        const credential = plugin.credentialId
+          ? await deps.store.get<Credential>(plugin.credentialId)
+          : undefined;
+        return send(res, 200, {
+          pluginId: plugin.id,
+          configured: Boolean(credential && !credential.metadata.disabled),
+          credential: credential ? { id: credential.id, metadata: credential.metadata } : undefined,
+        });
+      }
+      const pluginAuth = path.match(/^\/api\/v1\/plugins\/([^/]+)\/auth$/);
+      if (pluginAuth && req.method === 'POST') {
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginAuth[1]!),
+          'admin',
+          'plugin',
+        );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== plugin.version)
+          throw new Error('plugin_version_required');
+        const authType = String(body.authType ?? 'custom');
+        if (!['api-key', 'custom'].includes(authType)) throw new Error('plugin_auth_type_invalid');
+        const secret = typeof body.secret === 'string' ? body.secret : '';
+        if (!secret || secret.length > 8_192) throw new Error('plugin_secret_invalid');
+
+        const previous = plugin.credentialId
+          ? await deps.store.get<Credential>(plugin.credentialId)
+          : undefined;
+        const credentialId = previous?.id ?? id('credential');
+        const vaultKey = previous?.secretRef ?? `plugin:${plugin.id}`;
+        const previousSecret = previous ? deps.vault.getSync(vaultKey) : undefined;
+        await deps.vault.set(vaultKey, secret);
+        let savedCredential: Credential | undefined;
+        let pluginCommitted = false;
+        try {
+          const metadata = {
+            providerId: plugin.id,
+            label: `${plugin.name} credential`,
+            authType: authType as Credential['metadata']['authType'],
+            scopes: [...plugin.permissions],
+            disabled: false,
+            fingerprint: fingerprint(secret),
+          };
+          savedCredential = previous
+            ? await deps.store.putIfVersion(
+                { ...previous, metadata, secretRef: vaultKey, version: previous.version },
+                previous.version,
+              )
+            : await deps.store.insert({
+                ...entity({
+                  kind: 'credential',
+                  ownerId: actorId,
+                  scope: plugin.scope,
+                  providerId: plugin.id,
+                  metadata,
+                  secretRef: vaultKey,
+                }),
+                id: credentialId,
+              } as Credential);
+          const saved = await deps.store.putIfVersion(
+            { ...plugin, credentialId, version: plugin.version } as Plugin,
+            expectedVersion,
+          );
+          pluginCommitted = true;
+          await deps.store.audit({
+            kind: 'audit-event',
+            ownerId: actorId,
+            scope: plugin.scope,
+            actorId,
+            action: 'plugin.auth.configured',
+            resourceType: 'plugin',
+            resourceId: plugin.id,
+            risk: 'high',
+            decision: 'executed',
+            metadata: {
+              authType,
+              credentialId: savedCredential.id,
+              fingerprint: savedCredential.metadata.fingerprint,
+              version: saved.version,
+            },
+          });
+          return send(res, 200, {
+            plugin: saved,
+            credential: { id: savedCredential.id, metadata },
+          });
+        } catch (error) {
+          if (!pluginCommitted) {
+            try {
+              if (previous) {
+                if (previousSecret === undefined) await deps.vault.revoke(vaultKey);
+                else await deps.vault.set(vaultKey, previousSecret);
+                if (savedCredential)
+                  await deps.store.putIfVersion(
+                    { ...previous, version: savedCredential.version },
+                    savedCredential.version,
+                  );
+              } else {
+                await deps.vault.revoke(vaultKey);
+                if (savedCredential) await deps.store.delete(savedCredential.id);
+              }
+            } catch {
+              // Preserve the original error; the failed setup is not exposed as configured.
+            }
+          }
+          throw error;
+        }
+      }
+      const pluginAuthDelete = path.match(/^\/api\/v1\/plugins\/([^/]+)\/auth$/);
+      if (pluginAuthDelete && req.method === 'DELETE') {
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginAuthDelete[1]!),
+          'admin',
+          'plugin',
+        );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== plugin.version)
+          throw new Error('plugin_version_required');
+        const credential = plugin.credentialId
+          ? await deps.store.get<Credential>(plugin.credentialId)
+          : undefined;
+        const saved = await deps.store.putIfVersion(
+          { ...plugin, credentialId: undefined, version: plugin.version } as Plugin,
+          expectedVersion,
+        );
+        if (credential) {
+          await deps.vault.revoke(credential.secretRef);
+          await deps.store.delete(credential.id);
+        }
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: plugin.scope,
+          actorId,
+          action: 'plugin.auth.revoked',
+          resourceType: 'plugin',
+          resourceId: plugin.id,
+          risk: 'high',
+          decision: 'executed',
+          metadata: { credentialId: credential?.id, version: saved.version },
+        });
+        return send(res, 200, saved);
+      }
       const pluginDelete = path.match(/^\/api\/v1\/plugins\/([^/]+)$/);
       if (pluginDelete && req.method === 'DELETE') {
-        await required(actorId, await deps.store.get<Plugin>(pluginDelete[1]!), 'admin', 'plugin');
-        await deps.store.delete(pluginDelete[1]!);
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginDelete[1]!),
+          'admin',
+          'plugin',
+        );
+        if (plugin.credentialId) {
+          const credential = await deps.store.get<Credential>(plugin.credentialId);
+          if (credential) {
+            await deps.vault.revoke(credential.secretRef);
+            await deps.store.delete(credential.id);
+          }
+        }
+        await deps.store.delete(plugin.id);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: plugin.scope,
+          actorId,
+          action: 'plugin.deleted',
+          resourceType: 'plugin',
+          resourceId: plugin.id,
+          risk: 'high',
+          decision: 'executed',
+          metadata: { credentialId: plugin.credentialId },
+        });
         return send(res, 204, { deleted: true });
       }
       if (path === '/api/v1/mcp-servers' && req.method === 'GET')
