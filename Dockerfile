@@ -1,4 +1,9 @@
-FROM node:22-alpine AS build
+# Base images are pinned by digest so a rebuild produces the same runtime, and
+# so a compromised or simply changed upstream tag cannot alter what ships
+# without a visible commit. The tag is kept in the comment for readability.
+# Re-pin deliberately: docker buildx imagetools inspect node:22-alpine
+# node:22-alpine
+FROM node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS build
 WORKDIR /app
 # tsconfig.build.json extends tsconfig.json and is the config the build
 # actually uses, so both must be present. Copying only tsconfig.json made
@@ -10,7 +15,8 @@ COPY ui ./ui
 COPY scripts ./scripts
 RUN npm run build
 
-FROM node:22-alpine
+# node:22-alpine
+FROM node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
 # BOT_BUFFET_HOST is 0.0.0.0 here and loopback everywhere else: binding
 # loopback inside a container makes the published port unreachable, while
 # defaulting to loopback on a workstation keeps a credential-holding control
