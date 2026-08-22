@@ -1331,6 +1331,40 @@ describe('API boundary controls', () => {
       body: JSON.stringify({ approved: false, version: created.version }),
     });
     expect(stale.status).toBe(400);
+    const expiredResponse = await fetch(`${base}/api/v1/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        namespace: 'session',
+        namespaceId: 'session-1',
+        text: 'expired memory',
+        expiresAt: '2020-01-01T00:00:00.000Z',
+      }),
+    });
+    const freshResponse = await fetch(`${base}/api/v1/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        namespace: 'session',
+        namespaceId: 'session-1',
+        text: 'fresh memory',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+    });
+    expect(expiredResponse.status).toBe(201);
+    expect(freshResponse.status).toBe(201);
+    const pruneResponse = await fetch(`${base}/api/v1/memory/prune-expired`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ namespace: 'session', namespaceId: 'session-1' }),
+    });
+    expect(pruneResponse.status).toBe(200);
+    expect(await pruneResponse.json()).toMatchObject({ deleted: 1, examined: 3 });
+    const remainingMemory = await fetch(
+      `${base}/api/v1/memory?namespace=session&namespaceId=session-1`,
+    );
+    expect(remainingMemory.status).toBe(200);
+    expect(await remainingMemory.json()).toHaveLength(2);
   });
   it('starts an actor-bound OAuth PKCE flow without returning the verifier', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-api-'));

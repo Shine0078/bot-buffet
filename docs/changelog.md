@@ -38,6 +38,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - A permission-scoped connector catalog for the eight named integrations; installing one produces a disabled, host-allowlisted plugin that grants no authority.
 - `memory.write` for agents, bounded by write scope, with approval before persistence.
 - Schedules now validate five-field cron expressions and IANA timezones, and a restart-safe local dispatcher claims each matching minute once with CAS before creating an assigned-agent run; missing context and start failures persist bounded errors and audit evidence.
+- Explicit memory expiry now has a bounded, authorization-filtered prune endpoint with namespace scoping and audit evidence; policy-based read retention remains non-destructive and separate.
 
 ### Verified
 

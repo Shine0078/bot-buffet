@@ -70,6 +70,15 @@ export interface MemorySelection {
   excluded: Array<{ id: string; reason: MemoryExclusion }>;
 }
 
+/** Return only records whose owner explicitly set an expiry in the past. */
+export function expiredMemoryItems(items: MemoryItem[], nowMs: number = Date.now()): MemoryItem[] {
+  return items.filter((item) => {
+    if (!item.expiresAt) return false;
+    const expiresAt = Date.parse(item.expiresAt);
+    return Number.isFinite(expiresAt) && expiresAt <= nowMs;
+  });
+}
+
 /**
  * Select the memory an agent may read, and record why anything was excluded.
  *

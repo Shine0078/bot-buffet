@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canWriteMemory, selectReadableMemory } from '../src/memoryScope.js';
+import { canWriteMemory, expiredMemoryItems, selectReadableMemory } from '../src/memoryScope.js';
 import { entity, type MemoryItem, type MemoryPolicy } from '../src/types.js';
 
 /**
@@ -64,6 +64,17 @@ describe('readable namespace filtering', () => {
     const item = memory({ namespace: 'workspace', namespaceId: 'workspace-1' });
     const result = selectReadableMemory([item], policy({ readableScopes: ['workspace'] }), scope);
     expect(result.readable).toHaveLength(1);
+  });
+});
+
+describe('explicit memory expiry', () => {
+  it('returns only records with a finite expiry at or before the cutoff', () => {
+    const cutoff = Date.parse('2026-08-22T12:00:00.000Z');
+    const expired = memory({ expiresAt: '2026-08-22T11:59:59.000Z' });
+    const future = memory({ expiresAt: '2026-08-22T12:00:01.000Z' });
+    const malformed = memory({ expiresAt: 'not-a-date' });
+    const unbounded = memory();
+    expect(expiredMemoryItems([expired, future, malformed, unbounded], cutoff)).toEqual([expired]);
   });
 });
 

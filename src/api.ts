@@ -84,6 +84,7 @@ import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './w
 import { duplicateProject } from './projectDuplication.js';
 import { pluginAppliesToAgent } from './plugins.js';
 import { assertScheduleTimeZone, parseCronExpression } from './scheduler.js';
+import { expiredMemoryItems } from './memoryScope.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -2742,6 +2743,59 @@ export function createApi(deps: ApiDeps) {
         }) as MemoryItem;
         await deps.store.insert(memory);
         return send(res, 201, memory);
+      }
+      if (path === '/api/v1/memory/prune-expired' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const rawLimit = body.limit === undefined ? 100 : Number(body.limit);
+        if (!Number.isSafeInteger(rawLimit) || rawLimit < 1 || rawLimit > 1000)
+          throw new Error('memory_prune_limit_invalid');
+        const namespace = body.namespace === undefined ? undefined : String(body.namespace);
+        const namespaceId = body.namespaceId === undefined ? undefined : String(body.namespaceId);
+        const validNamespaces = new Set([
+          'user',
+          'organization',
+          'workspace',
+          'project',
+          'environment',
+          'agent',
+          'session',
+          'task',
+          'artifact',
+        ]);
+        if (namespace && !validNamespaces.has(namespace))
+          throw new Error('memory_namespace_invalid');
+        if (namespaceId !== undefined && !namespaceId.trim())
+          throw new Error('memory_scope_required');
+        const candidates = await visible(
+          actorId,
+          await deps.store.list<MemoryItem>(
+            (value) =>
+              value.kind === 'memory' &&
+              (!namespace || value.namespace === namespace) &&
+              (!namespaceId || value.namespaceId === namespaceId),
+          ),
+          'write',
+        );
+        const expired = expiredMemoryItems(candidates).slice(0, rawLimit);
+        for (const memory of expired) await deps.store.delete(memory.id);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: namespaceId ?? 'memory-retention',
+          actorId,
+          action: 'memory.expired',
+          resourceType: 'memory',
+          resourceId: 'bulk',
+          risk: 'medium',
+          decision: 'executed',
+          metadata: {
+            deleted: expired.length,
+            limit: rawLimit,
+            namespace,
+            namespaceId,
+          },
+        });
+        return send(res, 200, { deleted: expired.length, examined: candidates.length });
       }
       const memoryMatch = path.match(/^\/api\/v1\/memory\/([^/]+)$/);
       const memoryApproval = path.match(/^\/api\/v1\/memory\/([^/]+)\/approval$/);
