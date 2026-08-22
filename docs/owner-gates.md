@@ -11,3 +11,34 @@
 - Release owner: configure CI OIDC signing/attestation and artifact registry policy, deploy staging, perform restore and rollback drills, collect `/readyz` and smoke evidence, approve production.
 
 Until each owner supplies evidence, the status ledger must say “blocked” for that gate; local implementation work must continue without inventing provider or deployment success.
+
+## Connector scope verification
+
+Every connector except GitHub declares its OAuth or API scopes with
+`scopesVerified: false` in `src/connectors.ts`. Those strings are plausible but
+were not checked against the providers' current documentation, and a wrong
+scope string fails in one of two ways: it does not connect, or it grants more
+authority than intended without saying so.
+
+Before connecting each service, confirm the exact scope strings against the
+provider's current documentation, narrow them to the least privilege that still
+supports the tools listed for that connector, update `src/connectors.ts`, and
+set `scopesVerified: true` for that entry.
+
+| Connector  | Declared scopes                | Documentation                                       |
+| ---------- | ------------------------------ | --------------------------------------------------- |
+| Cloudflare | `workers:read`, `workers:edit` | https://developers.cloudflare.com/api/              |
+| Figma      | `file_read`                    | https://www.figma.com/developers/api                |
+| Asana      | `tasks:read`, `tasks:write`    | https://developers.asana.com/docs                   |
+| Canva      | `design:content:read`          | https://www.canva.dev/docs/connect/                 |
+| SciSpace   | `papers:read`                  | https://typeset.io/                                 |
+| Consensus  | `search:read`                  | https://consensus.app/                              |
+| Wolfram    | `query:read`                   | https://products.wolframalpha.com/api/documentation |
+
+GitHub's `repo` and `read:org` were checked against its documented scope list
+and are marked verified.
+
+Also required per connector, and not claimable from this repository: create the
+account and credential, complete the OAuth or API-key flow, run a real
+integration test for each tool the connector contributes, and confirm the
+declared `allowedHosts` match the endpoints the provider actually serves.
