@@ -8,8 +8,10 @@ The project, task, run, and audit list endpoints preserve their historical array
 response when no paging query is supplied. Supplying `limit` (1-100) or an
 opaque `cursor` returns `{ items, total, limit, nextCursor? }`; cursors encode a
 bounded offset over the already authorization-filtered result, so pagination
-cannot widen tenant visibility. Malformed cursors and out-of-range limits are
-rejected before the list is read.
+cannot widen tenant visibility. These lists also support bounded resource
+filters (`workspaceId`/`archived`, `projectId`/`status`, and `projectId`/`action`
+respectively). Malformed cursors, filters, and out-of-range limits are rejected
+before the list is read.
 
 SSE now requires a project scope in every mode and drops events that do not carry an authenticated project scope; an unscoped event is never treated as a wildcard broadcast.
 

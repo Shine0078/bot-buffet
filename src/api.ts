@@ -1044,12 +1044,22 @@ export function createApi(deps: ApiDeps) {
           tools: deps.tools?.list() ?? [],
         });
       }
-      if (path === '/api/v1/projects' && req.method === 'GET')
-        return send(
-          res,
-          200,
-          page(await visible(actorId, await deps.store.list<Project>((x) => x.kind === 'project'))),
+      if (path === '/api/v1/projects' && req.method === 'GET') {
+        const workspaceId = url.searchParams.get('workspaceId');
+        const archived = url.searchParams.get('archived');
+        if (archived !== null && archived !== 'true' && archived !== 'false')
+          throw new Error('project_archived_filter_invalid');
+        const projects = await visible(
+          actorId,
+          await deps.store.list<Project>(
+            (x) =>
+              x.kind === 'project' &&
+              (!workspaceId || (x as Project).workspaceId === workspaceId) &&
+              (archived === null || (x as Project).archived === (archived === 'true')),
+          ),
         );
+        return send(res, 200, page(projects));
+      }
       if (path === '/api/v1/projects' && req.method === 'POST') {
         const body = await parseBody(req);
         const workspaceId = String(body.workspaceId ?? 'workspace_local');
@@ -1453,12 +1463,23 @@ export function createApi(deps: ApiDeps) {
         });
         return send(res, 200, saved);
       }
-      if (path === '/api/v1/tasks' && req.method === 'GET')
-        return send(
-          res,
-          200,
-          page(await visible(actorId, await deps.store.list<Task>((x) => x.kind === 'task'))),
+      if (path === '/api/v1/tasks' && req.method === 'GET') {
+        const projectId = url.searchParams.get('projectId');
+        const status = url.searchParams.get('status');
+        const taskStatuses = ['backlog', 'ready', 'running', 'blocked', 'done', 'cancelled'];
+        if (status !== null && !taskStatuses.includes(status))
+          throw new Error('task_status_filter_invalid');
+        const tasks = await visible(
+          actorId,
+          await deps.store.list<Task>(
+            (x) =>
+              x.kind === 'task' &&
+              (!projectId || (x as Task).projectId === projectId) &&
+              (status === null || (x as Task).status === status),
+          ),
         );
+        return send(res, 200, page(tasks));
+      }
       if (path === '/api/v1/tasks' && req.method === 'POST') {
         const body = await parseBody(req);
         const project = await required(
@@ -3313,12 +3334,35 @@ export function createApi(deps: ApiDeps) {
         void deps.orchestrator.start(run.id);
         return send(res, 202, run);
       }
-      if (path === '/api/v1/runs' && req.method === 'GET')
-        return send(
-          res,
-          200,
-          page(await visible(actorId, await deps.store.list((x) => x.kind === 'run'), 'read')),
+      if (path === '/api/v1/runs' && req.method === 'GET') {
+        const projectId = url.searchParams.get('projectId');
+        const status = url.searchParams.get('status');
+        const runStatuses = [
+          'queued',
+          'running',
+          'waiting_approval',
+          'paused',
+          'retrying',
+          'blocked',
+          'failed',
+          'completed',
+          'cancelled',
+          'rolled_back',
+        ];
+        if (status !== null && !runStatuses.includes(status))
+          throw new Error('run_status_filter_invalid');
+        const runs = await visible(
+          actorId,
+          await deps.store.list<Run>(
+            (x) =>
+              x.kind === 'run' &&
+              (!projectId || (x as Run).projectId === projectId) &&
+              (status === null || (x as Run).status === status),
+          ),
+          'read',
         );
+        return send(res, 200, page(runs));
+      }
       const runMatch = path.match(
         /^\/api\/v1\/runs\/([^/]+)\/(pause|resume|cancel|stop|fork|rollback)$/,
       );
@@ -3396,12 +3440,22 @@ export function createApi(deps: ApiDeps) {
         }
         return send(res, 200, saved);
       }
-      if (path === '/api/v1/audit' && req.method === 'GET')
-        return send(
-          res,
-          200,
-          page(await visible(actorId, await deps.store.list((x) => x.kind === 'audit-event'))),
+      if (path === '/api/v1/audit' && req.method === 'GET') {
+        const projectId = url.searchParams.get('projectId');
+        const action = url.searchParams.get('action');
+        if (action !== null && (action.length === 0 || action.length > 128))
+          throw new Error('audit_action_filter_invalid');
+        const events = await visible(
+          actorId,
+          await deps.store.list(
+            (x) =>
+              x.kind === 'audit-event' &&
+              (!projectId || x.scope === projectId) &&
+              (!action || (x as { action?: string }).action === action),
+          ),
         );
+        return send(res, 200, page(events));
+      }
       if (path === '/api/v1/audit/verify' && req.method === 'GET')
         return send(res, 200, await deps.store.verifyAuditChain());
       if (path === '/api/v1/stop-all' && req.method === 'POST') {

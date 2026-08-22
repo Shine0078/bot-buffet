@@ -1077,8 +1077,14 @@ describe('API boundary controls', () => {
       `${base}/api/v1/projects?limit=2&cursor=${encodeURIComponent(firstPage.nextCursor!)}`,
     );
     await expect(second.json()).resolves.toMatchObject({ items: [{ slug: 'page-c' }], total: 3 });
+    await expect(
+      (await fetch(`${base}/api/v1/projects?workspaceId=other&limit=2`)).json(),
+    ).resolves.toMatchObject({ items: [], total: 0 });
     expect((await fetch(`${base}/api/v1/projects?limit=0`)).status).toBe(400);
     expect((await fetch(`${base}/api/v1/projects?cursor=not-a-cursor`)).status).toBe(400);
+    expect((await fetch(`${base}/api/v1/projects?archived=maybe`)).status).toBe(400);
+    expect((await fetch(`${base}/api/v1/tasks?status=unknown`)).status).toBe(400);
+    expect((await fetch(`${base}/api/v1/runs?status=unknown`)).status).toBe(400);
   });
   it('keeps plugin updates disabled and supports integrity-pinned rollback/delete', async () => {
     const base = await start();

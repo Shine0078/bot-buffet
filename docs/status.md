@@ -171,7 +171,8 @@ a production rollback drill.
   behavior.
 - Core project, task, run, and audit lists now support bounded cursor pagination
   while preserving array responses for existing callers without query params;
-  malformed cursors and out-of-range limits fail before data access.
+  resource filters are validated before authorization-filtered reads, and
+  malformed cursors or out-of-range limits fail before data access.
 - The orchestrator now consumes the normalized stream contract, emits redacted `model.delta` events to live run subscribers, and aggregates streamed content/tool arguments into the same durable response and accounting path.
 - Orchestrator starts now enforce each agent profile's concurrency limit; excess runs become durably blocked with an explicit error while the active run retains normal checkpoint/retry behavior.
 - Budgeted context assembler with freshness/relevance ordering, compaction, redaction, and source-citation carry-through.

@@ -113,4 +113,5 @@ An audit of every field on the agent profile, approval policy, and tool definiti
   live runs, files, memory, artifacts, webhooks, and audit history.
 - Pagination pass: project, task, run, and audit list routes now accept bounded
   cursor pagination while retaining backward-compatible array responses for
-  callers that do not request a page.
+  callers that do not request a page, with validated resource filters for
+  workspace/project/status/action views.
