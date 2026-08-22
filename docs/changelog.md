@@ -52,3 +52,4 @@
 - Streaming transport pass: added a DNS-pinned async response transport with abort and 10 MB caps, so OpenAI-compatible SSE chunks are delivered incrementally rather than buffered.
 - Runtime streaming pass: the orchestrator now forwards redacted model deltas over the live run event stream while preserving durable usage, tool-call, retry, and cancellation semantics.
 - Concurrency guard pass: run starts now enforce agent profile concurrency limits and durably mark excess concurrent runs as blocked.
+- Tenant-isolation evidence pass: added `tests/auth-isolation.test.ts`, which mints RS256-signed JWTs and proves the production OIDC path scopes each verified subject to its own tenant while denying unaffiliated and cross-tenant access.
