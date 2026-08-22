@@ -43,6 +43,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Run-control commands now preserve the authenticated operator in their audit events and emit immediate scoped control events; fork/rollback events are part of the validated webhook catalog, and the executor no longer duplicates a pause event after an operator command.
 - State loading now has an explicit schema migration boundary: legacy documents are normalized and persisted, malformed state is rejected, and future schema versions fail closed instead of being silently misread.
 - Plugin lifecycle now exposes dependency, declared-permission/network/retention, and auth-status review; vault-backed API-key/custom auth uses version checks and short fingerprints, revoke/uninstall removes the credential, and arbitrary package execution remains disabled until an isolated host is supplied.
+- Plugin update/rollback/uninstall now require current-version compare-and-swap tokens; update and rollback operations force integrity-pinned releases and write high-risk audit records.
 
 ### Verified
 

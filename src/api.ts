@@ -3052,6 +3052,9 @@ export function createApi(deps: ApiDeps) {
         if (plugin.enabled || plugin.workspaceEnabled)
           throw new Error('plugin_update_requires_disabled');
         const body = await parseBody(req);
+        const expectedVersion = Number(body.expectedVersion);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== plugin.version)
+          throw new Error('plugin_version_required');
         const integrity = body.integritySha256
           ? String(body.integritySha256)
           : plugin.integritySha256;
@@ -3060,16 +3063,38 @@ export function createApi(deps: ApiDeps) {
         const nextVersion =
           pluginUpdate[2] === 'rollback'
             ? plugin.previousReleaseVersion
-            : String(body.version ?? plugin.releaseVersion);
-        if (!nextVersion) throw new Error('plugin_rollback_unavailable');
-        const saved = await deps.store.put({
-          ...plugin,
-          previousReleaseVersion: plugin.releaseVersion,
-          releaseVersion: nextVersion,
-          source: body.source ? String(body.source) : plugin.source,
-          integritySha256: integrity,
-          version: plugin.version,
-        } as Plugin);
+            : String(body.releaseVersion ?? plugin.releaseVersion);
+        if (!nextVersion || nextVersion.length > 128)
+          throw new Error('plugin_rollback_unavailable');
+        const saved = await deps.store.putIfVersion(
+          {
+            ...plugin,
+            previousReleaseVersion: plugin.releaseVersion,
+            releaseVersion: nextVersion,
+            source: body.source ? String(body.source) : plugin.source,
+            integritySha256: integrity,
+            pinned: true,
+            version: plugin.version,
+          } as Plugin,
+          expectedVersion,
+        );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: plugin.scope,
+          actorId,
+          action: `plugin.${pluginUpdate[2]}`,
+          resourceType: 'plugin',
+          resourceId: plugin.id,
+          risk: 'high',
+          decision: 'executed',
+          metadata: {
+            previousVersion: plugin.releaseVersion,
+            releaseVersion: nextVersion,
+            integritySha256: integrity,
+            version: saved.version,
+          },
+        });
         return send(res, 200, saved);
       }
       const pluginDetails = path.match(
@@ -3254,6 +3279,14 @@ export function createApi(deps: ApiDeps) {
           'admin',
           'plugin',
         );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== plugin.version)
+          throw new Error('plugin_version_required');
+        const deleted = await deps.store.putIfVersion(
+          { ...plugin, version: plugin.version } as Plugin,
+          expectedVersion,
+        );
         if (plugin.credentialId) {
           const credential = await deps.store.get<Credential>(plugin.credentialId);
           if (credential) {
@@ -3261,7 +3294,7 @@ export function createApi(deps: ApiDeps) {
             await deps.store.delete(credential.id);
           }
         }
-        await deps.store.delete(plugin.id);
+        await deps.store.delete(deleted.id);
         await deps.store.audit({
           kind: 'audit-event',
           ownerId: actorId,

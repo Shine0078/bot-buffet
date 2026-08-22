@@ -1178,16 +1178,27 @@ describe('API boundary controls', () => {
       body: JSON.stringify({ name: 'Example', source: 'local' }),
     });
     expect(createdResponse.status).toBe(201);
-    const created = (await createdResponse.json()) as { id: string; enabled: boolean };
+    const created = (await createdResponse.json()) as {
+      id: string;
+      enabled: boolean;
+      version: number;
+    };
     expect(created.enabled).toBe(false);
     const updatedResponse = await fetch(`${base}/api/v1/plugins/${created.id}/update`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ version: '1.1.0', integritySha256: 'a'.repeat(64) }),
+      body: JSON.stringify({
+        expectedVersion: created.version,
+        releaseVersion: '1.1.0',
+        integritySha256: 'a'.repeat(64),
+      }),
     });
     expect(updatedResponse.status).toBe(200);
+    const updated = (await updatedResponse.clone().json()) as { version: number };
     const deletedResponse = await fetch(`${base}/api/v1/plugins/${created.id}`, {
       method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: updated.version }),
     });
     expect(deletedResponse.status).toBe(204);
   });

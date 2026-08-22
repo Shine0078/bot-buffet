@@ -369,11 +369,49 @@ describe('connector API', () => {
       })
     ).json()) as { plugin: Plugin; credential: { id: string } };
 
-    const deleted = await fetch(`${base}/api/v1/plugins/${plugin.id}`, { method: 'DELETE' });
+    const deleted = await fetch(`${base}/api/v1/plugins/${plugin.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: configured.plugin.version }),
+    });
     expect(deleted.status).toBe(204);
     expect(vault.getSync(`plugin:${plugin.id}`)).toBeUndefined();
     await expect(store.get<Credential>(configured.credential.id)).resolves.toBeUndefined();
     await expect(store.verifyAuditChain()).resolves.toMatchObject({ valid: true });
+  });
+
+  it('rejects stale update and uninstall commands without mutating the plugin', async () => {
+    const { base, store } = await start();
+    const plugin = (await (
+      await fetch(`${base}/api/v1/plugins`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'CAS plugin' }),
+      })
+    ).json()) as Plugin;
+
+    const staleUpdate = await fetch(`${base}/api/v1/plugins/${plugin.id}/update`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        expectedVersion: plugin.version + 1,
+        releaseVersion: '2.0.0',
+        integritySha256: 'b'.repeat(64),
+      }),
+    });
+    expect(staleUpdate.status).toBe(400);
+    await expect(store.get<Plugin>(plugin.id)).resolves.toMatchObject({
+      releaseVersion: plugin.releaseVersion,
+      version: plugin.version,
+    });
+
+    const staleDelete = await fetch(`${base}/api/v1/plugins/${plugin.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: plugin.version + 1 }),
+    });
+    expect(staleDelete.status).toBe(400);
+    await expect(store.get<Plugin>(plugin.id)).resolves.toMatchObject({ id: plugin.id });
   });
 
   it('rejects an unknown connector', async () => {
