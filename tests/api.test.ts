@@ -450,7 +450,7 @@ describe('API boundary controls', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ projectId: project.id, uri: 'https://example.test/paper' }),
       })
-    ).json()) as { id: string; status: string };
+    ).json()) as { id: string; version: number; status: string };
     expect(source.status).toBe('pending');
 
     // A claim on an unretrieved source cannot be verified.
@@ -467,6 +467,8 @@ describe('API boundary controls', () => {
     // Retrieval of an unreachable host records inaccessible rather than inventing success.
     const retrieved = await fetch(`${base}/api/v1/sources/${source.id}/retrieve`, {
       method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: source.version }),
     });
     expect(retrieved.status).toBe(200);
     const body = (await retrieved.json()) as { status: string; contentHash?: string };
@@ -1202,6 +1204,137 @@ describe('API boundary controls', () => {
     });
     expect(deletedResponse.status).toBe(204);
   });
+  it('uses CAS and audits project updates, while rejecting stale versions', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Mutable project' }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as {
+      id: string;
+      version: number;
+      name: string;
+      archived: boolean;
+    };
+
+    const stale = await fetch(`${base}/api/v1/projects/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version + 1, name: 'stale' }),
+    });
+    expect(stale.status).toBe(400);
+
+    const updatedResponse = await fetch(`${base}/api/v1/projects/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version, name: 'Updated project', archived: true }),
+    });
+    expect(updatedResponse.status).toBe(200);
+    const updated = (await updatedResponse.json()) as {
+      version: number;
+      name: string;
+      archived: boolean;
+    };
+    expect(updated).toMatchObject({
+      version: created.version + 1,
+      name: 'Updated project',
+      archived: true,
+    });
+
+    const auditResponse = await fetch(`${base}/api/v1/audit?action=project.updated`);
+    expect(auditResponse.status).toBe(200);
+    await expect(auditResponse.json()).resolves.toEqual([
+      expect.objectContaining({
+        action: 'project.updated',
+        resourceId: created.id,
+        risk: 'medium',
+        decision: 'executed',
+      }),
+    ]);
+  });
+
+  it('requires current versions for provider tests, deletes, and source retrieval', async () => {
+    const base = await start();
+    const providerResponse = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Versioned provider',
+        providerKind: 'ollama',
+        endpoint: 'http://127.0.0.1:11434/v1',
+      }),
+    });
+    expect(providerResponse.status).toBe(201);
+    const provider = (await providerResponse.json()) as { id: string; version: number };
+
+    const staleTest = await fetch(`${base}/api/v1/providers/${provider.id}/test`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: provider.version + 1 }),
+    });
+    expect(staleTest.status).toBe(400);
+
+    const staleDelete = await fetch(`${base}/api/v1/providers/${provider.id}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: provider.version + 1 }),
+    });
+    expect(staleDelete.status).toBe(400);
+
+    const projectResponse = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Source project' }),
+    });
+    const project = (await projectResponse.json()) as { id: string };
+    const sourceResponse = await fetch(`${base}/api/v1/sources`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, uri: 'https://example.test/versioned-source' }),
+    });
+    const source = (await sourceResponse.json()) as { id: string; version: number };
+    const staleRetrieve = await fetch(`${base}/api/v1/sources/${source.id}/retrieve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: source.version + 1 }),
+    });
+    expect(staleRetrieve.status).toBe(400);
+  });
+
+  it('uses CAS when appending evaluation cases and rejects missing datasets', async () => {
+    const base = await start();
+    const missing = await fetch(`${base}/api/v1/evaluations/cases`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Orphan', expected: 'x' }),
+    });
+    expect(missing.status).toBe(400);
+
+    const datasetResponse = await fetch(`${base}/api/v1/evaluations/datasets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'CAS dataset' }),
+    });
+    const dataset = (await datasetResponse.json()) as { id: string; version: number };
+    const caseResponse = await fetch(`${base}/api/v1/evaluations/cases`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ datasetId: dataset.id, name: 'Bound case', expected: 'x' }),
+    });
+    expect(caseResponse.status).toBe(201);
+    const createdCase = (await caseResponse.json()) as { id: string };
+    const datasets = await fetch(`${base}/api/v1/evaluations/datasets`);
+    await expect(datasets.json()).resolves.toEqual([
+      expect.objectContaining({
+        id: dataset.id,
+        version: dataset.version + 1,
+        caseIds: [createdCase.id],
+      }),
+    ]);
+  });
+
   it('uses CAS and audit records for MCP enable and disable transitions', async () => {
     const base = await start();
     const createdResponse = await fetch(`${base}/api/v1/mcp-servers`, {

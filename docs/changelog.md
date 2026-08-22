@@ -49,6 +49,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Executor run-state commits now use compare-and-swap with terminal-state guards; rollback aborts in-flight execution and cannot be overwritten by a stale model/tool result.
 - MCP server enable/disable transitions now require current-version CAS tokens and write high-risk audit events, preventing stale administrative toggles.
 - Evaluation regex matching now structurally walks nested groups, escapes, and character classes so nested quantifiers cannot bypass the synchronous backtracking guard; deeper-group regression coverage was added.
+- Project updates, provider health/delete operations, source retrieval, and evaluation-case dataset appends now require current-version CAS tokens, with scoped mutation audits and orphan-case cleanup on a lost dataset race.
 
 ### Verified
 

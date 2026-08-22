@@ -1138,13 +1138,37 @@ export function createApi(deps: ApiDeps) {
           'project',
         );
         const body = await parseBody(req);
-        const saved = await deps.store.put({
-          ...project,
-          name: body.name ? String(body.name) : project.name,
-          archived: body.archived === undefined ? project.archived : Boolean(body.archived),
-          updatedAt: now(),
-          version: project.version,
-        } as Project);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== project.version)
+          throw new Error('project_version_required');
+        const changedFields: string[] = [];
+        const name =
+          body.name === undefined ? project.name : String(body.name).slice(0, 200).trim();
+        if (!name) throw new Error('project_name_required');
+        if (name !== project.name) changedFields.push('name');
+        const archived = body.archived === undefined ? project.archived : Boolean(body.archived);
+        if (archived !== project.archived) changedFields.push('archived');
+        const saved = await deps.store.putIfVersion(
+          {
+            ...project,
+            name,
+            archived,
+            version: project.version,
+          } as Project,
+          expectedVersion,
+        );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: project.workspaceId,
+          actorId,
+          action: 'project.updated',
+          resourceType: 'project',
+          resourceId: project.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: { version: saved.version, changedFields },
+        });
         return send(res, 200, saved);
       }
       if (projectMatch && req.method === 'DELETE') {
@@ -1983,16 +2007,35 @@ export function createApi(deps: ApiDeps) {
           'write',
           'model-provider',
         );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== provider.version)
+          throw new Error('provider_version_required');
         const health = await adapterFor(
           provider,
           resolveProviderToken(provider, deps.vault.getSync(provider.id)),
         ).health();
-        const saved = await deps.store.put({
-          ...provider,
-          health,
-          version: provider.version,
-        } as ModelProvider);
+        const saved = await deps.store.putIfVersion(
+          {
+            ...provider,
+            health,
+            version: provider.version,
+          } as ModelProvider,
+          expectedVersion,
+        );
         deps.registerProvider?.(saved);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: provider.scope,
+          actorId,
+          action: 'provider.tested',
+          resourceType: 'model-provider',
+          resourceId: provider.id,
+          risk: 'low',
+          decision: 'executed',
+          metadata: { health, version: saved.version },
+        });
         return send(res, 200, { provider: saved, health });
       }
       const providerDelete = path.match(/^\/api\/v1\/providers\/([^/]+)$/);
@@ -2003,21 +2046,43 @@ export function createApi(deps: ApiDeps) {
           'admin',
           'model-provider',
         );
-        await deps.vault.revoke(provider.id);
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== provider.version)
+          throw new Error('provider_version_required');
         const credential = await deps.store.get<Credential>(provider.credentialId ?? '');
+        const saved = await deps.store.putIfVersion(
+          {
+            ...provider,
+            enabled: false,
+            health: 'offline',
+            version: provider.version,
+          } as ModelProvider,
+          expectedVersion,
+        );
         if (credential)
-          await deps.store.put({
-            ...credential,
-            metadata: { ...credential.metadata, disabled: true },
-            version: credential.version,
-          } as Credential);
-        const saved = await deps.store.put({
-          ...provider,
-          enabled: false,
-          health: 'offline',
-          version: provider.version,
-        } as ModelProvider);
+          await deps.store.putIfVersion(
+            {
+              ...credential,
+              metadata: { ...credential.metadata, disabled: true },
+              version: credential.version,
+            } as Credential,
+            credential.version,
+          );
+        await deps.vault.revoke(provider.id);
         deps.registerProvider?.(saved);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: provider.scope,
+          actorId,
+          action: 'provider.disabled',
+          resourceType: 'model-provider',
+          resourceId: provider.id,
+          risk: 'critical',
+          decision: 'executed',
+          metadata: { version: saved.version, credentialDisabled: Boolean(credential) },
+        });
         return send(res, 200, saved);
       }
       if (path === '/api/v1/credentials' && req.method === 'GET')
@@ -2338,6 +2403,10 @@ export function createApi(deps: ApiDeps) {
           'write',
           'source',
         );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== source.version)
+          throw new Error('source_version_required');
         // Retrieval uses the same SSRF-hardened, DNS-pinned transport as provider calls.
         let status: Source['status'] = 'inaccessible';
         let contentHash: string | undefined;
@@ -2354,7 +2423,10 @@ export function createApi(deps: ApiDeps) {
         } catch {
           status = 'inaccessible';
         }
-        const updated = await deps.store.put({ ...source, status, contentHash, retrievedAt });
+        const updated = await deps.store.putIfVersion(
+          { ...source, status, contentHash, retrievedAt },
+          expectedVersion,
+        );
         await deps.store.audit({
           kind: 'audit-event',
           ownerId: actorId,
@@ -3638,15 +3710,14 @@ export function createApi(deps: ApiDeps) {
       }
       if (path === '/api/v1/evaluations/cases' && req.method === 'POST') {
         const body = await parseBody(req);
-        const datasetId = String(body.datasetId ?? 'dataset_local');
+        const datasetId = String(body.datasetId ?? '');
+        if (!datasetId) throw new Error('dataset_required');
         const parentDataset = await required(
           actorId,
           await deps.store.get<EvaluationDataset>(datasetId),
           'write',
           'evaluation-dataset',
-        ).catch(() => undefined);
-        if (!parentDataset && process.env.BOT_BUFFET_AUTH_MODE === 'production')
-          throw new Error('dataset_required');
+        );
         const evaluationCase = entity({
           kind: 'evaluation-case',
           ownerId: actorId,
@@ -3659,13 +3730,20 @@ export function createApi(deps: ApiDeps) {
           tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
         }) as EvaluationCase;
         await deps.store.insert(evaluationCase);
-        const dataset = await deps.store.get<EvaluationDataset>(evaluationCase.datasetId);
-        if (dataset)
-          await deps.store.put({
-            ...dataset,
-            caseIds: [...dataset.caseIds, evaluationCase.id],
-            version: dataset.version,
-          } as EvaluationDataset);
+        try {
+          await deps.store.putIfVersion(
+            {
+              ...parentDataset,
+              caseIds: [...parentDataset.caseIds, evaluationCase.id],
+              version: parentDataset.version,
+            } as EvaluationDataset,
+            parentDataset.version,
+          );
+        } catch (error) {
+          // Do not leave an orphan case when another writer won the dataset CAS.
+          await deps.store.delete(evaluationCase.id);
+          throw error;
+        }
         return send(res, 201, evaluationCase);
       }
       if (path === '/api/v1/evaluations/runs' && req.method === 'GET')
