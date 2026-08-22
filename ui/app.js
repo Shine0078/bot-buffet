@@ -58,11 +58,12 @@ async function createProject() {
 }
 async function addScopedRecord() {
   if (state.view === 'office') return createProject();
+  const projectId = $('#projectSelect')?.value || state.data?.projects?.[0]?.id;
+  if (!projectId && ['tasks', 'memory', 'budgets', 'workflows'].includes(state.view))
+    throw new Error('Select a project first');
   if (state.view === 'tasks') {
     const title = window.prompt('Task title');
     if (title === null) return;
-    const projectId = $('#projectSelect')?.value || state.data?.projects?.[0]?.id;
-    if (!projectId) throw new Error('Select a project first');
     const environments = await api('/api/v1/environments');
     const environment = (environments || []).find((item) => item.projectId === projectId);
     if (!environment) throw new Error('No environment for this project');
@@ -77,6 +78,63 @@ async function addScopedRecord() {
     await load();
     return switchView('tasks');
   }
+  if (state.view === 'memory') {
+    const text = window.prompt('Memory note');
+    if (text === null) return;
+    await api('/api/v1/memory', {
+      method: 'POST',
+      body: JSON.stringify({
+        namespace: 'project',
+        namespaceId: projectId,
+        text: text.trim() || 'Untitled note',
+      }),
+    });
+    await load();
+    return switchView('memory');
+  }
+  if (state.view === 'models') {
+    const modelName = window.prompt('Local model name');
+    if (modelName === null) return;
+    await api('/api/v1/local-models/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        providerKind: 'ollama',
+        endpoint: 'http://127.0.0.1:11434/v1',
+        modelName: modelName.trim() || 'local-model',
+        scope: $('#workspaceSelect')?.value || state.data?.workspaces?.[0]?.id,
+      }),
+    });
+    await load();
+    return switchView('models');
+  }
+  if (state.view === 'budgets') {
+    const raw = window.prompt('Monthly budget in dollars');
+    if (raw === null) return;
+    const dollars = Number(raw);
+    const limitCents = Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : 1000;
+    await api('/api/v1/budgets', {
+      method: 'POST',
+      body: JSON.stringify({ projectId, name: 'Monthly budget', period: 'monthly', limitCents }),
+    });
+    await load();
+    return switchView('budgets');
+  }
+  if (state.view === 'workflows') {
+    const name = window.prompt('Workflow name');
+    if (name === null) return;
+    await api('/api/v1/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        projectId,
+        name: name.trim() || 'Office workflow',
+        nodes: [{ id: 'start', kind: 'task', config: {} }],
+        edges: [],
+      }),
+    });
+    await load();
+    return switchView('workflows');
+  }
+  if (state.view === 'runs') return startSelectedRun().then(() => switchView('runs'));
   await switchView(state.view);
 }
 function selectedProject() {

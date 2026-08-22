@@ -253,4 +253,43 @@ describe('Office UI in a real browser', () => {
     expect(await page.locator('#viewTitle').innerText()).toBe('Settings');
     await page.close();
   }, 60_000);
+  it('creates memory, model, budget, and workflow records from Add', async () => {
+    const page = await browser.newPage();
+    await page.goto(base, { waitUntil: 'networkidle' });
+    await fetch(base + '/api/v1/projects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Add records' }),
+    });
+    await page.click('#refresh');
+    await page.click('.nav-item[data-view="memory"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    page.once('dialog', (dialog) => dialog.accept('Keep the office calm'));
+    await page.click('#tableAction');
+    await page.waitForFunction(() =>
+      /Keep the office calm/.test(document.querySelector('#tableBody')?.textContent ?? ''),
+    );
+    await page.click('.nav-item[data-view="models"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    page.once('dialog', (dialog) => dialog.accept('qwen2.5-coder'));
+    await page.click('#tableAction');
+    await page.waitForFunction(() =>
+      /qwen2.5-coder/.test(document.querySelector('#tableBody')?.textContent ?? ''),
+    );
+    await page.click('.nav-item[data-view="budgets"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    page.once('dialog', (dialog) => dialog.accept('25'));
+    await page.click('#tableAction');
+    await page.waitForFunction(() =>
+      /Monthly budget/.test(document.querySelector('#tableBody')?.textContent ?? ''),
+    );
+    await page.click('.nav-item[data-view="workflows"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    page.once('dialog', (dialog) => dialog.accept('Review loop'));
+    await page.click('#tableAction');
+    await page.waitForFunction(() =>
+      /Review loop/.test(document.querySelector('#tableBody')?.textContent ?? ''),
+    );
+    await page.close();
+  }, 60_000);
 });

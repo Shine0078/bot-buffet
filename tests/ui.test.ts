@@ -52,4 +52,10 @@ describe('Office UI accessibility contract', () => {
     expect(app).toContain('settings: [');
     expect(app).toContain('sendChat(text)');
   });
+  it('creates scoped records from the table Add button', () => {
+    expect(app).toContain("api('/api/v1/local-models/register'");
+    expect(app).toContain("api('/api/v1/budgets'");
+    expect(app).toContain("api('/api/v1/workflows'");
+    expect(app).toContain("namespace: 'project'");
+  });
 });
