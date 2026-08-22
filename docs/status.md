@@ -73,13 +73,16 @@ The profile-audit working-tree diff was reviewed in scan `be142bc7-f697-411d-a7f
 
 - The research workspace is now enforced rather than declarative. `POST /api/v1/sources/:id/retrieve` fetches content over the same SSRF-hardened, DNS-pinned transport used for providers, records a SHA-256 content hash and retrieval timestamp on success, and durably marks the source `inaccessible` on failure instead of inventing analysis. Citation verification is decided by the harness, never asserted by the caller: `POST /api/v1/citations` rejects empty claims and unknown sources, and marks `verified` only when the backing source is available, retrieved, and hashed. `GET /api/v1/projects/:id/research-brief` reports usable/pending/inaccessible source counts, unsupported claims, and contradictions detected by negation or divergent numeric values across claims about the same subject.
 
+- Durability now has direct evidence in `tests/durability.test.ts`: state is written by one store instance and recovered by a fresh instance over the same directory, which is exactly what a crashed and relaunched process does. Projects, run counters, and checkpoint state survive; memory that context compaction omits still exists durably afterward, proving compaction is a context decision and not data loss; and a failed run retains its last checkpoint so work can resume. The audit hash chain verifies after every recovery.
+- Sandbox boundaries are now exercised adversarially in `tests/sandbox-boundaries.test.ts`: absolute paths, encoded and nested traversal, null bytes, workspace-escaping symlinks, protected-path access through a nested directory, and five shell-injection metacharacter classes are all rejected.
+
 ## Completion assessment (2026-08-21)
 
 Measured against the master prompt's acceptance criteria, not against effort spent.
 
 | Area                                                       | State                                       | Evidence                                                                       |
 | ---------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| Control plane, entities, audit chain                       | Complete                                    | 125 tests, audit chain verification, cross-tenant isolation suite              |
+| Control plane, entities, audit chain                       | Complete                                    | 142 tests, audit chain verification, cross-tenant isolation suite              |
 | Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete                                    | `tests/orchestrator.test.ts`                                                   |
 | Local model registry and offline enforcement               | Complete                                    | discovery/registration routes, offline-only contracts                          |
 | Online provider adapters                                   | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3                                |
