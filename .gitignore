@@ -2,6 +2,7 @@ node_modules/
 dist/
 .data/
 .data-*/
+workspace/
 .env
 .env.*
 !.env.example
