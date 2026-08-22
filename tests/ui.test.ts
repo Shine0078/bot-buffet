@@ -45,4 +45,11 @@ describe('Office UI accessibility contract', () => {
     expect(app).toContain("api('/api/v1/tasks'");
     expect(app).toContain("switchView('runs')");
   });
+  it('wires inspector start, settings, and scoped chat to control-plane APIs', () => {
+    expect(app).toContain('id="startRun"');
+    expect(app).toContain("api('/api/v1/runs'");
+    expect(app).toContain("api('/api/v1/memory'");
+    expect(app).toContain('settings: [');
+    expect(app).toContain('sendChat(text)');
+  });
 });

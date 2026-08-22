@@ -38,6 +38,10 @@ function switchView(view) {
     return Promise.resolve();
   }
   if (state.view === 'usage') return usageTable();
+  if (state.view === 'settings') {
+    table('settings');
+    return Promise.resolve();
+  }
   table(state.view);
   return Promise.resolve();
 }
@@ -74,6 +78,70 @@ async function addScopedRecord() {
     return switchView('tasks');
   }
   await switchView(state.view);
+}
+function selectedProject() {
+  const id = $('#projectSelect')?.value;
+  return (
+    (state.data?.projects || []).find((project) => project.id === id) || state.data?.projects?.[0]
+  );
+}
+function selectedAgent() {
+  return (
+    (state.data?.agents || []).find((agent) => agent.id === state.selected) ||
+    state.data?.agents?.[0]
+  );
+}
+function selectedTask(agent) {
+  const tasks = state.data?.tasks || [];
+  return (
+    tasks.find((task) => task.id === agent?.currentTaskId) ||
+    tasks.find((task) => task.projectId === agent?.projectId) ||
+    tasks[0]
+  );
+}
+async function startSelectedRun() {
+  const agent = selectedAgent();
+  const project = (state.data?.projects || []).find((item) => item.id === agent?.projectId);
+  const task = selectedTask(agent);
+  if (!agent || !project || !task) throw new Error('Select an agent with a project and task first');
+  const run = await api('/api/v1/runs', {
+    method: 'POST',
+    body: JSON.stringify({
+      projectId: project.id,
+      agentId: agent.id,
+      taskId: task.id,
+      mode: 'chat',
+    }),
+  });
+  await load();
+  return run;
+}
+async function sendChat(text) {
+  const agent = selectedAgent();
+  const project = (state.data?.projects || []).find((item) => item.id === agent?.projectId);
+  if (!agent || !project) throw new Error('Select an agent first');
+  await api('/api/v1/memory', {
+    method: 'POST',
+    body: JSON.stringify({
+      namespace: 'agent',
+      namespaceId: agent.id,
+      scope: project.id,
+      text,
+      data: { source: 'office-chat', agentId: agent.id, projectId: project.id },
+    }),
+  });
+  $('#chatMessages').innerHTML += '<p><strong>You</strong> ' + esc(text) + '</p>';
+  try {
+    const run = await startSelectedRun();
+    $('#chatMessages').innerHTML +=
+      '<p class="muted">' +
+      esc(agent.profile?.name || 'Agent') +
+      ' started run ' +
+      esc(run.id) +
+      '</p>';
+  } catch (err) {
+    $('#chatMessages').innerHTML += '<p class="muted">Saved locally: ' + esc(err.message) + '</p>';
+  }
 }
 function render() {
   const d = state.data || {};
@@ -127,7 +195,9 @@ function selectAgent(id) {
   const a = (state.data.agents || []).find((x) => x.id === id);
   if (!a) return;
   $('#inspectorContent').innerHTML =
-    `<div class="agent-detail"><div class="detail-head"><div class="avatar">${esc(a.profile?.avatar || '◈')}</div><div><h2>${esc(a.profile?.name)}</h2><div class="detail-role">${esc(a.profile?.mission)}</div></div></div><div class="detail-list"><div><span>Status</span><strong>${esc(a.status)}</strong></div><div><span>Mode</span><strong>${esc(a.profile?.mode)}</strong></div><div><span>Network</span><strong>${esc(a.profile?.network)}</strong></div><div><span>Max steps</span><strong>${esc(a.profile?.maxSteps)}</strong></div><div><span>Tools</span><strong>${a.profile?.allowedToolIds?.length || 0} allowed</strong></div><div><span>Memory</span><strong>Project scoped</strong></div></div></div>`;
+    `<div class="agent-detail"><div class="detail-head"><div class="avatar">${esc(a.profile?.avatar || '◈')}</div><div><h2>${esc(a.profile?.name)}</h2><div class="detail-role">${esc(a.profile?.mission)}</div></div></div><div class="detail-list"><div><span>Status</span><strong>${esc(a.status)}</strong></div><div><span>Mode</span><strong>${esc(a.profile?.mode)}</strong></div><div><span>Network</span><strong>${esc(a.profile?.network)}</strong></div><div><span>Max steps</span><strong>${esc(a.profile?.maxSteps)}</strong></div><div><span>Tools</span><strong>${a.profile?.allowedToolIds?.length || 0} allowed</strong></div><div><span>Memory</span><strong>Project scoped</strong></div></div><button id="startRun" class="primary" type="button">Start run</button></div>`;
+  const start = $('#startRun');
+  if (start) start.onclick = () => startSelectedRun().catch((err) => showError(err.message));
 }
 async function usageTable() {
   $('#viewTitle').textContent = 'Usage and cost';
@@ -180,6 +250,23 @@ function table(view) {
         enabled: w.enabled,
       })),
       ['name', 'nodes', 'edges', 'enabled'],
+    ],
+    settings: [
+      'Settings',
+      [
+        { name: 'Control plane', value: location.origin },
+        {
+          name: 'Workspace',
+          value: $('#workspaceSelect')?.selectedOptions?.[0]?.textContent || 'local',
+        },
+        {
+          name: 'Project',
+          value: $('#projectSelect')?.selectedOptions?.[0]?.textContent || 'none',
+        },
+        { name: 'Auth mode', value: 'development' },
+        { name: 'Offline', value: (d.workspaces || [])[0]?.offlineMode ? 'yes' : 'no' },
+      ],
+      ['name', 'value'],
     ],
   }[view] || ['Items', [], ['id', 'createdAt']];
   $('#viewTitle').textContent = cfg[0];
@@ -238,7 +325,7 @@ $('#chatForm').onsubmit = (e) => {
   e.preventDefault();
   const text = $('#chatInput').value.trim();
   if (!text) return;
-  $('#chatMessages').innerHTML += `<p><strong>You</strong> ${esc(text)}</p>`;
+  sendChat(text).catch((err) => showError(err.message));
   $('#chatInput').value = '';
 };
 new EventSource('/events').onmessage = () => load();

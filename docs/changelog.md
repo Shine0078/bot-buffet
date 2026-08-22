@@ -54,4 +54,5 @@
 - Concurrency guard pass: run starts now enforce agent profile concurrency limits and durably mark excess concurrent runs as blocked.
 - Tenant-isolation evidence pass: added `tests/auth-isolation.test.ts`, which mints RS256-signed JWTs and proves the production OIDC path scopes each verified subject to its own tenant while denying unaffiliated and cross-tenant access.
 - Office action pass: wired New project, View all, and table Add so they create a project, open the runs table, and create a scoped task; project creation now provisions a blocked-network environment so tasks can be added immediately.
+- Office run pass: inspector Start run and scoped chat now post a run and agent memory through the control plane, and Settings is a real table view of workspace/project/auth state.
 - Workspace path pass: agent scratch now lives under the durable data directory so a read-only container root does not fail startup.

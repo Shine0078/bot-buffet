@@ -21,9 +21,46 @@ let base: string;
 
 const startServer = async (): Promise<string> => {
   const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-browser-'));
+  const store = createStore(dir);
+  let runCount = 0;
+  const orchestrator = Object.assign(new EventEmitter(), {
+    createRun: async (input: {
+      project: { id: string };
+      agent: { id: string };
+      task: { id: string };
+    }) => {
+      runCount += 1;
+      const run = {
+        id: 'run_office_' + runCount,
+        kind: 'run',
+        ownerId: 'local-user',
+        scope: input.project.id,
+        projectId: input.project.id,
+        environmentId: input.project.id,
+        agentId: input.agent.id,
+        taskId: input.task.id,
+        status: 'queued',
+        mode: 'chat',
+        stepCount: 0,
+        maxSteps: 8,
+        costCents: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        latencyMs: 0,
+        cancelRequested: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        version: 1,
+      };
+      await store.insert(run as never);
+      return run;
+    },
+    start: async () => undefined,
+    command: async () => undefined,
+  }) as unknown as Orchestrator;
   const api = createApi({
-    store: createStore(dir),
-    orchestrator: new EventEmitter() as unknown as Orchestrator,
+    store,
+    orchestrator,
     uiRoot: resolve(process.cwd(), 'ui'),
     vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
   });
@@ -158,6 +195,62 @@ describe('Office UI in a real browser', () => {
     page.once('dialog', (dialog) => dialog.accept('Ship the office floor'));
     await page.click('#tableAction');
     await page.waitForFunction(() => /Ship the office floor/.test(document.body.innerText));
+    await page.close();
+  }, 60_000);
+  it('starts a run from the inspector and records scoped chat', async () => {
+    const page = await browser.newPage();
+    await page.goto(base, { waitUntil: 'networkidle' });
+    const project = (await (
+      await fetch(base + '/api/v1/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Chat project' }),
+      })
+    ).json()) as { id: string };
+    const environments = (await (await fetch(base + '/api/v1/environments')).json()) as Array<{
+      id: string;
+      projectId: string;
+    }>;
+    const environment = environments.find((item) => item.projectId === project.id);
+    const agent = (await (
+      await fetch(base + '/api/v1/agents', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: project.id,
+          environmentId: environment?.id,
+          name: 'Desk One',
+        }),
+      })
+    ).json()) as { id: string };
+    await fetch(base + '/api/v1/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        environmentId: environment?.id,
+        title: 'Inspect the office',
+      }),
+    });
+    await page.click('#refresh');
+    await page.waitForFunction(() => document.querySelectorAll('[data-agent]').length > 0);
+    const desk = page.locator('[data-agent]').first();
+    if ((await desk.count()) > 0) await desk.click();
+    await page.waitForSelector('#startRun');
+    await page.click('#startRun');
+    await page.click('.nav-item[data-view="runs"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    await page.waitForFunction(() =>
+      /run_office_/.test(document.querySelector('#tableBody')?.textContent ?? ''),
+    );
+    await page.fill('#chatInput', 'Inspect the current work');
+    await page.click('#chatForm button');
+    await page.waitForFunction(() =>
+      /Inspect the current work/.test(document.querySelector('#chatMessages')?.textContent ?? ''),
+    );
+    await page.click('.nav-item[data-view="settings"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    expect(await page.locator('#viewTitle').innerText()).toBe('Settings');
     await page.close();
   }, 60_000);
 });
