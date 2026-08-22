@@ -2728,6 +2728,9 @@ export function createApi(deps: ApiDeps) {
           await required(actorId, namespaceEntity, 'write', namespaceKinds[namespace]);
         else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
           throw new Error('memory_scope_required');
+        const expiresAt = body.expiresAt === undefined ? undefined : String(body.expiresAt);
+        if (expiresAt !== undefined && (!expiresAt || !Number.isFinite(Date.parse(expiresAt))))
+          throw new Error('memory_expiry_invalid');
         const memory = entity({
           kind: 'memory',
           ownerId: actorId,
@@ -2739,7 +2742,7 @@ export function createApi(deps: ApiDeps) {
           sourceIds: [],
           approved: false,
           freshnessAt: now(),
-          expiresAt: body.expiresAt ? String(body.expiresAt) : undefined,
+          expiresAt,
         }) as MemoryItem;
         await deps.store.insert(memory);
         return send(res, 201, memory);

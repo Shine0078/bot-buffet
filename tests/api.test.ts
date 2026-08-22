@@ -1302,6 +1302,17 @@ describe('API boundary controls', () => {
   });
   it('requires a versioned memory approval transition and audits the decision', async () => {
     const base = await start();
+    const invalidExpiry = await fetch(`${base}/api/v1/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        namespace: 'session',
+        namespaceId: 'session-1',
+        text: 'bad',
+        expiresAt: 'not-a-date',
+      }),
+    });
+    expect(invalidExpiry.status).toBe(400);
     const createdResponse = await fetch(`${base}/api/v1/memory`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
