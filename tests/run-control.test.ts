@@ -74,6 +74,19 @@ describe('pause and resume', () => {
     // Resume hands the run back to the executor, so it is no longer paused.
     expect(resumed?.status).not.toBe('paused');
   });
+
+  it('rejects a stale control command instead of overwriting a newer state', async () => {
+    const { store, orchestrator, run } = await harness();
+    const first = orchestrator.command({ runId: run.id, type: 'pause' });
+    const second = orchestrator.command({ runId: run.id, type: 'cancel' });
+    const results = await Promise.allSettled([first, second]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected');
+    expect(rejected).toMatchObject({
+      reason: expect.objectContaining({ message: 'concurrent_update' }),
+    });
+    expect((await store.get<Run>(run.id))?.version).toBe(run.version + 1);
+  });
 });
 
 describe('cancel and stop', () => {

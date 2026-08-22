@@ -27,6 +27,8 @@ SSE now requires a project scope in every mode and drops events that do not carr
 
 `PATCH /api/v1/tasks/:id` requires the current task `version`, permits only the documented backlog/ready/running/blocked/done/cancelled transitions, and uses compare-and-swap persistence so stale clients receive a conflict instead of overwriting a newer state.
 
+`POST /api/v1/runs/:id/pause|resume|cancel|stop|fork|rollback` controls durable execution. Pause, resume, cancel, stop, and rollback use compare-and-swap on the current run version; concurrent operators receive `concurrent_update` rather than silently overwriting a newer transition. Fork creates a new queued run and may copy only a checkpoint belonging to the parent run.
+
 `POST /api/v1/projects/:id/duplicate` creates a same-workspace configuration copy
 with remapped project, environment, agent, task, workflow, budget, and schedule
 IDs. Active execution state, credentials, provider/model records, files, memory,

@@ -836,32 +836,41 @@ export class Orchestrator extends EventEmitter {
     const run = await this.deps.store.get<Run>(command.runId);
     if (!run) return undefined;
     if (command.type === 'pause')
-      return this.deps.store.put({
-        ...run,
-        status: 'paused',
-        pausedAt: now(),
-        version: run.version,
-      } as Run);
+      return this.deps.store.putIfVersion(
+        {
+          ...run,
+          status: 'paused',
+          pausedAt: now(),
+          version: run.version,
+        } as Run,
+        run.version,
+      );
     if (command.type === 'resume') {
-      await this.deps.store.put({
-        ...run,
-        status: 'queued',
-        pausedAt: undefined,
-        version: run.version,
-      } as Run);
-      void this.start(run.id);
-      return this.deps.store.get<Run>(run.id);
+      const resumed = await this.deps.store.putIfVersion(
+        {
+          ...run,
+          status: 'queued',
+          pausedAt: undefined,
+          version: run.version,
+        } as Run,
+        run.version,
+      );
+      void this.start(resumed.id);
+      return resumed;
     }
     if (command.type === 'cancel' || command.type === 'stop') {
       const controller = this.controllers.get(run.id);
       controller?.abort();
-      return this.deps.store.put({
-        ...run,
-        cancelRequested: true,
-        status: 'cancelled',
-        finishedAt: now(),
-        version: run.version,
-      } as Run);
+      return this.deps.store.putIfVersion(
+        {
+          ...run,
+          cancelRequested: true,
+          status: 'cancelled',
+          finishedAt: now(),
+          version: run.version,
+        } as Run,
+        run.version,
+      );
     }
     if (command.type === 'fork') {
       const checkpoint = command.checkpointId
@@ -895,14 +904,18 @@ export class Orchestrator extends EventEmitter {
         if (!checkpoint || checkpoint.runId !== run.id)
           throw new Error('checkpoint_scope_mismatch');
       }
+      const rolledBack = await this.deps.store.putIfVersion(
+        {
+          ...run,
+          status: 'rolled_back',
+          checkpointId: command.checkpointId,
+          updatedAt: now(),
+          version: run.version,
+        } as Run,
+        run.version,
+      );
       if (checkpoint) await this.deps.store.setRunState(run.id, checkpoint.state);
-      return this.deps.store.put({
-        ...run,
-        status: 'rolled_back',
-        checkpointId: command.checkpointId,
-        updatedAt: now(),
-        version: run.version,
-      } as Run);
+      return rolledBack;
     }
     return run;
   }

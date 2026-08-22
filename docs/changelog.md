@@ -39,6 +39,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - `memory.write` for agents, bounded by write scope, with approval before persistence.
 - Schedules now validate five-field cron expressions and IANA timezones, and a restart-safe local dispatcher claims each matching minute once with CAS before creating an assigned-agent run; missing context and start failures persist bounded errors and audit evidence.
 - Explicit memory expiry now has a bounded, authorization-filtered prune endpoint with namespace scoping and audit evidence; policy-based read retention remains non-destructive and separate.
+- Run pause/resume/cancel/stop/rollback transitions now use compare-and-swap, so concurrent operator commands fail with a conflict instead of overwriting newer run state; the race is covered by a regression test.
 
 ### Verified
 
