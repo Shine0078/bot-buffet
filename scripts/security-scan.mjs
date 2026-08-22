@@ -12,9 +12,11 @@ async function walk(dir) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) await walk(path);
     else if (
-      ['.ts', '.js', '.mjs', '.json', '.html', '.css', '.yml', '.yaml', '.env'].includes(
+      ['.ts', '.js', '.mjs', '.json', '.html', '.css', '.yml', '.yaml'].includes(
         extname(entry.name),
-      )
+      ) ||
+      entry.name === '.env' ||
+      entry.name.startsWith('.env.')
     ) {
       const text = await readFile(path, 'utf8');
       if (suspicious.test(text)) findings.push(path);

@@ -61,7 +61,7 @@ export const isSafeRegexPattern = (pattern: string): boolean => {
   if (/\\(?:[1-9]\d*|k<[^>]+>)/u.test(pattern) || /\(\?[=!<]/u.test(pattern)) return false;
   // A quantified group/character class followed by another quantifier is the
   // classic nested-quantifier shape (`(a+)+`, `(?:a{1,3})*`).
-  if (/(?:\([^()]*[+*{][^()]*\)|\[[^\]]*\][+*?])\s*(?:[+*?]|\{\d)/u.test(pattern)) return false;
+  if (/(?:\([^()]*[+*?{][^()]*\)|\[[^\]]*\][+*?])\s*(?:[+*?]|\{\d)/u.test(pattern)) return false;
   // Alternation of overlapping branches under a quantifier (`(a|aa)+`) also
   // causes unbounded backtracking as the input grows.
   if (/\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d)/u.test(pattern)) return false;

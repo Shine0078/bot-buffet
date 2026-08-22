@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 
 const MAX_OUTPUT_BYTES = 1_000_000;
@@ -54,6 +54,12 @@ export function resolveSandboxImage(
  * controls the small explicit set forwarded into the container.
  */
 const BASE_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'ComSpec', 'LANG'];
+const DOCKER_CLIENT_ENV_KEYS = [
+  'DOCKER_HOST',
+  'DOCKER_CONTEXT',
+  'DOCKER_TLS_VERIFY',
+  'DOCKER_CERT_PATH',
+];
 
 /**
  * Build the environment a sandboxed command may see: the minimum needed to
@@ -77,11 +83,34 @@ export function sandboxEnvironment(
   return env;
 }
 
+/**
+ * Build the environment for the Docker CLI itself. Runner connection settings
+ * are operator configuration for the client process, not agent variables, so
+ * they are deliberately kept out of sandboxEnvironment and never passed with
+ * `--env` into the untrusted container.
+ */
+export function dockerClientEnvironment(
+  allowedKeys: string[] = [],
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env = sandboxEnvironment(allowedKeys, source);
+  for (const key of DOCKER_CLIENT_ENV_KEYS) {
+    const value = source[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 /** Agent code always runs in a container; there is no host-process fallback. */
 export type SandboxMode = 'docker';
 export type SandboxNetwork = 'blocked' | 'allowlist' | 'open';
 
 export type SandboxResult = { stdout: string; stderr: string; code: number };
+
+/** Convert a host-relative path to the POSIX spelling used inside Linux Docker images. */
+export function toContainerPath(relativePath: string): string {
+  return relativePath.replaceAll('\\', '/');
+}
 
 export interface SandboxRuntime {
   readonly mode: SandboxMode;
@@ -167,7 +196,7 @@ async function runDocker(
       // The docker CLI itself gets only the allowlisted values, so the
       // forwarded `--env NAME` flags have something to read and nothing else
       // leaks into the container.
-      env: sandboxEnvironment(environmentKeys),
+      env: dockerClientEnvironment(environmentKeys),
     },
   );
   const stdout: Buffer[] = [];
@@ -237,7 +266,7 @@ class DockerSandbox implements SandboxRuntime {
       [
         '-e',
         "const fs=require('node:fs');const p=process.argv[1];const max=Number(process.argv[2]);const s=fs.statSync(p);if(!s.isFile()||s.size>max){process.stderr.write('sandbox_read_too_large');process.exit(2)}const fd=fs.openSync(p,'r');const b=Buffer.alloc(s.size);let o=0;while(o<b.length){const n=fs.readSync(fd,b,o,b.length-o, o);if(!n)break;o+=n}fs.closeSync(fd);process.stdout.write(b.subarray(0,o))",
-        `/workspace/${relativePath}`,
+        `/workspace/${toContainerPath(relativePath)}`,
         String(MAX_FILE_READ_BYTES),
       ],
       'blocked',
@@ -255,7 +284,7 @@ class DockerSandbox implements SandboxRuntime {
       [
         '-e',
         "require('node:fs').mkdirSync(require('node:path').dirname(process.argv[1]), {recursive:true}); process.stdin.pipe(require('node:fs').createWriteStream(process.argv[1]))",
-        `/workspace/${relativePath}`,
+        `/workspace/${toContainerPath(relativePath)}`,
       ],
       'blocked',
       content,
@@ -274,7 +303,7 @@ class DockerSandbox implements SandboxRuntime {
       [
         '-e',
         "const s=require('node:fs').statSync(process.argv[1]); process.stdout.write(JSON.stringify({size:s.size,isFile:s.isFile()}))",
-        `/workspace/${relativePath}`,
+        `/workspace/${toContainerPath(relativePath)}`,
       ],
       'blocked',
       undefined,
@@ -320,9 +349,21 @@ export function createSandboxRuntime(workspaceRoot: string): SandboxRuntime {
 }
 
 export function assertSandboxConfiguration(): void {
-  if (process.env.BOT_BUFFET_AUTH_MODE !== 'production') return;
   createSandboxRuntime(process.env.BOT_BUFFET_DATA_DIR ?? '.data');
-  // Fail at startup rather than at the first agent command: an unpinned image
-  // is a configuration error the operator must fix before anything executes.
+  // Fail at startup rather than reporting a healthy control plane whose agent
+  // tools can never run. The Docker CLI may target a host daemon, a named pipe,
+  // or an explicitly configured runner through DOCKER_HOST; the application
+  // does not silently fall back to a host process when none is reachable.
+  try {
+    execFileSync('docker', ['info', '--format', '{{.ServerVersion}}'], {
+      timeout: 5_000,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } catch {
+    throw new Error('sandbox_runner_unavailable');
+  }
+  // In production, fail at startup rather than at the first agent command: an
+  // unpinned image is a configuration error the operator must fix first.
   resolveSandboxImage();
 }

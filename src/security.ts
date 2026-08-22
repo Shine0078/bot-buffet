@@ -254,10 +254,15 @@ const privateHost = (host: string): boolean => {
       normalized === '::1' ||
       normalized.startsWith('fc') ||
       normalized.startsWith('fd') ||
+      // Deprecated site-local unicast (fec0::/10) remains routable on
+      // internal networks and must not be a server-side request target.
+      /^fe[c-f]/u.test(normalized) ||
       normalized.startsWith('fe8') ||
       normalized.startsWith('fe9') ||
       normalized.startsWith('fea') ||
-      normalized.startsWith('feb')
+      normalized.startsWith('feb') ||
+      // Multicast/reserved IPv6 destinations are never provider endpoints.
+      normalized.startsWith('ff')
     );
   }
   return false;

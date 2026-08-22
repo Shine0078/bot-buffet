@@ -165,8 +165,8 @@ export function evaluateEnvironment(facts) {
     add({ name: 'git', status: 'ok', detail: facts.gitVersion });
   }
 
-  // ---- Docker: optional locally, required for the production sandbox mode.
-  // The CLI being on PATH proves nothing: `docker --version` answers from the
+  // ---- Docker: mandatory because agent file and shell tools have no host
+  // process fallback. The CLI being on PATH proves nothing: `docker --version` answers from the
   // client alone, so a machine with Docker Desktop installed but not running
   // reports a version and then fails every actual container operation. The
   // daemon is what the sandbox needs, so the daemon is what is checked, and the
@@ -175,15 +175,15 @@ export function evaluateEnvironment(facts) {
   if (!facts.dockerVersion) {
     add({
       name: 'docker',
-      status: 'warning',
-      detail: 'Docker is not installed; container sandbox mode cannot be exercised here.',
+      status: 'blocker',
+      detail: 'Docker is not installed; the mandatory container sandbox cannot run.',
       remediation: dockerRemediation(platform),
     });
   } else if (facts.dockerDaemonReachable === false) {
     add({
       name: 'docker',
-      status: 'warning',
-      detail: `${facts.dockerVersion} is installed but the daemon is not reachable.`,
+      status: 'blocker',
+      detail: `${facts.dockerVersion} is installed but the mandatory daemon is not reachable.`,
       remediation: dockerDaemonRemediation(platform),
     });
   } else {

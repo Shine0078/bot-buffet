@@ -191,6 +191,44 @@ describe('API boundary controls', () => {
     expect(invalidCost.status).toBe(400);
   });
 
+  it('derives model locality from the provider endpoint instead of trusting the body', async () => {
+    const base = await start();
+    const providerResponse = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Cloud route host',
+        providerKind: 'openai',
+        endpoint: 'https://api.openai.com/v1',
+      }),
+    });
+    const provider = (await providerResponse.json()) as { id: string };
+    const rejected = await fetch(`${base}/api/v1/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: provider.id, modelName: 'cloud', local: true }),
+    });
+    expect(rejected.status).toBe(400);
+
+    const localProviderResponse = await fetch(`${base}/api/v1/providers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Local route host',
+        providerKind: 'ollama',
+        endpoint: 'http://127.0.0.1:11434/v1',
+      }),
+    });
+    const localProvider = (await localProviderResponse.json()) as { id: string };
+    const created = await fetch(`${base}/api/v1/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: localProvider.id, modelName: 'local', local: false }),
+    });
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({ local: true });
+  });
+
   it('manages project budgets and estimates cost before execution', async () => {
     const base = await start();
     const project = (await (

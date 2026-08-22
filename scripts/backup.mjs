@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createCipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -14,15 +14,48 @@ const output = resolve(
 );
 await mkdir(output, { recursive: true });
 const files = ['state.json', 'credentials.enc.json'];
-const manifest = { createdAt: new Date().toISOString(), source: dataDir, files: [] };
+const key = backupKey ? createHash('sha256').update(backupKey).digest() : undefined;
+const encrypt = (bytes) => {
+  if (!key) return { bytes, encrypted: false };
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce);
+  const ciphertext = Buffer.concat([cipher.update(bytes), cipher.final()]);
+  return {
+    bytes: Buffer.from(
+      JSON.stringify({
+        version: 1,
+        algorithm: 'aes-256-gcm',
+        nonce: nonce.toString('base64url'),
+        tag: cipher.getAuthTag().toString('base64url'),
+        ciphertext: ciphertext.toString('base64url'),
+      }),
+    ),
+    encrypted: true,
+  };
+};
+const manifest = {
+  version: 2,
+  createdAt: new Date().toISOString(),
+  source: dataDir,
+  files: [],
+};
 for (const file of files) {
   try {
-    const bytes = await readFile(join(dataDir, file));
-    await writeFile(join(output, file), bytes, { mode: 0o600 });
+    const plaintext = await readFile(join(dataDir, file));
+    if (process.env.BOT_BUFFET_AUTH_MODE === 'production' && file === 'state.json' && !key)
+      throw new Error('production_backup_encryption_required');
+    // State contains prompts, files, memory, and audit metadata. Encrypt it
+    // with authenticated encryption whenever a backup key is available; the
+    // credential vault is already encrypted at rest and remains byte-for-byte
+    // restorable so its separately provisioned vault key is preserved.
+    const stored =
+      file === 'state.json' ? encrypt(plaintext) : { bytes: plaintext, encrypted: false };
+    await writeFile(join(output, file), stored.bytes, { mode: 0o600 });
     manifest.files.push({
       file,
-      bytes: bytes.length,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
+      bytes: stored.bytes.length,
+      sha256: createHash('sha256').update(stored.bytes).digest('hex'),
+      encrypted: stored.encrypted,
     });
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;

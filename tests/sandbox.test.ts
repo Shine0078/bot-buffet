@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createSandboxRuntime,
+  dockerClientEnvironment,
   dockerRunArgs,
   isDigestPinned,
   resolveSandboxImage,
   sandboxEnvironment,
+  toContainerPath,
 } from '../src/sandbox.js';
 
 const previousMode = process.env.BOT_BUFFET_SANDBOX_MODE;
@@ -39,6 +41,11 @@ describe('sandbox runtime policy', () => {
         '--version',
       ]),
     );
+  });
+
+  it('normalizes Windows host separators for Linux container paths', () => {
+    expect(toContainerPath('nested\\created.txt')).toBe('nested/created.txt');
+    expect(toContainerPath('src\\lib\\index.ts')).toBe('src/lib/index.ts');
   });
 
   it('selects Docker by default, without requiring a daemon during construction', () => {
@@ -168,6 +175,18 @@ describe('sandbox environment is explicit, never inherited', () => {
     const env = sandboxEnvironment([], source);
     expect(env).not.toBe(source);
     expect(Object.keys(env).length).toBeLessThan(Object.keys(source).length);
+  });
+
+  it('keeps runner connection settings on the Docker client, not in the container', () => {
+    const env = dockerClientEnvironment([], {
+      ...source,
+      DOCKER_HOST: 'npipe:////./pipe/docker_engine',
+      DOCKER_CERT_PATH: 'C:/operator/docker-certs',
+    });
+    expect(env.DOCKER_HOST).toBe('npipe:////./pipe/docker_engine');
+    expect(env.DOCKER_CERT_PATH).toBe('C:/operator/docker-certs');
+    expect(sandboxEnvironment([], env).DOCKER_HOST).toBeUndefined();
+    expect(sandboxEnvironment([], env).DOCKER_CERT_PATH).toBeUndefined();
   });
 
   it('forwards allowed variables to the container by name, not by value', () => {

@@ -3,7 +3,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApi } from './api.js';
 import { assertDeploymentAuthConfiguration } from './auth.js';
-import { adapterFor, MockLocalAdapter, resolveProviderToken } from './providers.js';
+import {
+  adapterFor,
+  isLocalProvider,
+  MockLocalAdapter,
+  resolveProviderToken,
+} from './providers.js';
 import { ModelRouter } from './router.js';
 import { Orchestrator } from './orchestrator.js';
 import { createStore } from './store.js';
@@ -179,6 +184,10 @@ const device = new DeviceSessionStore();
 const router = new ModelRouter(
   async () => store.list<Model>((x) => x.kind === 'model'),
   async () => true,
+  async (model) => {
+    const provider = await store.get<ModelProvider>(model.providerId);
+    return provider ? isLocalProvider(provider) : false;
+  },
 );
 const providers = new Map(
   (await store.list<ModelProvider>((x) => x.kind === 'model-provider')).map((provider) => [
@@ -192,9 +201,12 @@ const orchestrator = new Orchestrator({
   tools,
   workspaceRoot: (project) => join(workspaceDir, project.id),
   adapters: (model) => {
-    if (model.local) return new MockLocalAdapter(model.modelName);
     const provider = providers.get(model.providerId);
     if (!provider) throw new Error('provider_not_found');
+    // The bootstrap provider uses a port-zero loopback endpoint as an in-process
+    // mock. Other local models still use their validated provider adapter.
+    if (model.local && provider.endpoint.endsWith(':0/v1'))
+      return new MockLocalAdapter(model.modelName);
     return adapterFor(provider, resolveProviderToken(provider, vault.getSync(provider.id)));
   },
 });

@@ -263,6 +263,9 @@ describe('durable orchestration', () => {
       dependencyIds: [],
       labels: [],
     }) as Task;
+    // Completion evidence must come from deterministic tool state, not model text.
+    // This fixture exercises checkpoints/concurrency only, so it has no acceptance criteria.
+    task.acceptanceCriteria = [];
     for (const x of [project, agent, model, task]) await store.insert(x);
     const orchestrator = new Orchestrator({
       store,

@@ -26,6 +26,8 @@ export class ModelRouter {
   constructor(
     private readonly models: () => Promise<Model[]>,
     private readonly health: (modelId: ID) => Promise<boolean> = async () => true,
+    /** Resolve locality from the provider boundary in production. */
+    private readonly locality: (model: Model) => Promise<boolean> = async (model) => model.local,
   ) {}
 
   async choose(
@@ -34,6 +36,12 @@ export class ModelRouter {
     overrideModelId?: ID,
   ): Promise<RoutingDecision> {
     const inventory = await this.models();
+    const localById = new Map(
+      await Promise.all(
+        inventory.map(async (model) => [model.id, await this.locality(model)] as const),
+      ),
+    );
+    const isLocal = (model: Model): boolean => localById.get(model.id) === true;
     const estimateCost = (model: Model) =>
       request.estimatedCostCents ??
       (Math.max(0, request.contextTokens) * model.inputCostPerMillionCents +
@@ -46,8 +54,8 @@ export class ModelRouter {
           model.capabilities.contextTokens !== undefined &&
           model.capabilities.contextTokens >= request.contextTokens,
       )
-      .filter((model) => !request.offline || model.local)
-      .filter((model) => request.privacy !== 'private' || model.local)
+      .filter((model) => !request.offline || isLocal(model))
+      .filter((model) => request.privacy !== 'private' || isLocal(model))
       .filter((model) => !request.scopeIds?.length || request.scopeIds.includes(model.scope))
       .filter(
         (model) =>
@@ -56,7 +64,7 @@ export class ModelRouter {
           request.allowedModelIds.includes(model.modelName) ||
           request.allowedModelIds.includes(model.name),
       )
-      .filter((model) => !route?.offlineOnly || model.local)
+      .filter((model) => !route?.offlineOnly || isLocal(model))
       .filter(
         (model) => route?.maxCostCents === undefined || estimateCost(model) <= route.maxCostCents,
       );
@@ -88,11 +96,11 @@ export class ModelRouter {
           : route?.strategy === 'weighted'
             ? [...filtered].sort((a, b) => (b.routingWeight ?? 0) - (a.routingWeight ?? 0))
             : route?.strategy === 'privacy-first'
-              ? [...filtered].sort((a, b) => Number(b.local) - Number(a.local))
+              ? [...filtered].sort((a, b) => Number(isLocal(b)) - Number(isLocal(a)))
               : filtered;
     for (const model of ordered)
       if (await this.health(model.id)) {
-        assertOffline(request.offline, model.local);
+        assertOffline(request.offline, isLocal(model));
         return {
           modelId: model.id,
           attempted: ordered.map((x) => x.id),

@@ -37,6 +37,16 @@ describe('model routing', () => {
       (await router.choose({ contextTokens: 100, privacy: 'private', offline: true })).modelId,
     ).toBe('local');
   });
+  it('uses provider-derived locality when a model record claims to be local', async () => {
+    const router = new ModelRouter(
+      async () => [model('forged-cloud', true)],
+      async () => true,
+      async () => false,
+    );
+    await expect(
+      router.choose({ contextTokens: 100, privacy: 'private', offline: true }),
+    ).rejects.toThrow('routing:no_eligible_models');
+  });
   it('limits automatic selection to authorized model scopes', async () => {
     const router = new ModelRouter(async () => [
       { ...model('other', true), scope: 'other-project' },

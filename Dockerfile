@@ -17,6 +17,9 @@ RUN npm run build
 
 # node:22-alpine
 FROM node@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+# The control plane invokes a separately managed Docker/microVM runner for
+# agent tools. Install only the CLI; never start a daemon inside this image.
+RUN apk add --no-cache docker-cli
 # BOT_BUFFET_HOST is 0.0.0.0 here and loopback everywhere else: binding
 # loopback inside a container makes the published port unreachable, while
 # defaulting to loopback on a workstation keeps a credential-holding control

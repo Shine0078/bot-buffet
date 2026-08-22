@@ -28,7 +28,7 @@ import { ToolContext, ToolRegistry } from './tools.js';
 import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext, memoryToContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
-import { labelUntrusted } from './injection.js';
+import { injectionDecision, labelUntrusted } from './injection.js';
 import { canStartInMode, decideMode } from './modes.js';
 import { escalationOutcome } from './escalation.js';
 import { buildSystemPrompt } from './prompt.js';
@@ -522,11 +522,12 @@ export class Orchestrator extends EventEmitter {
               nextState[`tool:${call.name}:injection`] = labeled.signals.map(
                 (signal) => signal.pattern,
               );
+              const injection = injectionDecision(labeled);
               await this.emitAudit(
                 run,
                 'tool.untrusted_content',
                 labeled.suspicious ? 'high' : 'low',
-                labeled.suspicious ? 'approval-required' : 'allowed',
+                injection.decision === 'approval-required' ? 'approval-required' : 'allowed',
                 { tool: call.name, signals: labeled.signals.map((signal) => signal.pattern) },
               );
               this.emit('run', {
@@ -536,6 +537,22 @@ export class Orchestrator extends EventEmitter {
                 tool: call.name,
                 signals: labeled.signals.map((signal) => signal.pattern),
               });
+              if (injection.decision === 'approval-required') {
+                // A label is necessary context hygiene, but it is not a policy
+                // boundary: the next model turn could still treat the fenced
+                // text as a reason to mutate the workspace. Pause the run and
+                // require an explicit human decision before that text can be
+                // reintroduced into model context.
+                // Persist the fenced result and signal before returning; an
+                // approval/resume must not lose the evidence that triggered it.
+                await this.deps.store.setRunState(runId, nextState);
+                await this.requestApproval(run, step.id, 'high', 'tool.untrusted_content', {
+                  tool: call.name,
+                  signals: injection.reasons,
+                });
+                await this.updateRun(current, { status: 'waiting_approval' });
+                return;
+              }
             }
             this.emit('run', {
               type: 'tool.executed',

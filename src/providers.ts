@@ -77,6 +77,21 @@ const LOCAL_PROVIDER_KINDS = new Set<ProviderKind>([
   'jan',
 ]);
 
+/**
+ * Locality is a property of the validated endpoint, not a caller-supplied
+ * model flag. A restored or administratively imported record is local only
+ * when its endpoint is strictly loopback; malformed or public endpoints are
+ * treated as non-local so private/offline routing fails closed.
+ */
+export const isLocalProvider = (provider: ModelProvider): boolean => {
+  try {
+    assertSafeEndpoint(provider.endpoint, true);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** Names that must never be exposed to a model provider through a user-created reference. */
 const PROTECTED_ENVIRONMENT_VARIABLE =
   /(?:^|_)(?:MASTER_KEY|BACKUP_KEY|BOOTSTRAP_TOKEN|OIDC_|PRIVATE_KEY|CLIENT_SECRET|SECRET_ACCESS_KEY|SESSION_TOKEN|APPLICATION_CREDENTIALS)(?:$|_)/u;

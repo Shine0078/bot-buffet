@@ -86,6 +86,17 @@ describe('deterministic evaluation engine', () => {
     expect(results[0]?.evidence).toContain('grader:regex-unsafe');
   });
 
+  it('rejects optional quantifiers nested inside a repeated group', () => {
+    const results = evaluateCases(
+      [evaluationCase('nested-optional', '^(a?){30}a{30}$', ['regex'])],
+      {
+        'nested-optional': 'a'.repeat(30) + '!',
+      },
+    );
+    expect(results[0]?.passed).toBe(false);
+    expect(results[0]?.evidence).toContain('grader:regex-unsafe');
+  });
+
   it('uses a separated judge and fails closed when the judge misbehaves', () => {
     const results = evaluateCases(
       [

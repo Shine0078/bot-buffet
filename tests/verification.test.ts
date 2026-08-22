@@ -38,7 +38,7 @@ const policy = (overrides: Partial<VerificationPolicy> = {}): VerificationPolicy
 });
 
 describe('acceptance check', () => {
-  it('passes when every criterion appears in the run state', () => {
+  it('passes when every criterion appears in a tool result', () => {
     const result = verifyDeterministic(policy(), {
       task: task(['repository', 'tests']),
       state: { 'tool:fs.read': 'repository contents and tests output' },
@@ -63,10 +63,19 @@ describe('acceptance check', () => {
     expect(result.results[0]?.detail).toMatch(/No acceptance criteria/);
   });
 
-  it('matches case-insensitively', () => {
+  it('does not accept model text as execution evidence', () => {
     const result = verifyDeterministic(policy(), {
       task: task(['Repository']),
-      state: { x: 'REPOSITORY' },
+      state: { lastResponse: 'REPOSITORY' },
+    });
+    expect(result.passed).toBe(false);
+    expect(result.evidence).toEqual([]);
+  });
+
+  it('matches tool evidence case-insensitively', () => {
+    const result = verifyDeterministic(policy(), {
+      task: task(['Repository']),
+      state: { 'tool:fs.read': 'REPOSITORY' },
     });
     expect(result.passed).toBe(true);
   });

@@ -51,6 +51,7 @@ import {
   discoverLocalEndpoints,
   localDiscoveryCandidates,
   LocalDiscoveryResult,
+  isLocalProvider,
   resolveProviderToken,
   validateProviderEnvironmentCredential,
 } from './providers.js';
@@ -107,7 +108,10 @@ const MAX_BODY_BYTES = 2_000_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 120;
 const WEBHOOK_DELIVERY_TIMEOUT_MS = 10_000;
-const requestBuckets = new Map<string, { startedAt: number; count: number }>();
+const MAX_SSE_CONNECTIONS = 100;
+const MAX_SSE_PER_ACTOR = 10;
+const MAX_SSE_PER_PROJECT = 25;
+const MAX_SSE_LIFETIME_MS = 30 * 60_000;
 const parseBody = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
   const declaredLength = Number(req.headers['content-length'] ?? 0);
   if (declaredLength > MAX_BODY_BYTES) throw new Error('request_body_too_large');
@@ -159,6 +163,7 @@ const parseOAuthConfig = (value: unknown): OAuthProviderConfig | undefined => {
 
 export function createApi(deps: ApiDeps) {
   const authorization = new AuthorizationService(deps.store);
+  const requestBuckets = new Map<string, { startedAt: number; count: number }>();
   // Verified model weights live beside the durable state rather than in the
   // repository, so an import cannot land on a read-only container root.
   const modelStoreRoot =
@@ -183,8 +188,10 @@ export function createApi(deps: ApiDeps) {
   };
   const subscribers = new Set<{
     res: ServerResponse;
-    projectId?: string;
+    actorId: string;
+    projectId: string;
     heartbeat: NodeJS.Timeout;
+    lifetime: NodeJS.Timeout;
   }>();
   const dispatchWebhookEvent = async (event: Record<string, unknown>): Promise<void> => {
     const eventType = typeof event.type === 'string' ? event.type : '';
@@ -878,7 +885,18 @@ export function createApi(deps: ApiDeps) {
         if (!projectId) return send(res, 400, { code: 'project_scope_required' });
         if (projectId)
           await required(actorId, await deps.store.get<Project>(projectId), 'read', 'project');
-        if (subscribers.size >= 100) return send(res, 429, { code: 'sse_capacity_reached' });
+        const actorConnections = [...subscribers].filter(
+          (subscriber) => subscriber.actorId === actorId,
+        ).length;
+        const projectConnections = [...subscribers].filter(
+          (subscriber) => subscriber.projectId === projectId,
+        ).length;
+        if (
+          subscribers.size >= MAX_SSE_CONNECTIONS ||
+          actorConnections >= MAX_SSE_PER_ACTOR ||
+          projectConnections >= MAX_SSE_PER_PROJECT
+        )
+          return send(res, 429, { code: 'sse_capacity_reached' });
         res.statusCode = 200;
         res.setHeader('content-type', 'text/event-stream');
         res.setHeader('cache-control', 'no-cache');
@@ -892,10 +910,17 @@ export function createApi(deps: ApiDeps) {
             clearInterval(heartbeat);
           }
         }, 30_000);
-        const subscriber = { res, projectId, heartbeat };
+        const lifetime = setTimeout(() => {
+          clearInterval(heartbeat);
+          subscribers.delete(subscriber);
+          if (!res.writableEnded) res.end();
+        }, MAX_SSE_LIFETIME_MS);
+        lifetime.unref();
+        const subscriber = { res, actorId, projectId, heartbeat, lifetime };
         subscribers.add(subscriber);
         req.on('close', () => {
           clearInterval(heartbeat);
+          clearTimeout(lifetime);
           subscribers.delete(subscriber);
         });
         return;
@@ -1905,6 +1930,8 @@ export function createApi(deps: ApiDeps) {
           (routingWeight !== undefined && (!Number.isFinite(routingWeight) || routingWeight < 0))
         )
           throw new Error('model_metadata_invalid');
+        const local = isLocalProvider(provider);
+        if (body.local === true && !local) throw new Error('model_locality_invalid');
         const model = entity({
           kind: 'model',
           ownerId: actorId,
@@ -1912,7 +1939,9 @@ export function createApi(deps: ApiDeps) {
           providerId: provider.id,
           name: String(body.name ?? body.modelName),
           modelName: String(body.modelName),
-          local: Boolean(body.local),
+          // Never trust the request body for privacy/offline routing. Derive
+          // locality from the provider endpoint that passed validation.
+          local,
           capabilities: { ...defaultCapabilities(), ...((body.capabilities as object) ?? {}) },
           inputCostPerMillionCents,
           outputCostPerMillionCents,

@@ -87,16 +87,16 @@ describe('preflight classification', () => {
     // `docker --version` answers from the client alone, so CLI presence is not
     // evidence the sandbox can run. The two states need different actions.
     const absent = evaluateEnvironment({ ...healthy, dockerVersion: null });
-    expect(absent.warnings[0]?.detail).toMatch(/not installed/);
-    expect(absent.warnings[0]?.remediation).toMatch(/Install Docker/);
+    expect(absent.blockers[0]?.detail).toMatch(/not installed/);
+    expect(absent.blockers[0]?.remediation).toMatch(/Install Docker/);
 
     const stopped = evaluateEnvironment({
       ...healthy,
       dockerVersion: 'Docker version 29.5.3',
       dockerDaemonReachable: false,
     });
-    expect(stopped.warnings[0]?.detail).toMatch(/daemon is not reachable/);
-    expect(stopped.warnings[0]?.remediation).toMatch(/Start the Docker daemon/);
+    expect(stopped.blockers[0]?.detail).toMatch(/daemon is not reachable/);
+    expect(stopped.blockers[0]?.remediation).toMatch(/Start the Docker daemon/);
   });
 
   it('gives the Windows daemon warning its own remediation', () => {
@@ -106,7 +106,7 @@ describe('preflight classification', () => {
       dockerVersion: 'Docker version 29.5.3',
       dockerDaemonReachable: false,
     });
-    expect(result.warnings[0]?.remediation).toMatch(/Start Docker Desktop/);
+    expect(result.blockers[0]?.remediation).toMatch(/Start Docker Desktop/);
   });
 
   it('reports Docker healthy only when the daemon actually answers', () => {
@@ -117,17 +117,16 @@ describe('preflight classification', () => {
     );
   });
 
-  it('treats git, docker, and Chromium as degraded features, never as failures', () => {
+  it('treats git and Chromium as degraded features while Docker remains mandatory', () => {
     const result = evaluateEnvironment({
       ...healthy,
       gitVersion: null,
       dockerVersion: null,
       playwrightBrowserInstalled: false,
     });
-    // The point of the split: an optional tool must not read as a broken install.
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.blockers.map((check) => check.name)).toContain('docker');
     expect(result.warnings.map((check) => check.name).sort()).toEqual([
-      'docker',
       'git',
       'playwright-chromium',
     ]);
@@ -174,8 +173,8 @@ describe('preflight platform-specific remediation', () => {
 describe('preflight report', () => {
   it('marks a passing run and counts its warnings', () => {
     const report = formatReport(evaluateEnvironment({ ...healthy, dockerVersion: null }));
-    expect(report).toMatch(/Preflight passed with 1 warning/);
-    expect(report).toMatch(/\[!\] docker/);
+    expect(report).toMatch(/Preflight failed: 1 blocker/);
+    expect(report).toMatch(/\[x\] docker/);
   });
 
   it('marks a failing run and prints the remediation beneath the blocker', () => {

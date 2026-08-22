@@ -31,9 +31,23 @@ export interface CheckResult {
 
 export type DeterministicCheck = (input: VerificationInput) => CheckResult;
 
-/** Every acceptance criterion must appear in the accumulated run state. */
+/**
+ * Every acceptance criterion must be evidenced by a tool result. Model text
+ * (`lastResponse`, model prompts, and similar state) is an assertion, not
+ * independently verifiable evidence, and must not be able to self-certify a
+ * run. Tool errors/trust markers are excluded from the evidence body.
+ */
 const acceptance: DeterministicCheck = ({ task, state }) => {
-  const text = JSON.stringify(state).toLowerCase();
+  const toolEvidence = Object.fromEntries(
+    Object.entries(state).filter(
+      ([key]) =>
+        key.startsWith('tool:') &&
+        !key.endsWith(':error') &&
+        !key.endsWith(':trust') &&
+        !key.endsWith(':injection'),
+    ),
+  );
+  const text = JSON.stringify(toolEvidence).toLowerCase();
   const criteria = task.acceptanceCriteria;
   const evidence = criteria.filter((criterion) => text.includes(criterion.toLowerCase()));
   return {

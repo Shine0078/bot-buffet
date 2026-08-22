@@ -12,7 +12,16 @@ import type {
   ModelResponse,
   ModelStreamChunk,
 } from '../src/providers.js';
-import { Agent, AuditEvent, Model, Project, Task, ToolDefinition, entity } from '../src/types.js';
+import {
+  Agent,
+  AuditEvent,
+  Model,
+  Project,
+  Run,
+  Task,
+  ToolDefinition,
+  entity,
+} from '../src/types.js';
 
 /** A model that asks for the poisoned tool on its first turn, then stops. */
 class ToolCallingAdapter implements ModelAdapter {
@@ -215,6 +224,17 @@ describe('untrusted tool output handling', () => {
     ) as AuditEvent | undefined;
     expect(flagged).toBeDefined();
     expect(flagged?.decision).toBe('approval-required');
+    expect((await store.get<Run>(run.id))?.status).toBe('waiting_approval');
+    const approvals = await store.list((item) => item.kind === 'approval-request');
+    expect(approvals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'tool.untrusted_content',
+          risk: 'high',
+          status: 'pending',
+        }),
+      ]),
+    );
     expect((await store.verifyAuditChain()).valid).toBe(true);
   });
 });

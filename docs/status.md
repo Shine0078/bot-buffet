@@ -6,13 +6,15 @@ Updated 2026-08-22. This is the source of truth for implementation evidence.
 
 ### Security-hardening verification update
 
-The final repository-wide Codex Security scan is sealed at commit `f525f4b`.
-It reviewed the current source scope and reported one medium, development-only
-residual: an ancestor-symlink TOCTOU race in the local sandbox. Production
-startup rejects the local runtime and requires Docker; the final report records
-the residual with its source evidence and remediation. The earlier baseline
-reported seven high-confidence findings (one critical, three high, three
-medium); all of those source paths are now closed and covered by regressions:
+The registered repository-wide Codex Security Standard scan
+`7cbe9768-a037-4700-934b-550b1a3dba15` is sealed with zero reportable findings
+across eleven reviewed security surfaces. Its immutable snapshot is revision
+`cf869564dd9023b0283512b9f20c4fa07f62728`; the workbench warns that `HEAD`
+changed while the scan was running. The current checkout received the
+follow-on fixes below and passed the complete local verification suite. The
+earlier baseline reported seven high-confidence findings (one critical, three
+high, three medium); all of those source paths are now closed and covered by
+regressions:
 
 - environment-backed public providers now require exact operator endpoint
   allowlists; production additionally requires exact variable allowlists, and
@@ -23,8 +25,9 @@ medium); all of those source paths are now closed and covered by regressions:
   destinations;
 - tool output is stored in the fenced untrusted representation before it can
   re-enter model context;
-- local and Docker filesystem reads are bounded to 1 MiB, with descriptor-based
-  local reads and no-follow flags where the host supports them;
+- all file and shell tools now require Docker or a separately managed microVM;
+  the unsafe host-process fallback and its ancestor-symlink race are removed,
+  and startup probes the runner before the control plane becomes ready;
 - evaluation regexes reject nested quantifiers, backreferences, and lookarounds
   before the synchronous engine runs.
 - production authentication is now mandatory for `NODE_ENV=production` or any
@@ -33,16 +36,29 @@ medium); all of those source paths are now closed and covered by regressions:
   variable allowlist as public providers;
 - `/healthz` and `/readyz` are intentionally unauthenticated liveness probes so
   a production Docker healthcheck can succeed without an OIDC token.
+- model locality is derived from the validated provider endpoint rather than a
+  caller-controlled body flag, and offline/private routing rejects forged
+  metadata;
+- high-severity untrusted tool output is durably persisted and transitions the
+  run into an explicit approval gate before the next model turn;
+- backup state is AES-256-GCM encrypted when a backup key is configured, and
+  production restore rejects plaintext state; request and SSE admission buckets
+  are scoped per API instance with actor/project/global caps and connection
+  lifetimes;
+- verification accepts only harness-produced tool evidence, never model text,
+  and the secret scan no longer treats a bare `.env` file as an extensionless
+  exemption.
 
-Latest evidence: `npm run verify` (61 files, 592 tests),
+Latest evidence: `npm run verify` (61 files, 597 tests),
 `npm run preflight`, `npm run audit`, `npm run security:scan`, `npm run sbom`,
 `npm run provenance`, `npm run smoke`, `npm run restore:drill`, a Docker image
-build, a production-mode published-port `/healthz` and `/readyz` check, and
-`BOT_BUFFET_REQUIRE_DOCKER_TESTS=1 npm test -- --run tests/sandbox-docker.integration.test.ts`
-(13 tests) all passed. The final sealed scan artifacts are at
-`C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\f525f4b2f0aabdad4536998d0d1abc859a0cf4b2_20260822T102628Z_vd9zjhln`
-(scan `11b95236-2e8e-4673-beb8-f0c2b8d79590`); it targets the current
-implementation and reports only the documented local-sandbox residual.
+build, the Docker sandbox integration suite (13 tests), and a negative
+production-image startup test without an externally managed runner all passed
+as expected. The sealed scan artifacts and SARIF export are at
+`C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\cf869564dd9023b0283512b9f20c4fa07f62728a_20260822T104520Z_h5b49p9t`
+(scan `7cbe9768-a037-4700-934b-550b1a3dba15`). The image intentionally exits
+with `sandbox_runner_unavailable` when no dedicated runner is supplied; no
+privileged Docker socket is mounted by default.
 
 Remote Desktop Commander inspection of the requested desktop-app download
 could not run because the only configured device (`AIONIX`) was offline. The
@@ -126,7 +142,7 @@ broken: agents have no plugin invocation path yet, so there is nothing to
 constrain. It is recorded here rather than quietly enforced against a path that
 does not exist.
 
-Suite: 584 tests across 61 files, all passing, with `verify` covering format,
+Suite: 597 tests across 61 files, all passing, with `verify` covering format,
 lint, types, tests, build, and the brand gate. Coverage thresholds are ratcheted
 to the measured figures so a regression fails rather than eroding quietly.
 
@@ -164,7 +180,7 @@ a production rollback drill.
 - The production entrypoint now uses the same provider adapter factory as the API/control-plane registry, so native adapter selection is effective at runtime.
 - Production authentication now validates RS256 OIDC bearer JWTs in-process, fails closed when issuer/audience/JWKS configuration is absent, and maps verified `sub` claims to scoped actors; loopback-only bootstrap auth is separate.
 - Provider adapters now use a pinned socket transport: the DNS-preflight address is passed directly to the connection while preserving the provider hostname for Host/SNI, with response and abort caps covered by tests.
-- Built-in filesystem and shell tools now route through a sandbox runtime; production startup fails closed unless `BOT_BUFFET_SANDBOX_MODE=docker`, and Docker execution applies a read-only workspace, no network, dropped capabilities, `no-new-privileges`, resource limits, and a non-root user.
+- Built-in filesystem and shell tools now route through a Docker or separately managed microVM runtime; startup fails closed when the runner is unavailable, and Docker execution applies a read-only workspace, no network, dropped capabilities, `no-new-privileges`, resource limits, and a non-root user.
 - Local model discovery now probes Ollama, LM Studio, llama.cpp, LocalAI, vLLM, and Jan loopback endpoints.
 - Authenticated `GET /api/v1/local-models/discover` now exposes those loopback probes to the Office UI and operators with an explicit `offlineOnly` result contract; cloud discovery is never used.
 - Scoped `GET/POST /api/v1/model-routes` now exposes validated project/agent routing policies with bounded fallback chains, privacy/offline strategies, and cost ceilings to the model router.
@@ -188,13 +204,16 @@ a production rollback drill.
 
 ## Evidence
 
-The final current-tree Standard scan `11b95236-2e8e-4673-beb8-f0c2b8d79590`
-reviewed commit `f525f4b` and sealed one medium local-sandbox
-ancestor-symlink finding. Its canonical artifacts and SARIF export are at
-`C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\f525f4b2f0aabdad4536998d0d1abc859a0cf4b2_20260822T102628Z_vd9zjhln`.
-TAC access remained unavailable because the security connector is not connected.
+The final registered Standard scan `7cbe9768-a037-4700-934b-550b1a3dba15`
+sealed zero reportable findings across the repository-wide surface. Its
+canonical artifacts and SARIF export are at
+`C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\cf869564dd9023b0283512b9f20c4fa07f62728a_20260822T104520Z_h5b49p9t`.
+The report targets the immutable `cf86956` snapshot and explicitly warns that
+the repository `HEAD` changed while it ran; the follow-on current-tree fixes
+are covered by the local evidence above. TAC access remained unavailable
+because the security connector is not connected.
 
-Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The current suite reports 592 passing tests across 61 files and covers redaction, path traversal, shell controls, endpoint SSRF/TLS checks, pinned provider egress, incremental streaming transport, encrypted credential persistence and production key validation, random development vault-key persistence, context compaction/citations, memory approval/CAS, audit integrity/CAS, locks, idempotency claims and API replay, offline/private routing, native provider adapters and wire/signature normalization, normalized streaming, bounded batching, embedding vectors, environment-variable credential references, authenticated local model discovery, idempotent local model registration, local runtime discovery coverage, tool contracts and timeout caps, API limits/auth, verified OIDC authentication, actor-bound OAuth PKCE and device authorization start/poll state consumption, pending/slow-down handling, deterministic evaluation execution and unsupported-grader handling, project deletion, plugin lifecycle, checkpoint state recovery, sandbox runtime fail-closed/Docker argument controls, Office UI accessibility/data contracts, per-agent concurrency admission, model-route management and enforcement, environment/agent/task lifecycle scope checks, compare-and-swap task transitions, finite model metadata validation, routing scope isolation, signed backup/restore plus tamper rejection, versioned agent profile updates, operational-token redaction behavior, profile audit events, webhook signature/replay rejection, event catalog validation, signed test delivery, webhook API authorization, deployment auth posture, and public production health probes. Local smoke checks cover health/readiness, UI delivery, a completed run, bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration and execution, project export, and observability summary; real external provider and deployment evidence is not claimed.
+Run `npm run verify` for typecheck, tests, and build. Run `npm run audit`, `npm run security:scan`, and `npm run sbom` before release. The current suite reports 597 passing tests across 61 files and covers redaction, path traversal, shell controls, endpoint SSRF/TLS checks, pinned provider egress, incremental streaming transport, encrypted credential persistence and production key validation, random development vault-key persistence, context compaction/citations, memory approval/CAS, audit integrity/CAS, locks, idempotency claims and API replay, offline/private routing with provider-derived locality, native provider adapters and wire/signature normalization, normalized streaming, bounded batching, embedding vectors, environment-variable credential references, authenticated local model discovery, idempotent local model registration, local runtime discovery coverage, tool contracts and timeout caps, API limits/auth, verified OIDC authentication, actor-bound OAuth PKCE and device authorization start/poll state consumption, pending/slow-down handling, deterministic evaluation execution and unsupported-grader handling, project deletion, plugin lifecycle, checkpoint state recovery, Docker-only sandbox runtime fail-closed/Docker argument controls, Office UI accessibility/data contracts, per-agent concurrency admission, bounded SSE admission and lifetime cleanup, model-route management and enforcement, environment/agent/task lifecycle scope checks, compare-and-swap task transitions, finite model metadata validation, routing scope isolation, signed AES-GCM backup/restore plus tamper rejection, versioned agent profile updates, operational-token redaction behavior, profile audit events, webhook signature/replay rejection, event catalog validation, signed test delivery, webhook API authorization, deployment auth posture, and public production health probes. Local smoke checks cover health/readiness, UI delivery, a completed run, bearer auth, provider credential redaction, scoped memory, plugin enablement, source intake, evaluation registration and execution, project export, and observability summary; real external provider and deployment evidence is not claimed.
 
 The committed Codex Security standard scan `2a4ee2aa-d64e-4f14-aff2-557f320b9e21` reviewed the earlier committed scope at revision `36578cd` and produced one source-backed high finding: the development/local fallback still performs host filesystem operations without a kernel sandbox or descriptor-relative no-follow guarantee. Production now refuses that fallback, but Docker/microVM staging and escape evidence remain external. The provider working-tree diff was reviewed in scan `b19a1d6b-91c8-4ed2-8661-b635d175013b` against the pre-commit snapshot and produced zero reportable findings across provider selection, Cohere, Azure OpenAI, Bedrock/SigV4, credential validation, redaction, and model probes. The device-authorization working-tree diff was reviewed in scan `0b920189-fde4-48d6-b038-40ab4b640f0a` against `bfa691ed`; all four changed source files were covered and no reportable findings were identified. The final provider-capability diff was reviewed in scan `ab12068c-be09-4ddf-92ef-565abb3a3efe` against `2a9d48f`; the changed provider source was fully covered with no reportable findings. The environment-credential diff was reviewed in scan `ae628e4d-c52d-4cd5-a16c-8d81d64edd4c` against `0f07740`; all four changed source files were covered with no reportable findings. The memory-approval diff was reviewed in scan `9e6d2118-7119-4a99-a28b-dbe55ff1a8aa` against `b7421b3`; the changed API route was fully covered with no reportable findings. The async streaming transport working-tree diff was reviewed in scan `a3814d06-7c36-423f-8b02-c3b8b3199234` against `4a14b5dd8dd9ce7571078ddaa681b901e1b941d5`; the changed transport and provider adapter surfaces were fully covered with zero reportable findings. The orchestrator streaming-event working-tree diff was reviewed in scan `57859849-7b7c-4ad2-8290-b91a35b9e78d` against `a5884c21f953e62768450c4a3cfde2633a49b1e8`; the changed orchestrator surface and regression/documentation artifacts were fully covered with zero reportable findings. The authenticated local-model discovery diff was reviewed in scan `28b5b119-f1a3-44b2-83f3-be8327c14131` against `83cbbc9b8e01b8e8f1ae05bbdb282ad157743397`; the changed API route and test/documentation surfaces were fully covered with zero reportable findings. The agent-concurrency diff was reviewed in scan `6534662a-a1eb-4b13-b37b-ce5bfa7a3ae4` against `b6d4216704e1a724fd0a95ea330e4321421a81a9`; the changed admission/cleanup logic and concurrency regression surface were fully covered with zero reportable findings. The model-route management diff was reviewed in scan `ef279e37-289e-4557-b730-a9b89ed1ceaf` against `50e852a8ab258d5e50ffc0fe477e55d0d457f52b`; the changed scoped route API and regression/documentation surfaces were fully covered with zero reportable findings. The routing-enforcement working-tree diff was reviewed in scan `74db8ade-3a82-4db6-b173-abfe8c47c908` against `bca9b3d74a59d27ce2b22533e484aa8e159b8413`; all four changed source files were covered with zero reportable findings. The workbench lifecycle working-tree diff was reviewed in scan `ccf33d53-3c50-4272-b3b4-379a61d09ab5` against `9d595ca`; the changed API source was fully covered with zero reportable findings. The task-transition working-tree diff was reviewed in scan `d8895cf8-a8ec-416f-b865-87d5813b1b96` against `466fab8`; the changed task mutation surface was fully covered with zero reportable findings. The model-metadata validation working-tree diff was reviewed in scan `7ca15301-cf6a-43fd-a557-2405f26a6cb9` against `ed483d7`; the changed model registration surface was fully covered with zero reportable findings. The routing-scope-isolation working-tree diff was reviewed in scan `a0970972-ab02-4ed0-8e1c-6496ec8ccd35` against `ed7141f`; all three changed routing source files were covered with zero reportable findings. The local-model registration working-tree diff was reviewed in scan `8cd98155-b735-415c-a7dc-1d98baacf4ba` against `64b9d3c`; the changed local registration source was fully covered with zero reportable findings. The reused-model authorization working-tree diff was reviewed in scan `8d2cf160-ab97-4fc1-913b-03f8cd865158` against `32443ad`; the changed authorization guard was fully covered with zero reportable findings. CI action SHAs are immutable; signed OIDC provenance/attestation, backup encryption and external key custody, immutable retention, webhook delivery signing, real provider-account tests, staging deployment, and restore drills remain owner gates. The security scans recorded that the TAC access advisory was unavailable because the security connector is not connected.
 

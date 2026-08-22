@@ -101,6 +101,8 @@ describe('security boundaries', () => {
     expect(() => assertSafeEndpoint('https://[::ffff:169.254.169.254]/v1')).toThrow(
       'metadata_or_loopback',
     );
+    for (const endpoint of ['https://[fec0::1]/v1', 'https://[feff::1]/v1', 'https://[ff02::1]/v1'])
+      expect(() => assertSafeEndpoint(endpoint), endpoint).toThrow('metadata_or_loopback');
     for (const endpoint of [
       'https://100.64.0.1/v1',
       'https://198.18.0.1/v1',
