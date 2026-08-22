@@ -317,6 +317,91 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('gates evaluation runs against a golden baseline', async () => {
+    const base = await start();
+    const dataset = (await (
+      await fetch(`${base}/api/v1/evaluations/datasets`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Golden tasks', description: 'Release regression suite' }),
+      })
+    ).json()) as { id: string };
+    const first = (await (
+      await fetch(`${base}/api/v1/evaluations/cases`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          datasetId: dataset.id,
+          name: 'greets',
+          input: {},
+          expected: 'ready',
+          graders: ['contains'],
+        }),
+      })
+    ).json()) as { id: string };
+
+    const baselineResponse = await fetch(`${base}/api/v1/evaluations/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ datasetId: dataset.id, outputs: { [first.id]: 'system ready' } }),
+    });
+    expect(baselineResponse.status).toBe(201);
+    const baseline = (await baselineResponse.json()) as {
+      id: string;
+      results: Array<{ passed: boolean }>;
+    };
+    expect(baseline.results[0]?.passed).toBe(true);
+
+    const regressed = await fetch(`${base}/api/v1/evaluations/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        datasetId: dataset.id,
+        baselineRunId: baseline.id,
+        outputs: { [first.id]: 'system offline' },
+      }),
+    });
+    expect(regressed.status).toBe(201);
+    const regressedBody = (await regressed.json()) as {
+      regression: { regressions: string[] };
+      gate: { allowed: boolean; reasons: string[] };
+    };
+    expect(regressedBody.regression.regressions).toEqual([first.id]);
+    expect(regressedBody.gate.allowed).toBe(false);
+    expect(regressedBody.gate.reasons).toContain('evaluation_regression');
+
+    const clean = await fetch(`${base}/api/v1/evaluations/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        datasetId: dataset.id,
+        baselineRunId: baseline.id,
+        outputs: { [first.id]: 'system ready again' },
+      }),
+    });
+    await expect(clean.json()).resolves.toMatchObject({ gate: { allowed: true, reasons: [] } });
+
+    const badFloor = await fetch(`${base}/api/v1/evaluations/runs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        datasetId: dataset.id,
+        baselineRunId: baseline.id,
+        minimumPassRate: 5,
+        outputs: {},
+      }),
+    });
+    expect(badFloor.status).toBe(400);
+
+    const audit = (await (await fetch(`${base}/api/v1/audit`)).json()) as Array<{
+      action: string;
+      decision: string;
+    }>;
+    expect(
+      audit.some((event) => event.action === 'evaluation.gate' && event.decision === 'denied'),
+    ).toBe(true);
+  });
+
   it('registers scanned artifacts and builds a tamper-evident manifest', async () => {
     const base = await start();
     const project = (await (

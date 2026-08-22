@@ -62,7 +62,7 @@ import {
   validateDeviceAuthorizationEndpoint,
 } from './oauth.js';
 import { fetchPinned } from './egress.js';
-import { evaluateCases } from './evaluations.js';
+import { compareToBaseline, evaluateCases, releaseGate } from './evaluations.js';
 import { budgetStatus, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { CostGrouping, costReport, forecastCents } from './reporting.js';
 import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
@@ -2294,6 +2294,24 @@ export function createApi(deps: ApiDeps) {
             ? (body.outputs as Record<string, unknown>)
             : {};
         const startedAt = now();
+        const results = evaluateCases(cases, outputs);
+        const baselineRunId = body.baselineRunId ? String(body.baselineRunId) : undefined;
+        let regression = undefined as ReturnType<typeof compareToBaseline> | undefined;
+        let gate = undefined as ReturnType<typeof releaseGate> | undefined;
+        if (baselineRunId) {
+          const baseline = await required(
+            actorId,
+            await deps.store.get<EvaluationRun>(baselineRunId),
+            'read',
+            'evaluation-run',
+          );
+          if (baseline.datasetId !== dataset.id) throw new Error('evaluation_baseline_mismatch');
+          regression = compareToBaseline(results, baseline.results);
+          const floor = body.minimumPassRate === undefined ? 1 : Number(body.minimumPassRate);
+          if (!Number.isFinite(floor) || floor < 0 || floor > 1)
+            throw new Error('evaluation_pass_rate_invalid');
+          gate = releaseGate(regression, floor);
+        }
         const evaluationRun = entity({
           kind: 'evaluation-run',
           ownerId: actorId,
@@ -2302,12 +2320,30 @@ export function createApi(deps: ApiDeps) {
           modelId: body.modelId ? String(body.modelId) : undefined,
           agentId: body.agentId ? String(body.agentId) : undefined,
           status: 'completed' as const,
-          results: evaluateCases(cases, outputs),
+          results,
           startedAt,
           finishedAt: now(),
         }) as EvaluationRun;
         await deps.store.insert(evaluationRun);
-        return send(res, 201, evaluationRun);
+        if (regression)
+          await deps.store.audit({
+            kind: 'audit-event',
+            ownerId: actorId,
+            scope: dataset.scope,
+            actorId,
+            action: 'evaluation.gate',
+            resourceType: 'evaluation-run',
+            resourceId: evaluationRun.id,
+            risk: gate?.allowed ? 'low' : 'high',
+            decision: gate?.allowed ? 'allowed' : 'denied',
+            metadata: {
+              baselineRunId,
+              regressions: regression.regressions.length,
+              missing: regression.missing.length,
+              passRate: regression.passRate,
+            },
+          });
+        return send(res, 201, { ...evaluationRun, regression, gate });
       }
       if (path === '/api/v1/observability/summary' && req.method === 'GET') {
         const runs = await visible(

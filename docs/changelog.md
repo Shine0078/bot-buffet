@@ -12,6 +12,7 @@
 - Office UI pass: budget, usage, workflow, and alert table views with bootstrap and live usage data.
 - Runtime smoke suite executed against the built server in CI, plus a redaction fix for aggregate usage counters.
 - Artifact registry pass: content hashing, credential/size export scanning, scoped artifact APIs, and tamper-evident checkpoint manifests.
+- Evaluation pass: regex/numeric/schema/normalized graders, separated LLM-as-judge support with fail-closed verdicts, golden-baseline regression comparison, and an audited release gate.
 - Provider compatibility pass: native Anthropic Messages and Gemini generateContent adapters with normalized usage/tool-call responses and regression coverage.
 - Runtime wiring pass: the service entrypoint now honors the provider adapter factory for online models.
 - Credential hardening pass: development vaults now use random per-file keys, keep them out of backups, and verify reload behavior; the current security scan records only the remaining external sandbox gate.
