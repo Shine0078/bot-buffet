@@ -51,6 +51,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Evaluation regex matching now structurally walks nested groups, escapes, and character classes so nested quantifiers cannot bypass the synchronous backtracking guard; deeper-group regression coverage was added.
 - Project updates, provider health/delete operations, source retrieval, and evaluation-case dataset appends now require current-version CAS tokens, with scoped mutation audits and orphan-case cleanup on a lost dataset race.
 - Executor concurrency admission, run-step completion, and project-file metadata refreshes now use the same CAS boundary as operator run control, so stale executor/tool observations cannot overwrite newer state.
+- OAuth PKCE and device-token exchanges now attach fresh credential records through provider CAS with vault/row rollback on a lost race, preventing stale callbacks from replacing newer provider configuration.
 
 ### Verified
 

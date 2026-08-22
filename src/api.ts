@@ -220,6 +220,72 @@ const parseOAuthConfig = (value: unknown): OAuthProviderConfig | undefined => {
   };
 };
 
+type ExchangedCredentialType = Extract<Credential['metadata']['authType'], 'oauth-pkce' | 'device'>;
+
+/**
+ * Attach an exchanged provider credential without allowing a stale OAuth/device
+ * callback to replace a newer provider configuration. A fresh credential row
+ * makes the vault update and provider CAS rollbackable; the previous row is
+ * removed only after the provider pointer has been accepted.
+ */
+const attachExchangedCredential = async (
+  store: JsonStateStore,
+  vault: CredentialVault,
+  provider: ModelProvider,
+  actorId: string,
+  authType: ExchangedCredentialType,
+  scopes: string[],
+  label: string,
+  secret: string,
+): Promise<{ provider: ModelProvider; credential: Credential }> => {
+  const previousSecret = vault.getSync(provider.id);
+  await vault.set(provider.id, secret);
+  const credential = entity({
+    kind: 'credential',
+    ownerId: actorId,
+    scope: provider.scope,
+    metadata: {
+      providerId: provider.id,
+      label,
+      authType,
+      scopes,
+      disabled: false,
+      lastTestedAt: now(),
+      fingerprint: fingerprint(secret),
+    },
+    secretRef: provider.id,
+  }) as Credential;
+  let inserted = false;
+  try {
+    await store.insert(credential);
+    inserted = true;
+    const savedProvider = await store.putIfVersion(
+      { ...provider, credentialId: credential.id, version: provider.version } as ModelProvider,
+      provider.version,
+    );
+    if (provider.credentialId && provider.credentialId !== credential.id) {
+      try {
+        await store.delete(provider.credentialId);
+      } catch {
+        // An unreferenced stale metadata row is harmless; the vault and provider
+        // pointer are already consistent and no secret is stored in the row.
+      }
+    }
+    return { provider: savedProvider, credential };
+  } catch (error) {
+    if (inserted) {
+      try {
+        await store.delete(credential.id);
+      } catch {
+        // Preserve the original CAS/persistence error for the caller.
+      }
+    }
+    if (previousSecret === undefined) await vault.revoke(provider.id);
+    else await vault.set(provider.id, previousSecret);
+    throw error;
+  }
+};
+
 export function createApi(deps: ApiDeps) {
   const authorization = new AuthorizationService(deps.store);
   const requestBuckets = new Map<string, { startedAt: number; count: number }>();
@@ -439,45 +505,18 @@ export function createApi(deps: ApiDeps) {
         const tokenPayload = (await tokenResponse.json()) as { access_token?: unknown };
         if (typeof tokenPayload.access_token !== 'string' || tokenPayload.access_token.length < 8)
           throw new Error('oauth_access_token_missing');
-        await deps.vault.set(provider.id, tokenPayload.access_token);
-        const existing = provider.credentialId
-          ? await deps.store.get<Credential>(provider.credentialId)
-          : undefined;
-        const credential = existing
-          ? await deps.store.put({
-              ...existing,
-              metadata: {
-                ...existing.metadata,
-                authType: 'oauth-pkce',
-                scopes: provider.oauth.scopes,
-                disabled: false,
-                lastTestedAt: now(),
-                fingerprint: fingerprint(tokenPayload.access_token),
-              },
-              version: existing.version,
-            } as Credential)
-          : ((await deps.store.insert(
-              entity({
-                kind: 'credential',
-                ownerId: session.actorId,
-                scope: provider.scope,
-                metadata: {
-                  providerId: provider.id,
-                  label: `${provider.name} OAuth credential`,
-                  authType: 'oauth-pkce' as const,
-                  scopes: provider.oauth.scopes,
-                  disabled: false,
-                  lastTestedAt: now(),
-                  fingerprint: fingerprint(tokenPayload.access_token),
-                },
-                secretRef: provider.id,
-              }) as Credential,
-            )) as Credential);
-        const saved = await deps.store.put({
-          ...provider,
-          credentialId: credential.id,
-          version: provider.version,
-        } as ModelProvider);
+        const connected = await attachExchangedCredential(
+          deps.store,
+          deps.vault,
+          provider,
+          session.actorId,
+          'oauth-pkce',
+          provider.oauth.scopes,
+          `${provider.name} OAuth credential`,
+          tokenPayload.access_token,
+        );
+        const saved = connected.provider;
+        const credential = connected.credential;
         deps.registerProvider?.(saved);
         await deps.store.audit({
           kind: 'audit-event',
@@ -1755,11 +1794,14 @@ export function createApi(deps: ApiDeps) {
             secretRef: `env:${environmentVariable}`,
           }) as Credential;
           await deps.store.insert(credential);
-          provider = await deps.store.put({
-            ...provider,
-            credentialId: credential.id,
-            version: provider.version,
-          } as ModelProvider);
+          provider = await deps.store.putIfVersion(
+            {
+              ...provider,
+              credentialId: credential.id,
+              version: provider.version,
+            } as ModelProvider,
+            provider.version,
+          );
           deps.registerProvider?.(provider);
           await deps.store.audit({
             kind: 'audit-event',
@@ -1790,11 +1832,14 @@ export function createApi(deps: ApiDeps) {
             secretRef: provider.id,
           }) as Credential;
           await deps.store.insert(credential);
-          provider = await deps.store.put({
-            ...provider,
-            credentialId: credential.id,
-            version: provider.version,
-          } as ModelProvider);
+          provider = await deps.store.putIfVersion(
+            {
+              ...provider,
+              credentialId: credential.id,
+              version: provider.version,
+            } as ModelProvider,
+            provider.version,
+          );
           deps.registerProvider?.(provider);
           await deps.store.audit({
             kind: 'audit-event',
@@ -1952,35 +1997,18 @@ export function createApi(deps: ApiDeps) {
         // provider exchange cannot be replayed if persistence fails or a
         // concurrent poll arrives after the provider has issued the token.
         deps.device.complete(session.sessionId);
-        await deps.vault.set(provider.id, accessToken);
-        const existing = provider.credentialId
-          ? await deps.store.get<Credential>(provider.credentialId)
-          : undefined;
-        const metadata = {
-          providerId: provider.id,
-          label: `${provider.name} device credential`,
-          authType: 'device' as const,
-          scopes: provider.oauth.scopes,
-          disabled: false,
-          lastTestedAt: now(),
-          fingerprint: fingerprint(accessToken),
-        };
-        const credential = existing
-          ? await deps.store.put({ ...existing, metadata, version: existing.version } as Credential)
-          : ((await deps.store.insert(
-              entity({
-                kind: 'credential',
-                ownerId: actorId,
-                scope: provider.scope,
-                metadata,
-                secretRef: provider.id,
-              }) as Credential,
-            )) as Credential);
-        const saved = await deps.store.put({
-          ...provider,
-          credentialId: credential.id,
-          version: provider.version,
-        } as ModelProvider);
+        const connected = await attachExchangedCredential(
+          deps.store,
+          deps.vault,
+          provider,
+          actorId,
+          'device',
+          provider.oauth.scopes,
+          `${provider.name} device credential`,
+          accessToken,
+        );
+        const saved = connected.provider;
+        const credential = connected.credential;
         deps.registerProvider?.(saved);
         await deps.store.audit({
           kind: 'audit-event',

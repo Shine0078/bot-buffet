@@ -232,6 +232,7 @@ a production rollback drill.
 - Regex evaluation now walks nested groups, escapes, and character classes before allowing synchronous matching, rejecting nested quantifiers at any depth while retaining simple grouped expressions. A regression covers deeper nested optional quantifiers and a valid grouped pattern.
 - Project updates, provider health/delete operations, source retrieval, and evaluation-case dataset appends now require current-version CAS tokens; mutation audits identify accepted project/provider changes, and a failed dataset CAS removes the newly inserted case instead of leaving an orphan.
 - Executor concurrency admission, run-step completion, and project-file metadata refreshes now use the same CAS boundary as operator run control, so stale executor/tool observations cannot overwrite newer state.
+- OAuth PKCE and device-token exchanges now attach fresh credential records through provider CAS with vault/row rollback on a lost race, preventing stale callbacks from replacing newer provider configuration.
 
 ## Evidence
 

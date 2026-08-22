@@ -205,4 +205,87 @@ describe('device authorization API', () => {
     expect(payload).toMatchObject({ status: 'pending', retryAfterSeconds: 6 });
     expect(JSON.stringify(payload)).not.toContain('provider-secret-error');
   });
+
+  it('rolls back an exchanged device credential when the provider CAS loses a race', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-device-'));
+    const store = createStore(dir);
+    const provider = entity({
+      kind: 'model-provider',
+      ownerId: 'local-user',
+      scope: 'workspace_local',
+      name: 'Racing Device Provider',
+      providerKind: 'openai-compatible' as const,
+      endpoint: 'https://api.example.test/v1',
+      enabled: true,
+      health: 'unknown' as const,
+      capabilities: {
+        streaming: true,
+        toolCalling: true,
+        structuredOutput: true,
+        vision: false,
+        audio: false,
+        embeddings: false,
+        reranking: false,
+      },
+      oauth: {
+        authorizationEndpoint: 'https://login.example.test/authorize',
+        tokenEndpoint: 'https://login.example.test/token',
+        deviceAuthorizationEndpoint: 'https://login.example.test/device',
+        clientId: 'client-1',
+        scopes: ['models:read'],
+        redirectUri: 'http://127.0.0.1:8787/oauth/callback',
+      },
+    }) as ModelProvider;
+    await store.insert(provider);
+    const vault = new CredentialVault(join(dir, 'credentials.enc.json'), 'test');
+    const server = createApi({
+      store,
+      orchestrator: new EventEmitter() as unknown as Orchestrator,
+      uiRoot: dir,
+      vault,
+      device: new DeviceSessionStore(),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+
+    fetchPinned.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          device_code: 'race-device-code',
+          user_code: 'RACE',
+          verification_uri: 'https://login.example.test/device',
+          expires_in: 600,
+          interval: 1,
+        }),
+        { status: 200 },
+      ),
+    );
+    const startResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/providers/${provider.id}/device/start`,
+      { method: 'POST', body: '{}' },
+    );
+    const startPayload = (await startResponse.json()) as { sessionId: string };
+    fetchPinned.mockImplementationOnce(async () => {
+      await store.put({
+        ...provider,
+        name: 'Concurrent provider update',
+        version: provider.version,
+      });
+      return new Response(JSON.stringify({ access_token: 'race-access-token' }), { status: 200 });
+    });
+    const poll = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/providers/${provider.id}/device/poll`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: startPayload.sessionId }),
+      },
+    );
+    expect(poll.status).toBe(400);
+    expect((await store.get<ModelProvider>(provider.id))?.name).toBe('Concurrent provider update');
+    expect(await store.list<Credential>((item) => item.kind === 'credential')).toHaveLength(0);
+    expect(vault.getSync(provider.id)).toBeUndefined();
+  });
 });
