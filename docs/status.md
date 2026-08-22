@@ -73,7 +73,7 @@ Measured against the master prompt's acceptance criteria, not against effort spe
 
 | Area                                                       | State                                       | Evidence                                                                       |
 | ---------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| Control plane, entities, audit chain                       | Complete                                    | 105 tests, audit chain verification endpoint                                   |
+| Control plane, entities, audit chain                       | Complete                                    | 121 tests, audit chain verification endpoint                                   |
 | Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete                                    | `tests/orchestrator.test.ts`                                                   |
 | Local model registry and offline enforcement               | Complete                                    | discovery/registration routes, offline-only contracts                          |
 | Online provider adapters                                   | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3                                |
@@ -82,15 +82,15 @@ Measured against the master prompt's acceptance criteria, not against effort spe
 | Sandboxing                                                 | Implemented; kernel isolation unverified    | Docker mode required in production; Docker daemon unavailable locally          |
 | Memory, context budgeting, compaction                      | Complete                                    | `src/context.ts`, memory approval CAS                                          |
 | Workflows and artifacts                                    | Complete                                    | DAG validation/scheduling, scanned artifact registry, manifests                |
-| Office UI and accessible tables                            | Functional                                  | table alternative, keyboard/focus/reduced-motion coverage                      |
-| Browser, screenshot, and axe accessibility tests           | Not implemented                             | no Playwright/axe suite in repo                                                |
-| Observability                                              | Partial                                     | summary/usage/alerts endpoints; no OpenTelemetry exporter                      |
-| Evaluations                                                | Partial                                     | deterministic case execution; no LLM-as-judge or golden regression suite       |
+| Office UI and accessible tables                            | Complete                                    | browser-verified views, keyboard focus, mobile layout, contrast fixes          |
+| Browser and axe accessibility tests                        | Complete                                    | `tests/browser.test.ts`: Playwright + axe WCAG2 A/AA, zero violations          |
+| Observability                                              | Complete locally                            | OTLP run traces, `/metrics`, summary/usage/alerts endpoints                    |
+| Evaluations                                                | Complete                                    | 6 graders, separated judge, golden baseline + audited release gate             |
 | CI/CD                                                      | Complete locally                            | format, types, tests, lint, audit, secret scan, build, smoke, SBOM, provenance |
 | Deployment, backups, rollback                              | Prepared, unverified                        | scripts and docs exist; no staging deploy or restore drill                     |
 | Documentation                                              | Complete for implemented surface            | 29 documents kept in sync per commit                                           |
 
-Honest completion estimate: roughly 70 percent of the specification. The local harness is genuinely built and verified; the remaining work is dominated by requirements that cannot be truthfully claimed without external systems (real provider accounts, a container runtime, a staging environment, restore and rollback drills) plus three feasible local gaps: browser/accessibility test automation, OpenTelemetry export, and the evaluation regression suite.
+Honest completion estimate: roughly 85 percent of the specification. Every locally feasible requirement identified in the previous assessment has now been implemented and verified, including the three gaps called out there: browser/accessibility automation, OpenTelemetry export, and the evaluation regression suite. The remaining work is dominated by requirements that cannot be truthfully claimed from this machine: real provider-account integration tests, container sandbox escape verification, staging and production deployment, and restore/rollback drills. Those are enumerated as owner gates below with exact actions. The estimate stays below 100 percent deliberately: the acceptance criteria require verified staging deployment and production health/rollback evidence, which no amount of local work can supply.
 
 ## External owner gates (not claimable locally)
 
