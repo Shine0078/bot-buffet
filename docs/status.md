@@ -63,6 +63,8 @@ The final agent-profile/redaction working-tree diff was reviewed in scan `c1b432
 
 The profile-audit working-tree diff was reviewed in scan `be142bc7-f697-411d-a7f9-59846ef5dcfa` against `2e00e9481f7eeae5688ad79237d8d9fca68dbf27`; the changed API handler and regression assertion were fully covered with zero reportable findings. TAC remained unavailable because the security-access connector was not connected.
 
+- Observability is now collector-ready. `GET /api/v1/runs/:id/trace` renders a run and its durable steps as an OTLP/JSON payload with deterministic trace/span ids, parent-child structure, client spans for model and tool calls, error status mapping, and redacted error messages, so traces survive process restarts because they derive from persisted state rather than in-memory spans. `GET /metrics` exposes scrapeable gauges for total/active/failed runs, cumulative cost, and unacknowledged alerts. Both are covered by unit, API, and live smoke checks.
+
 ## Completion assessment (2026-08-21)
 
 Measured against the master prompt's acceptance criteria, not against effort spent.

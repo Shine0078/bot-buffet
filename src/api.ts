@@ -29,6 +29,7 @@ import {
   ProjectFile,
   Risk,
   Run,
+  RunStep,
   Schedule,
   Source,
   Task,
@@ -67,6 +68,7 @@ import { budgetStatus, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { CostGrouping, costReport, forecastCents } from './reporting.js';
 import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
 import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
+import { renderMetrics, runToOtlp } from './telemetry.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -346,6 +348,47 @@ export function createApi(deps: ApiDeps) {
           storage: 'durable-json',
           auth: process.env.BOT_BUFFET_AUTH_MODE ?? 'development',
         });
+      if (path === '/metrics' && req.method === 'GET') {
+        const runs = await visible(
+          actorId,
+          await deps.store.list<Run>((x) => x.kind === 'run'),
+          'read',
+        );
+        const active = runs.filter((run) =>
+          ['queued', 'running', 'waiting_approval', 'paused', 'retrying'].includes(run.status),
+        ).length;
+        const alerts = await visible(
+          actorId,
+          await deps.store.list<Alert>((x) => x.kind === 'alert'),
+        );
+        const body = renderMetrics([
+          { name: 'bot_buffet_runs_total', value: runs.length, unit: 'runs' },
+          { name: 'bot_buffet_runs_active', value: active, unit: 'runs' },
+          {
+            name: 'bot_buffet_runs_failed',
+            value: runs.filter((run) => ['failed', 'blocked', 'cancelled'].includes(run.status))
+              .length,
+            unit: 'runs',
+          },
+          {
+            name: 'bot_buffet_cost_cents_total',
+            value: runs.reduce((sum, run) => sum + (run.costCents || 0), 0),
+            unit: 'cents',
+          },
+          {
+            name: 'bot_buffet_alerts_unacknowledged',
+            value: alerts.filter((alert) => !alert.acknowledged).length,
+            unit: 'alerts',
+          },
+        ]);
+        res.writeHead(200, {
+          'content-type': 'text/plain; version=0.0.4; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        });
+        res.end(body + '\n');
+        return;
+      }
       if (path === '/api/v1/local-models/discover' && req.method === 'GET')
         return send(res, 200, {
           providers: await (deps.discoverLocal ?? discoverLocalEndpoints)(),
@@ -2409,6 +2452,19 @@ export function createApi(deps: ApiDeps) {
           completed: [...completed],
           failed: [...failed],
         });
+      }
+      const traceMatch = path.match(/^\/api\/v1\/runs\/([^/]+)\/trace$/);
+      if (traceMatch && req.method === 'GET') {
+        const run = await required(
+          actorId,
+          await deps.store.get<Run>(traceMatch[1]!),
+          'read',
+          'run',
+        );
+        const steps = await deps.store.list<RunStep>(
+          (x) => x.kind === 'run-step' && (x as RunStep).runId === run.id,
+        );
+        return send(res, 200, runToOtlp(run, steps));
       }
       const replayMatch = path.match(/^\/api\/v1\/runs\/([^/]+)\/replay$/);
       if (replayMatch && req.method === 'GET') {

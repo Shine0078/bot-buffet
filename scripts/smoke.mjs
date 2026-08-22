@@ -58,6 +58,8 @@ try {
     }),
   );
   await check('workflow plan', `/api/v1/workflows/${workflow.id}/plan`);
+  await check('metrics', '/metrics');
+  await check('trace rejects unknown run', '/api/v1/runs/missing-run/trace', { expect: 400 });
   await check('create budget', '/api/v1/budgets', {
     method: 'POST',
     expect: 201,

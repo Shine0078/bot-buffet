@@ -317,6 +317,19 @@ describe('API boundary controls', () => {
     });
   });
 
+  it('exposes scrapeable metrics and OTLP run traces', async () => {
+    const base = await start();
+    const metrics = await fetch(`${base}/metrics`);
+    expect(metrics.status).toBe(200);
+    expect(metrics.headers.get('content-type')).toContain('text/plain');
+    const body = await metrics.text();
+    expect(body).toContain('bot_buffet_runs_total');
+    expect(body).toContain('bot_buffet_alerts_unacknowledged');
+
+    const missingTrace = await fetch(`${base}/api/v1/runs/does-not-exist/trace`);
+    expect(missingTrace.status).toBe(400);
+  });
+
   it('gates evaluation runs against a golden baseline', async () => {
     const base = await start();
     const dataset = (await (
