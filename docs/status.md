@@ -1,6 +1,64 @@
 # Samuel Abraham — Bot Buffet status ledger
 
-Updated 2026-08-21. This is the source of truth for implementation evidence.
+Updated 2026-08-22. This is the source of truth for implementation evidence.
+
+## 2026-08-22 session
+
+The container gate is closed. Docker Desktop on this machine was failing to
+start at all: its Inference manager could not remove a stale
+`AppData/Local/Docker/run/dockerInference` socket whose reparse data was
+corrupt, so the engine never came up. Per-file deletion is impossible for those
+entries, so the socket directory was rotated aside and the optional Docker AI
+feature that owns that socket was disabled in `settings-store.json` (backed up
+first). The engine then started, and everything below was verified against it.
+
+Defects found and fixed this session, each at its source:
+
+| Defect                                                                                                                                                                                               | Why it survived                                                                                                         | Evidence now                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Brand gate passed its two-term alternation to `git grep` without `-E`, so the separator was a literal and neither term was ever searched for; it also matched its own source and was permanently red | A gate that is always red is indistinguishable from a gate nobody reads                                                 | `tests/brand-scan.test.ts`, plus a self-test that throws if the pattern stops matching the brand                   |
+| `npm run format:check` could not pass on Windows: `core.autocrlf=true` gave a CRLF working tree against LF blobs, flagging all 111 files locally while Linux CI stayed green                         | Nobody ran the gate on Windows                                                                                          | `.gitattributes` pins the working tree to LF on every platform; local `verify` now runs format and lint as CI does |
+| Dockerfile copied `tsconfig.json` but the build uses `tsconfig.build.json`, so `npm run build` failed inside the image                                                                               | The CI container job declares `needs: verify`, and verify was failing on the brand gate, so the container job never ran | `docker build` succeeds                                                                                            |
+| The server always bound `127.0.0.1`, so a published container port could never reach it                                                                                                              | Same chain: the container job never ran its readiness check                                                             | `BOT_BUFFET_HOST`, loopback by default and `0.0.0.0` in the image; health verified through the published port      |
+| The container sandbox never passed `--interactive`, so every sandboxed file write saw EOF on stdin, wrote an empty file, and exited 0                                                                | Silent data loss reported as success; no unit test can see it, because the argument list looks correct either way       | `tests/sandbox-docker.integration.test.ts` against a live daemon                                                   |
+| The preflight reported Docker healthy from `docker --version`, which answers from the client alone                                                                                                   | Written and then immediately reproduced on this machine, where Docker was installed and not running                     | Probes `docker info`; absent and stopped are distinct states with distinct remediation                             |
+
+Container evidence, against the built image: `/healthz` and `/readyz` answer
+through the published port, the UI is served, the API returns the bootstrap
+project, security headers are present, the process runs as uid 100 rather than
+root, and Docker's own healthcheck reports `healthy`.
+
+Container sandbox evidence, against a live daemon: the container runtime is
+selected, reads and writes round-trip through the bind mount and are confirmed
+on the host, execution is as uid 65532, the network is unreachable, the root
+filesystem refuses writes with `EROFS`, non-zero exits are reported, and any
+network policy other than `blocked` is refused. `BOT_BUFFET_REQUIRE_DOCKER_TESTS=1`
+in CI turns a missing daemon into a failure so this coverage cannot skip silently.
+
+Added this session:
+
+- Installation preflight (`npm run preflight`) enforcing the Node floor from
+  `package.json`, with blockers and warnings separated and per-platform
+  remediation. Decision logic is pure, so the Windows branches are tested on any
+  host.
+- Checksum-verified model artifact import. No digest means no import; the digest
+  is recomputed by streaming the file and compared in constant time; free space
+  is checked before any transfer; names are confined to the model store.
+  `POST /api/v1/local-models/import/plan` previews size, space, host resources,
+  and fit before a download starts.
+- Host resource detection that reports GPU and VRAM as explicitly undetected
+  rather than guessed, because a wrong VRAM figure would green-light a model the
+  machine cannot load.
+- Portable local model configuration export/import, carrying no credential
+  material and revalidating every endpoint on import.
+- Digest-pinned sandbox image required in production, failing closed at startup.
+- Structural guard holding the Office UI to its escaping rule.
+
+Suite: 288 tests across 41 files, all passing, with `verify` covering format,
+lint, types, tests, build, and the brand gate.
+
+Still owner gates: staging and production deployment, real provider-account
+integration tests, off-host backup custody, and a production rollback drill.
 
 ## Delivered locally
 
