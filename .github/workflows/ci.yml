@@ -18,7 +18,12 @@ jobs:
       - run: npm run preflight
       - run: npm run format:check
       - run: npm run typecheck
+      # The GitHub runner has a working Docker daemon, so the container sandbox
+      # integration suite is REQUIRED here. Without this the suite would skip
+      # and its coverage would vanish silently.
       - run: npm test -- --coverage
+        env:
+          BOT_BUFFET_REQUIRE_DOCKER_TESTS: '1'
       - run: npm run lint
       - run: npm audit --audit-level=high
       - run: npm run security:scan
