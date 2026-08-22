@@ -170,7 +170,9 @@ export function decidePolicy(
     .filter(
       (rule) => !rule.scopes?.length || rule.scopes.includes(scope) || rule.scopes.includes('*'),
     )
-    .filter((rule) => !rule.risks?.length || rule.risks.some((r) => rank[r] >= rank[risk]));
+    // A rule's risks are a threshold: it applies when the action is at least that risky.
+    // Comparing the other way made a "require approval for high risk" rule match safe actions.
+    .filter((rule) => !rule.risks?.length || rule.risks.some((r) => rank[risk] >= rank[r]));
   if (matches.some((rule) => rule.effect === 'deny'))
     return { decision: 'denied', reason: 'policy_denied' };
   if (matches.some((rule) => rule.effect === 'approval'))

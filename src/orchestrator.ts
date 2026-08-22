@@ -27,6 +27,7 @@ import { ToolContext, ToolRegistry } from './tools.js';
 import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
+import { labelUntrusted } from './injection.js';
 
 export interface OrchestratorDeps {
   store: JsonStateStore;
@@ -425,7 +426,32 @@ export class Orchestrator extends EventEmitter {
               signal: controller.signal,
             };
             const output = await this.deps.tools.invoke(call.name, call.arguments, context);
+            // Tool output is external data. Label it untrusted before it can re-enter model
+            // context, and record any instruction-shaped payload it carries.
+            const labeled = labelUntrusted(
+              typeof output === 'string' ? output : JSON.stringify(output),
+              `tool:${call.name}`,
+            );
             nextState[`tool:${call.name}`] = redactSecrets(output);
+            nextState[`tool:${call.name}:trust`] = labeled.trust;
+            if (labeled.signals.length) {
+              nextState[`tool:${call.name}:injection`] = labeled.signals.map(
+                (signal) => signal.pattern,
+              );
+              await this.emitAudit(
+                run,
+                'tool.untrusted_content',
+                labeled.suspicious ? 'high' : 'low',
+                labeled.suspicious ? 'approval-required' : 'allowed',
+                { tool: call.name, signals: labeled.signals.map((signal) => signal.pattern) },
+              );
+              this.emit('run', {
+                type: 'injection.detected',
+                runId,
+                tool: call.name,
+                signals: labeled.signals.map((signal) => signal.pattern),
+              });
+            }
             this.emit('run', { type: 'tool.executed', runId, tool: call.name });
           }
         }

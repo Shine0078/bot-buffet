@@ -3,6 +3,7 @@ import {
   assertOffline,
   assertSafeEndpoint,
   assertWorkspacePath,
+  decidePolicy,
   redactSecrets,
   validateCommand,
   validateJsonSchema,
@@ -33,6 +34,33 @@ describe('security boundaries', () => {
       accessToken: '[REDACTED]',
     });
   });
+  it('treats policy risks as a threshold rather than matching every lower risk', () => {
+    const approveHighRisk = [
+      { action: '*', effect: 'approval' as const, risks: ['high' as const] },
+    ];
+    // A safe, reversible read must not trip a rule written for high-risk actions.
+    expect(decidePolicy('safe', 'p1', 'filesystem.read', approveHighRisk).decision).toBe('allowed');
+    expect(decidePolicy('low', 'p1', 'filesystem.write', approveHighRisk).decision).toBe('allowed');
+    // At or above the declared threshold, approval is required.
+    expect(decidePolicy('high', 'p1', 'deploy', approveHighRisk).decision).toBe(
+      'approval-required',
+    );
+    expect(decidePolicy('critical', 'p1', 'deploy', approveHighRisk).decision).toBe(
+      'approval-required',
+    );
+  });
+
+  it('denies before approving and scopes rules to their project', () => {
+    const rules = [
+      { action: 'deploy', effect: 'deny' as const },
+      { action: '*', effect: 'approval' as const },
+    ];
+    expect(decidePolicy('low', 'p1', 'deploy', rules).decision).toBe('denied');
+    const scoped = [{ action: '*', effect: 'deny' as const, scopes: ['p2'] }];
+    expect(decidePolicy('high', 'p1', 'deploy', scoped).decision).toBe('allowed');
+    expect(decidePolicy('high', 'p2', 'deploy', scoped).decision).toBe('denied');
+  });
+
   it('preserves aggregate usage totals in cost reports', () => {
     expect(
       redactSecrets({

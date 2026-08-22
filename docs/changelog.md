@@ -19,6 +19,7 @@
 - Isolation pass: explicit cross-tenant, membership, and role-action authorization tests.
 - Research pass: pinned source retrieval with content hashing, harness-decided citation verification, contradiction detection, and research briefs.
 - Durability pass: restart/compaction/failure recovery evidence and adversarial sandbox boundary tests.
+- Prompt-injection pass: untrusted-content fencing and labeling, six injection detectors, audited orchestrator enforcement, and a policy risk-threshold fix.
 - Provider compatibility pass: native Anthropic Messages and Gemini generateContent adapters with normalized usage/tool-call responses and regression coverage.
 - Runtime wiring pass: the service entrypoint now honors the provider adapter factory for online models.
 - Credential hardening pass: development vaults now use random per-file keys, keep them out of backups, and verify reload behavior; the current security scan records only the remaining external sandbox gate.
