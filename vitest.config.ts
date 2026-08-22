@@ -10,11 +10,15 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'lcov'],
+      // Ratcheted to just below the measured figures (78.8 statements, 81.7
+      // lines, 78.0 functions, 69.7 branches) so a regression fails the build
+      // instead of quietly eroding coverage. Raise these when coverage rises;
+      // never lower them to make a run pass.
       thresholds: {
-        statements: 50,
-        lines: 50,
-        functions: 50,
-        branches: 40,
+        statements: 76,
+        lines: 79,
+        functions: 76,
+        branches: 67,
       },
     },
   },
