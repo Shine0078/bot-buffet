@@ -176,7 +176,8 @@ export class Orchestrator extends EventEmitter {
           return;
         }
         if (current.cancelRequested || controller.signal.aborted) {
-          await this.updateRun(current, { status: 'cancelled', finishedAt: now() });
+          if (current.status !== 'cancelled' && current.status !== 'rolled_back')
+            await this.updateRun(current, { status: 'cancelled', finishedAt: now() });
           break;
         }
         if (current.status === 'paused') {
@@ -366,6 +367,14 @@ export class Orchestrator extends EventEmitter {
           run.id,
           run.projectId,
         );
+        const afterModel = await this.deps.store.get<Run>(runId);
+        if (
+          !afterModel ||
+          controller.signal.aborted ||
+          afterModel.status === 'cancelled' ||
+          afterModel.status === 'rolled_back'
+        )
+          return;
         const responsePreview = redactSecrets(response.content.slice(0, 1000));
         const stepCostCents = estimateCostCents(
           model,
@@ -581,6 +590,14 @@ export class Orchestrator extends EventEmitter {
             });
           }
         }
+        const afterTools = await this.deps.store.get<Run>(runId);
+        if (
+          !afterTools ||
+          controller.signal.aborted ||
+          afterTools.status === 'cancelled' ||
+          afterTools.status === 'rolled_back'
+        )
+          return;
         const verification = verifyDeterministic(agent.profile.verificationPolicy, {
           task,
           state: nextState,
@@ -639,11 +656,12 @@ export class Orchestrator extends EventEmitter {
       if (current) {
         const message = redactSecrets((error as Error).message) as string;
         if (controller.signal.aborted) {
-          await this.updateRun(current, {
-            status: 'cancelled',
-            error: message,
-            finishedAt: now(),
-          });
+          if (current.status !== 'cancelled' && current.status !== 'rolled_back')
+            await this.updateRun(current, {
+              status: 'cancelled',
+              error: message,
+              finishedAt: now(),
+            });
         } else {
           // The profile's escalation policy decides what a failure means.
           // It was validated on write and never consulted, so every failure
@@ -794,13 +812,23 @@ export class Orchestrator extends EventEmitter {
   }
   private async updateRun(run: Run, changes: Partial<Run>): Promise<void> {
     const latest = (await this.deps.store.get<Run>(run.id)) ?? run;
-    const saved = await this.deps.store.put({
-      ...latest,
-      ...changes,
-      updatedAt: now(),
-      version: latest.version,
-    } as Run);
-    this.emit('run', { type: `run.${saved.status}`, run: saved });
+    try {
+      const saved = await this.deps.store.putIfVersion(
+        {
+          ...latest,
+          ...changes,
+          updatedAt: now(),
+          version: latest.version,
+        } as Run,
+        latest.version,
+      );
+      this.emit('run', { type: `run.${saved.status}`, run: saved });
+    } catch (error) {
+      // Preserve a newer operator transition rather than overwriting it with
+      // an executor observation that was read before the control command.
+      if ((error as Error).message === 'concurrent_update') return;
+      throw error;
+    }
   }
   private async requestApproval(
     run: Run,
@@ -957,6 +985,7 @@ export class Orchestrator extends EventEmitter {
       return fork;
     }
     if (command.type === 'rollback') {
+      this.controllers.get(run.id)?.abort();
       let checkpoint: Checkpoint | undefined;
       if (command.checkpointId) {
         checkpoint = await this.deps.store.get<Checkpoint>(command.checkpointId);

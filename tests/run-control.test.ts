@@ -2,13 +2,69 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MockLocalAdapter } from '../src/providers.js';
+import {
+  MockLocalAdapter,
+  type ModelAdapter,
+  type ModelRequest,
+  type ModelResponse,
+  type ModelStreamChunk,
+} from '../src/providers.js';
 import { ModelRouter } from '../src/router.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { createStore } from '../src/store.js';
 import { createBuiltinTools } from '../src/tools.js';
 import { entity, type AuditEvent, type Checkpoint, type Run } from '../src/types.js';
 import { fixtures } from './helpers/orchestrator-fixtures.js';
+
+class DeferredAdapter implements ModelAdapter {
+  private readonly gate: Promise<void>;
+  private releaseGate!: () => void;
+  private resolveStarted!: () => void;
+  readonly started = new Promise<void>((resolve) => {
+    this.resolveStarted = resolve;
+  });
+
+  constructor() {
+    this.gate = new Promise<void>((resolve) => {
+      this.releaseGate = resolve;
+    });
+  }
+
+  release(): void {
+    this.releaseGate();
+  }
+
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    this.resolveStarted();
+    await this.gate;
+    return {
+      id: 'deferred',
+      content: `deferred:${request.model}`,
+      toolCalls: [],
+      usage: { inputTokens: 1, outputTokens: 1 },
+      latencyMs: 1,
+    };
+  }
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    const response = await this.complete(request);
+    yield {
+      id: response.id,
+      delta: response.content,
+      toolCalls: [],
+      done: true,
+      usage: response.usage,
+    };
+  }
+
+  async health(): Promise<'healthy' | 'degraded' | 'offline'> {
+    return 'healthy';
+  }
+
+  async listModels(): Promise<string[]> {
+    return ['m'];
+  }
+}
 
 /**
  * Run control: pause, resume, cancel, stop, fork, and rollback.
@@ -21,7 +77,7 @@ import { fixtures } from './helpers/orchestrator-fixtures.js';
  * another's checkpoints.
  */
 
-async function harness() {
+async function harness(adapter: ModelAdapter = new MockLocalAdapter('m')) {
   const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-control-'));
   await writeFile(join(dir, 'repository'), 'contents');
   const store = createStore(dir);
@@ -32,7 +88,7 @@ async function harness() {
     router: new ModelRouter(async () => [model]),
     tools: createBuiltinTools(store),
     workspaceRoot: () => dir,
-    adapters: () => new MockLocalAdapter('m'),
+    adapters: () => adapter,
   });
   const run = await orchestrator.createRun({ ownerId: 'u', project, agent, task });
   return { store, orchestrator, run, project, agent, task };
@@ -191,6 +247,24 @@ describe('fork', () => {
 });
 
 describe('rollback', () => {
+  it('does not let an active executor overwrite an accepted rollback', async () => {
+    const adapter = new DeferredAdapter();
+    const { store, orchestrator, run } = await harness(adapter);
+    const running = orchestrator.start(run.id);
+    await adapter.started;
+
+    const rolled = await orchestrator.command({
+      runId: run.id,
+      type: 'rollback',
+      actorId: 'operator-1',
+    });
+    adapter.release();
+    await running;
+
+    expect(rolled?.status).toBe('rolled_back');
+    await expect(store.get<Run>(run.id)).resolves.toMatchObject({ status: 'rolled_back' });
+  });
+
   it('restores the checkpointed state rather than only relabelling the run', async () => {
     const { store, orchestrator, run } = await harness();
     await store.setRunState(run.id, { note: 'current, unwanted' });
