@@ -20,6 +20,7 @@
 - Research pass: pinned source retrieval with content hashing, harness-decided citation verification, contradiction detection, and research briefs.
 - Durability pass: restart/compaction/failure recovery evidence and adversarial sandbox boundary tests.
 - Prompt-injection pass: untrusted-content fencing and labeling, six injection detectors, audited orchestrator enforcement, and a policy risk-threshold fix.
+- Webhook delivery pass: published event catalog and registration validation, versioned timestamped HMAC signatures, signed test deliveries, redacted orchestrator-event dispatch over pinned HTTPS, bounded retries, and outcome-only auditing.
 - Provider compatibility pass: native Anthropic Messages and Gemini generateContent adapters with normalized usage/tool-call responses and regression coverage.
 - Runtime wiring pass: the service entrypoint now honors the provider adapter factory for online models.
 - Credential hardening pass: development vaults now use random per-file keys, keep them out of backups, and verify reload behavior; the current security scan records only the remaining external sandbox gate.

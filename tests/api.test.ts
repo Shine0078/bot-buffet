@@ -828,6 +828,20 @@ describe('API boundary controls', () => {
     };
     expect(webhook.secretFingerprint).toBeTruthy();
     expect(JSON.stringify(webhook)).not.toContain(secret);
+    await expect((await fetch(`${base}/api/v1/webhooks/events`)).json()).resolves.toEqual({
+      events: expect.arrayContaining(['run.completed', 'run.blocked', 'budget.warning']),
+    });
+    const unknownEventResponse = await fetch(`${base}/api/v1/webhooks`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        url: 'https://hooks.example.test/events',
+        secret,
+        events: ['run.not-a-real-event'],
+      }),
+    });
+    expect(unknownEventResponse.status).toBe(400);
     const enabledWebhookResponse = await fetch(`${base}/api/v1/webhooks/${webhook.id}/enable`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -844,6 +858,11 @@ describe('API boundary controls', () => {
       body: JSON.stringify({ version: webhook.version }),
     });
     expect(staleWebhookResponse.status).toBe(400);
+    const testDelivery = await fetch(`${base}/api/v1/webhooks/${webhook.id}/test`, {
+      method: 'POST',
+    });
+    expect(testDelivery.status).toBe(200);
+    expect(await testDelivery.json()).toMatchObject({ signed: true, delivered: false });
     const transitioned = await fetch(`${base}/api/v1/tasks/${task.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },

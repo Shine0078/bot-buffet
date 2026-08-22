@@ -71,6 +71,7 @@ import { readyNodes, validateWorkflow, workflowLevels } from './workflow.js';
 import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
 import { renderMetrics, runToOtlp } from './telemetry.js';
 import { researchBrief, validateCitations } from './research.js';
+import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -96,6 +97,7 @@ const send = (res: ServerResponse, status: number, payload: unknown): void => {
 const MAX_BODY_BYTES = 2_000_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 120;
+const WEBHOOK_DELIVERY_TIMEOUT_MS = 10_000;
 const requestBuckets = new Map<string, { startedAt: number; count: number }>();
 const parseBody = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
   const declaredLength = Number(req.headers['content-length'] ?? 0);
@@ -171,6 +173,87 @@ export function createApi(deps: ApiDeps) {
     projectId?: string;
     heartbeat: NodeJS.Timeout;
   }>();
+  const dispatchWebhookEvent = async (event: Record<string, unknown>): Promise<void> => {
+    const eventType = typeof event.type === 'string' ? event.type : '';
+    if (!isKnownEvent(eventType)) return;
+    const safeEvent = redactSecrets(event) as Record<string, unknown>;
+    const run = safeEvent.run as Record<string, unknown> | undefined;
+    const approval = safeEvent.approval as Record<string, unknown> | undefined;
+    const eventProjectId = String(run?.projectId ?? approval?.scope ?? safeEvent.projectId ?? '');
+    const webhooks = await deps.store.list<Webhook>(
+      (candidate) =>
+        candidate.kind === 'webhook' &&
+        candidate.enabled &&
+        candidate.events.includes(eventType) &&
+        (!eventProjectId || candidate.projectId === eventProjectId),
+    );
+    for (const webhook of webhooks) {
+      const secret = deps.vault.getSync(`webhook:${webhook.id}`);
+      if (!secret) {
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: webhook.ownerId,
+          scope: webhook.projectId,
+          actorId: webhook.ownerId,
+          action: 'webhook.delivery',
+          resourceType: 'webhook',
+          resourceId: webhook.id,
+          risk: 'low',
+          decision: 'denied',
+          metadata: { eventType, reason: 'webhook_secret_missing' },
+        });
+        continue;
+      }
+      const payload = JSON.stringify(safeEvent);
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = signPayload(secret, payload, timestamp);
+      const schedule = deliverySchedule();
+      const deliver = async (attempt: number): Promise<void> => {
+        let delivered = false;
+        let responseStatus = 0;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), WEBHOOK_DELIVERY_TIMEOUT_MS);
+        timeout.unref();
+        try {
+          assertSafeEndpoint(webhook.url);
+          const response = await fetchPinned(webhook.url, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-bot-buffet-event': eventType,
+              'x-bot-buffet-signature': signature,
+            },
+            body: payload,
+            signal: controller.signal,
+          });
+          responseStatus = response.status;
+          delivered = response.ok;
+        } catch {
+          delivered = false;
+        } finally {
+          clearTimeout(timeout);
+        }
+        if (!delivered && attempt < schedule.length) {
+          const timer = setTimeout(() => void deliver(attempt + 1), schedule[attempt]!.delayMs);
+          timer.unref();
+          return;
+        }
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: webhook.ownerId,
+          scope: webhook.projectId,
+          actorId: webhook.ownerId,
+          action: 'webhook.delivery',
+          resourceType: 'webhook',
+          resourceId: webhook.id,
+          risk: 'low',
+          decision: delivered ? 'executed' : 'denied',
+          metadata: { eventType, delivered, responseStatus, attempts: attempt },
+        });
+      };
+      void deliver(1).catch(() => undefined);
+    }
+  };
   deps.orchestrator.on('run', (event) => {
     const safeEvent = redactSecrets(event) as Record<string, unknown>;
     const run = safeEvent.run as Record<string, unknown> | undefined;
@@ -185,6 +268,7 @@ export function createApi(deps: ApiDeps) {
           clearInterval(subscriber.heartbeat);
           subscribers.delete(subscriber);
         }
+    void dispatchWebhookEvent(event as Record<string, unknown>).catch(() => undefined);
   });
   const server = createServer(async (req, res) => {
     const requestId = randomUUID();
@@ -2263,13 +2347,80 @@ export function createApi(deps: ApiDeps) {
           scope: project.id,
           projectId: project.id,
           url,
-          events: Array.isArray(body.events) ? body.events.map(String).slice(0, 50) : [],
+          events: (() => {
+            const requested = Array.isArray(body.events)
+              ? body.events.map(String).slice(0, 50)
+              : [];
+            const unknown = requested.filter((event) => !isKnownEvent(event));
+            if (unknown.length) throw new Error(`webhook_event_unknown:${unknown[0]}`);
+            return requested;
+          })(),
           secretFingerprint: fingerprint(secret),
           enabled: false,
         }) as Webhook;
         await deps.vault.set(`webhook:${webhook.id}`, secret);
         await deps.store.insert(webhook);
         return send(res, 201, webhook);
+      }
+      if (path === '/api/v1/webhooks/events' && req.method === 'GET')
+        return send(res, 200, { events: WEBHOOK_EVENTS });
+      const webhookTest = path.match(/^\/api\/v1\/webhooks\/([^/]+)\/test$/);
+      if (webhookTest && req.method === 'POST') {
+        const webhook = await required(
+          actorId,
+          await deps.store.get<Webhook>(webhookTest[1]!),
+          'admin',
+          'webhook',
+        );
+        if (!webhook.enabled) throw new Error('webhook_disabled');
+        const secret = deps.vault.getSync(`webhook:${webhook.id}`);
+        if (!secret) throw new Error('webhook_secret_missing');
+        const payload = JSON.stringify({
+          type: 'webhook.test',
+          webhookId: webhook.id,
+          projectId: webhook.projectId,
+          sentAt: now(),
+        });
+        const timestamp = Math.floor(Date.now() / 1000);
+        const signature = signPayload(secret, payload, timestamp);
+        let delivered = false;
+        let responseStatus = 0;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), WEBHOOK_DELIVERY_TIMEOUT_MS);
+        timeout.unref();
+        try {
+          assertSafeEndpoint(webhook.url);
+          const response = await fetchPinned(webhook.url, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-bot-buffet-signature': signature,
+              'x-bot-buffet-event': 'webhook.test',
+            },
+            body: payload,
+            signal: controller.signal,
+          });
+          responseStatus = response.status;
+          delivered = response.ok;
+        } catch {
+          delivered = false;
+        } finally {
+          clearTimeout(timeout);
+        }
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: webhook.projectId,
+          actorId,
+          action: 'webhook.test_delivery',
+          resourceType: 'webhook',
+          resourceId: webhook.id,
+          risk: 'low',
+          decision: delivered ? 'executed' : 'denied',
+          // The signature and secret are never recorded; only the outcome is.
+          metadata: { delivered, responseStatus },
+        });
+        return send(res, 200, { delivered, responseStatus, signed: true });
       }
       const webhookMatch = path.match(/^\/api\/v1\/webhooks\/([^/]+)\/(enable|disable)$/);
       if (webhookMatch && req.method === 'POST') {
