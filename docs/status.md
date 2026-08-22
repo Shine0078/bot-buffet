@@ -69,13 +69,15 @@ The profile-audit working-tree diff was reviewed in scan `be142bc7-f697-411d-a7f
 
 - A real restore drill now runs in CI (`npm run restore:drill`). It creates live control-plane state through the HTTP API, verifies the audit chain, takes a signed backup, destroys the data directory outright, restores from the backup, restarts the server, and proves the project, artifact, and tamper-evident audit chain all survived. This closes the local half of the backup/restore gate; off-host backup custody, immutable retention, and production restore evidence remain owner gates.
 
+- Cross-tenant and project isolation now has direct evidence in `tests/isolation.test.ts`: cross-workspace reads and writes are denied, project-scoped record filtering returns only the caller's tenant data, an actor with no membership is denied entirely, and role actions are enforced rather than granting blanket workspace access.
+
 ## Completion assessment (2026-08-21)
 
 Measured against the master prompt's acceptance criteria, not against effort spent.
 
 | Area                                                       | State                                       | Evidence                                                                       |
 | ---------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| Control plane, entities, audit chain                       | Complete                                    | 121 tests, audit chain verification endpoint                                   |
+| Control plane, entities, audit chain                       | Complete                                    | 125 tests, audit chain verification, cross-tenant isolation suite              |
 | Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete                                    | `tests/orchestrator.test.ts`                                                   |
 | Local model registry and offline enforcement               | Complete                                    | discovery/registration routes, offline-only contracts                          |
 | Online provider adapters                                   | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3                                |
