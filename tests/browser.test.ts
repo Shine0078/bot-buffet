@@ -129,7 +129,7 @@ describe('Office UI in a real browser', () => {
   it('switches to the accessible table alternative and renders new views', async () => {
     const page = await browser.newPage();
     await page.goto(base, { waitUntil: 'networkidle' });
-    for (const view of ['budgets', 'workflows', 'alerts', 'usage']) {
+    for (const view of ['budgets', 'workflows', 'alerts', 'incidents', 'usage']) {
       await page.click(`.nav-item[data-view="${view}"]`);
       await page.waitForSelector('#tableView:not(.hidden)');
       expect(await page.locator('#tableView').isVisible()).toBe(true);

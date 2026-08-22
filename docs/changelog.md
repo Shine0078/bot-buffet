@@ -115,3 +115,6 @@ An audit of every field on the agent profile, approval policy, and tool definiti
   cursor pagination while retaining backward-compatible array responses for
   callers that do not request a page, with validated resource filters for
   workspace/project/status/action views.
+- Incident-record pass: added scoped, redacted, auditable incident creation and
+  CAS lifecycle transitions plus an Office incidents table; project duplication
+  excludes incidents as live operational state.

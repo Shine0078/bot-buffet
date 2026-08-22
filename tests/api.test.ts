@@ -1086,6 +1086,73 @@ describe('API boundary controls', () => {
     expect((await fetch(`${base}/api/v1/tasks?status=unknown`)).status).toBe(400);
     expect((await fetch(`${base}/api/v1/runs?status=unknown`)).status).toBe(400);
   });
+  it('records scoped incidents with audited CAS lifecycle transitions', async () => {
+    const base = await start();
+    const projectResponse = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Incident project', slug: 'incident-project' }),
+    });
+    const project = (await projectResponse.json()) as { id: string };
+    const createdResponse = await fetch(`${base}/api/v1/incidents`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        severity: 'high',
+        source: 'operator',
+        title: 'Provider alert',
+        summary: 'Observed credential-shaped output sk-test-secret-value.',
+        evidenceIds: ['run-step-1'],
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as {
+      id: string;
+      version: number;
+      status: string;
+      summary: string;
+    };
+    expect(created).toMatchObject({
+      status: 'open',
+      version: 1,
+      summary: 'Observed credential-shaped output [REDACTED].',
+    });
+    const acknowledgedResponse = await fetch(`${base}/api/v1/incidents/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version, status: 'acknowledged' }),
+    });
+    expect(acknowledgedResponse.status).toBe(200);
+    const acknowledged = (await acknowledgedResponse.json()) as { version: number };
+    expect(acknowledged.version).toBe(2);
+    expect(
+      (
+        await fetch(`${base}/api/v1/incidents/${created.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            version: created.version,
+            status: 'resolved',
+            resolution: 'stale',
+          }),
+        })
+      ).status,
+    ).toBe(400);
+    const resolvedResponse = await fetch(`${base}/api/v1/incidents/${created.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: acknowledged.version,
+        status: 'resolved',
+        resolution: 'contained',
+      }),
+    });
+    expect(resolvedResponse.status).toBe(200);
+    await expect(
+      (await fetch(`${base}/api/v1/incidents?projectId=${project.id}&status=resolved`)).json(),
+    ).resolves.toEqual([expect.objectContaining({ id: created.id, status: 'resolved' })]);
+  });
   it('keeps plugin updates disabled and supports integrity-pinned rollback/delete', async () => {
     const base = await start();
     const createdResponse = await fetch(`${base}/api/v1/plugins`, {

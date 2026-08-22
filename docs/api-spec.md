@@ -57,6 +57,17 @@ Model registration also rejects non-finite, negative, or unbounded cost, latency
 
 `GET /api/v1/alerts` lists authorization-filtered operator alerts. The orchestrator raises a `warning` alert when a budget crosses its warn ratio and a `critical` alert when a hard limit blocks a run; alert messages pass through secret redaction and are length-bounded.
 
+`GET/POST /api/v1/incidents` lists or records durable, scoped incident records.
+API-created incidents are explicitly labeled `operator`; trusted `system` and
+`security` provenance is reserved for harness-generated records. Creation
+requires project or workspace write authorization, bounds and redacts
+title/summary/evidence fields, and optionally verifies a referenced run belongs
+to the selected project. `PATCH /api/v1/incidents/:id` requires approval
+authorization and the current entity version; lifecycle transitions are
+`open` → `acknowledged` → `resolved` (with a required bounded resolution), and
+each create/transition is audit-recorded. Incident reads support project,
+status, severity, and the common cursor pagination contract.
+
 The orchestrator performs the same evaluation before every model call. Estimated cost is charged against applicable budgets; exceeding a hard limit durably blocks the run with `budget_exceeded`, emits a `budget.exceeded` event, and writes a `budget.blocked` audit record. Soft warnings emit `budget.warning` without blocking. Each completed model call writes durable usage and cost records scoped to the project, agent, and run, so budgets reflect real spend across restarts.
 
 Routing only accepts model IDs readable by the actor and within the selected project/agent scope. Automatic routing also filters its inventory to the run's project/workspace scopes before selecting a provider.

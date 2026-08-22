@@ -572,6 +572,25 @@ export interface Alert extends BaseEntity {
   acknowledged: boolean;
   resourceId?: ID;
 }
+export type IncidentStatus = 'open' | 'acknowledged' | 'resolved';
+export type IncidentSource = 'operator' | 'system' | 'security';
+export interface Incident extends BaseEntity {
+  kind: 'incident';
+  projectId?: ID;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  summary: string;
+  source: IncidentSource;
+  status: IncidentStatus;
+  resourceId?: ID;
+  runId?: ID;
+  evidenceIds: ID[];
+  acknowledgedBy?: ID;
+  acknowledgedAt?: ISODate;
+  resolvedBy?: ID;
+  resolvedAt?: ISODate;
+  resolution?: string;
+}
 export type BudgetPeriod = 'daily' | 'monthly' | 'lifetime';
 export interface Budget extends BaseEntity {
   kind: 'budget';
@@ -647,6 +666,7 @@ export type Entity =
   | UsageRecord
   | CostRecord
   | Alert
+  | Incident
   | Budget
   | Schedule
   | Webhook;

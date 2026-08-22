@@ -146,6 +146,24 @@ async function addScopedRecord() {
     await load();
     return switchView('workflows');
   }
+  if (state.view === 'incidents') {
+    const title = window.prompt('Incident title');
+    if (title === null) return;
+    const summary = window.prompt('Incident summary');
+    if (summary === null) return;
+    await api('/api/v1/incidents', {
+      method: 'POST',
+      body: JSON.stringify({
+        projectId,
+        severity: 'medium',
+        source: 'operator',
+        title: title.trim() || 'Office incident',
+        summary: summary.trim() || 'Recorded by an operator.',
+      }),
+    });
+    await load();
+    return switchView('incidents');
+  }
   if (state.view === 'runs') return startSelectedRun().then(() => switchView('runs'));
   await switchView(state.view);
 }
@@ -335,6 +353,11 @@ function table(view) {
       ['name', 'period', 'limit', 'spent', 'state'],
     ],
     alerts: ['Alerts', d.alerts || [], ['severity', 'title', 'message', 'acknowledged']],
+    incidents: [
+      'Incidents',
+      d.incidents || [],
+      ['severity', 'status', 'title', 'source', 'createdAt'],
+    ],
     workflows: [
       'Workflows',
       (d.workflows || []).map((w) => ({

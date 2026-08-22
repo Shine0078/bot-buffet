@@ -32,7 +32,7 @@ describe('Office UI accessibility contract', () => {
   });
 
   it('exposes budget, usage, workflow, and alert views in the accessible tables', () => {
-    for (const view of ['budgets', 'usage', 'workflows', 'alerts'])
+    for (const view of ['budgets', 'usage', 'workflows', 'alerts', 'incidents'])
       expect(html).toContain(`data-view="${view}"`);
     expect(app).toContain('budgets: [');
     expect(app).toContain('workflows: [');

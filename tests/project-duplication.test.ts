@@ -8,6 +8,7 @@ import {
   entity,
   type Agent,
   type Environment,
+  type Incident,
   type Project,
   type Task,
   type Workflow,
@@ -109,13 +110,27 @@ describe('safe project duplication', () => {
       edges: [],
       enabled: true,
     }) as Workflow;
-    for (const value of [source, environment, agent, task, workflow]) await store.insert(value);
+    const incident = entity({
+      kind: 'incident',
+      ownerId: 'u',
+      scope: source.id,
+      projectId: source.id,
+      severity: 'high' as const,
+      title: 'Live incident',
+      summary: 'Do not copy this operational state.',
+      source: 'operator' as const,
+      status: 'open' as const,
+      evidenceIds: [],
+    }) as Incident;
+    for (const value of [source, environment, agent, task, workflow, incident])
+      await store.insert(value);
 
     const result = await duplicateProject(store, source, 'u', 'Copy', 'copy');
     expect(result.project.id).not.toBe(source.id);
     expect(result.project.name).toBe('Copy');
     expect(result.copied).toMatchObject({ environments: 1, agents: 1, tasks: 1, workflows: 1 });
     expect(result.excluded).toContain('credentials');
+    expect(result.excluded).toContain('incidents');
 
     const copiedAgents = await store.list<Agent>(
       (value) => value.kind === 'agent' && value.projectId === result.project.id,

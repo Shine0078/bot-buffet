@@ -291,6 +291,7 @@ export async function duplicateProject(
         'memory',
         'artifacts',
         'webhooks',
+        'incidents',
         'audit-events',
       ],
       at: now(),
@@ -318,6 +319,7 @@ export async function duplicateProject(
       'memory',
       'artifacts',
       'webhooks',
+      'incidents',
       'audit-events',
     ],
   };

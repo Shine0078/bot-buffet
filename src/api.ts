@@ -20,6 +20,9 @@ import {
   EvaluationCase,
   EvaluationDataset,
   EvaluationRun,
+  Incident,
+  IncidentSource,
+  IncidentStatus,
   MemoryItem,
   MCPServer,
   Model,
@@ -1037,6 +1040,10 @@ export function createApi(deps: ApiDeps) {
             await visible(actorId, await deps.store.list<Budget>((x) => x.kind === 'budget'))
           ).map((budget) => ({ ...budget, status: budgetStatus(budget, spendSources) })),
           alerts: await visible(actorId, await deps.store.list<Alert>((x) => x.kind === 'alert')),
+          incidents: await visible(
+            actorId,
+            await deps.store.list<Incident>((x) => x.kind === 'incident'),
+          ),
           workflows: await visible(
             actorId,
             await deps.store.list<Workflow>((x) => x.kind === 'workflow'),
@@ -2509,6 +2516,156 @@ export function createApi(deps: ApiDeps) {
           200,
           await visible(actorId, await deps.store.list<Alert>((x) => x.kind === 'alert')),
         );
+      }
+      if (path === '/api/v1/incidents' && req.method === 'GET') {
+        const projectId = url.searchParams.get('projectId');
+        const status = url.searchParams.get('status');
+        const severity = url.searchParams.get('severity');
+        const incidentStatuses: IncidentStatus[] = ['open', 'acknowledged', 'resolved'];
+        const incidentSeverities = ['low', 'medium', 'high', 'critical'];
+        if (status !== null && !incidentStatuses.includes(status as IncidentStatus))
+          throw new Error('incident_status_filter_invalid');
+        if (severity !== null && !incidentSeverities.includes(severity))
+          throw new Error('incident_severity_filter_invalid');
+        const incidents = await visible(
+          actorId,
+          await deps.store.list<Incident>(
+            (x) =>
+              x.kind === 'incident' &&
+              (!projectId || (x as Incident).projectId === projectId) &&
+              (status === null || (x as Incident).status === status) &&
+              (severity === null || (x as Incident).severity === severity),
+          ),
+        );
+        return send(res, 200, page(incidents));
+      }
+      if (path === '/api/v1/incidents' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const projectId = body.projectId === undefined ? undefined : String(body.projectId);
+        const project = projectId
+          ? await required(actorId, await deps.store.get<Project>(projectId), 'write', 'project')
+          : undefined;
+        const scope = project?.id ?? String(body.scope ?? 'workspace_local');
+        if (!project) {
+          const workspace = await deps.store.get<Workspace>(scope);
+          if (workspace) await required(actorId, workspace, 'write', 'workspace');
+          else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+            throw new Error('incident_scope_required');
+        }
+        if (typeof body.title !== 'string' || !body.title.trim())
+          throw new Error('incident_title_invalid');
+        if (typeof body.summary !== 'string' || !body.summary.trim())
+          throw new Error('incident_summary_invalid');
+        const severity = String(body.severity ?? 'medium');
+        if (!['low', 'medium', 'high', 'critical'].includes(severity))
+          throw new Error('incident_severity_invalid');
+        const source = String(body.source ?? 'operator') as IncidentSource;
+        // API-created records are operator observations. System/security
+        // provenance is reserved for harness-generated incidents so callers
+        // cannot spoof a trusted source label.
+        if (source !== 'operator') throw new Error('incident_source_invalid');
+        const evidenceIds = Array.isArray(body.evidenceIds)
+          ? body.evidenceIds.filter((value): value is string => typeof value === 'string')
+          : [];
+        if (evidenceIds.length > 32 || evidenceIds.some((value) => value.length > 256))
+          throw new Error('incident_evidence_invalid');
+        const runId = body.runId === undefined ? undefined : String(body.runId);
+        if (runId) {
+          const run = await required(actorId, await deps.store.get<Run>(runId), 'read', 'run');
+          if (project && run.projectId !== project.id)
+            throw new Error('incident_run_scope_mismatch');
+        }
+        const incident = entity({
+          kind: 'incident',
+          ownerId: actorId,
+          scope,
+          ...(project ? { projectId: project.id } : {}),
+          severity: severity as Incident['severity'],
+          title: String(redactSecrets(body.title)).slice(0, 200),
+          summary: String(redactSecrets(body.summary)).slice(0, 4000),
+          source,
+          status: 'open' as const,
+          ...(body.resourceId === undefined
+            ? {}
+            : { resourceId: String(body.resourceId).slice(0, 256) }),
+          ...(runId ? { runId } : {}),
+          evidenceIds: [...new Set(evidenceIds)],
+        }) as Incident;
+        await deps.store.insert(incident);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope,
+          actorId,
+          action: 'incident.created',
+          resourceType: 'incident',
+          resourceId: incident.id,
+          risk: severity === 'critical' ? 'high' : 'medium',
+          decision: 'executed',
+          metadata: { projectId, severity: incident.severity, source: incident.source },
+        });
+        return send(res, 201, incident);
+      }
+      const incidentMatch = path.match(/^\/api\/v1\/incidents\/([^/]+)$/);
+      if (incidentMatch && req.method === 'PATCH') {
+        const incident = await required(
+          actorId,
+          await deps.store.get<Incident>(incidentMatch[1]!),
+          'approve',
+          'incident',
+        );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== incident.version)
+          throw new Error('incident_version_required');
+        const nextStatus = body.status === undefined ? incident.status : String(body.status);
+        const allowedTransitions: Record<IncidentStatus, IncidentStatus[]> = {
+          open: ['open', 'acknowledged', 'resolved'],
+          acknowledged: ['acknowledged', 'resolved'],
+          resolved: ['resolved'],
+        };
+        if (!['open', 'acknowledged', 'resolved'].includes(nextStatus))
+          throw new Error('incident_status_invalid');
+        if (!allowedTransitions[incident.status].includes(nextStatus as IncidentStatus))
+          throw new Error('incident_transition_invalid');
+        if (nextStatus === 'resolved' && typeof body.resolution !== 'string')
+          throw new Error('incident_resolution_required');
+        const timestamp = now();
+        const saved = await deps.store.putIfVersion(
+          {
+            ...incident,
+            status: nextStatus as IncidentStatus,
+            ...(nextStatus === 'acknowledged' && incident.status === 'open'
+              ? { acknowledgedBy: actorId, acknowledgedAt: timestamp }
+              : {}),
+            ...(nextStatus === 'resolved'
+              ? {
+                  resolvedBy: actorId,
+                  resolvedAt: timestamp,
+                  resolution: String(redactSecrets(body.resolution)).slice(0, 4000),
+                }
+              : {}),
+            version: incident.version,
+          } as Incident,
+          expectedVersion,
+        );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: incident.scope,
+          actorId,
+          action: `incident.${nextStatus}`,
+          resourceType: 'incident',
+          resourceId: incident.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: {
+            previousStatus: incident.status,
+            status: saved.status,
+            version: saved.version,
+          },
+        });
+        return send(res, 200, saved);
       }
       if (path === '/api/v1/memory' && req.method === 'GET') {
         const namespace = url.searchParams.get('namespace');
