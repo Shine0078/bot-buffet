@@ -29,6 +29,7 @@ import { assembleContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { labelUntrusted } from './injection.js';
 import { canStartInMode, decideMode } from './modes.js';
+import { verifyDeterministic } from './verification.js';
 
 export interface OrchestratorDeps {
   store: JsonStateStore;
@@ -496,7 +497,10 @@ export class Orchestrator extends EventEmitter {
             this.emit('run', { type: 'tool.executed', runId, tool: call.name });
           }
         }
-        const verification = await this.verify(task, nextState);
+        const verification = verifyDeterministic(agent.profile.verificationPolicy, {
+          task,
+          state: nextState,
+        });
         const verifyStep = entity({
           kind: 'run-step',
           ownerId: run.ownerId,
@@ -559,20 +563,6 @@ export class Orchestrator extends EventEmitter {
     }
   }
 
-  private async verify(
-    task: Task,
-    state: Record<string, unknown>,
-  ): Promise<{ passed: boolean; evidence: string[] }> {
-    const text = JSON.stringify(state);
-    const evidence = task.acceptanceCriteria.filter((criterion) =>
-      text.toLowerCase().includes(criterion.toLowerCase()),
-    );
-    return {
-      passed:
-        task.acceptanceCriteria.length === 0 || evidence.length === task.acceptanceCriteria.length,
-      evidence,
-    };
-  }
   private async completeWithRetry(
     adapter: ModelAdapter,
     request: ModelRequest,
