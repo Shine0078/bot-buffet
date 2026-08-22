@@ -66,24 +66,24 @@ The profile-audit working-tree diff was reviewed in scan `be142bc7-f697-411d-a7f
 
 Measured against the master prompt's acceptance criteria, not against effort spent.
 
-| Area | State | Evidence |
-| --- | --- | --- |
-| Control plane, entities, audit chain | Complete | 105 tests, audit chain verification endpoint |
-| Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete | `tests/orchestrator.test.ts` |
-| Local model registry and offline enforcement | Complete | discovery/registration routes, offline-only contracts |
-| Online provider adapters | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3 |
-| Routing, budgets, cost/usage reporting | Complete | `src/router.ts`, `src/budgets.ts`, `src/reporting.ts` |
-| Tools, permissions, approvals, audit | Complete | typed contracts, CAS approvals, tamper-evident log |
-| Sandboxing | Implemented; kernel isolation unverified | Docker mode required in production; Docker daemon unavailable locally |
-| Memory, context budgeting, compaction | Complete | `src/context.ts`, memory approval CAS |
-| Workflows and artifacts | Complete | DAG validation/scheduling, scanned artifact registry, manifests |
-| Office UI and accessible tables | Functional | table alternative, keyboard/focus/reduced-motion coverage |
-| Browser, screenshot, and axe accessibility tests | Not implemented | no Playwright/axe suite in repo |
-| Observability | Partial | summary/usage/alerts endpoints; no OpenTelemetry exporter |
-| Evaluations | Partial | deterministic case execution; no LLM-as-judge or golden regression suite |
-| CI/CD | Complete locally | format, types, tests, lint, audit, secret scan, build, smoke, SBOM, provenance |
-| Deployment, backups, rollback | Prepared, unverified | scripts and docs exist; no staging deploy or restore drill |
-| Documentation | Complete for implemented surface | 29 documents kept in sync per commit |
+| Area                                                       | State                                       | Evidence                                                                       |
+| ---------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
+| Control plane, entities, audit chain                       | Complete                                    | 105 tests, audit chain verification endpoint                                   |
+| Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete                                    | `tests/orchestrator.test.ts`                                                   |
+| Local model registry and offline enforcement               | Complete                                    | discovery/registration routes, offline-only contracts                          |
+| Online provider adapters                                   | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3                                |
+| Routing, budgets, cost/usage reporting                     | Complete                                    | `src/router.ts`, `src/budgets.ts`, `src/reporting.ts`                          |
+| Tools, permissions, approvals, audit                       | Complete                                    | typed contracts, CAS approvals, tamper-evident log                             |
+| Sandboxing                                                 | Implemented; kernel isolation unverified    | Docker mode required in production; Docker daemon unavailable locally          |
+| Memory, context budgeting, compaction                      | Complete                                    | `src/context.ts`, memory approval CAS                                          |
+| Workflows and artifacts                                    | Complete                                    | DAG validation/scheduling, scanned artifact registry, manifests                |
+| Office UI and accessible tables                            | Functional                                  | table alternative, keyboard/focus/reduced-motion coverage                      |
+| Browser, screenshot, and axe accessibility tests           | Not implemented                             | no Playwright/axe suite in repo                                                |
+| Observability                                              | Partial                                     | summary/usage/alerts endpoints; no OpenTelemetry exporter                      |
+| Evaluations                                                | Partial                                     | deterministic case execution; no LLM-as-judge or golden regression suite       |
+| CI/CD                                                      | Complete locally                            | format, types, tests, lint, audit, secret scan, build, smoke, SBOM, provenance |
+| Deployment, backups, rollback                              | Prepared, unverified                        | scripts and docs exist; no staging deploy or restore drill                     |
+| Documentation                                              | Complete for implemented surface            | 29 documents kept in sync per commit                                           |
 
 Honest completion estimate: roughly 70 percent of the specification. The local harness is genuinely built and verified; the remaining work is dominated by requirements that cannot be truthfully claimed without external systems (real provider accounts, a container runtime, a staging environment, restore and rollback drills) plus three feasible local gaps: browser/accessibility test automation, OpenTelemetry export, and the evaluation regression suite.
 
