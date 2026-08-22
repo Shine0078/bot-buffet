@@ -1023,6 +1023,34 @@ describe('API boundary controls', () => {
       expect.arrayContaining([expect.objectContaining({ id: created.id })]),
     );
   });
+  it('duplicates project configuration without reusing the project slug', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Template', slug: 'template' }),
+    });
+    const source = (await createdResponse.json()) as { id: string };
+    const first = await fetch(`${base}/api/v1/projects/${source.id}/duplicate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Copy', slug: 'copy' }),
+    });
+    expect(first.status).toBe(201);
+    const copied = (await first.json()) as {
+      project: { id: string; slug: string };
+      excluded: string[];
+    };
+    expect(copied.project.slug).toBe('copy');
+    expect(copied.excluded).toContain('credentials');
+    const second = await fetch(`${base}/api/v1/projects/${source.id}/duplicate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ slug: 'copy' }),
+    });
+    expect(second.status).toBe(201);
+    await expect(second.json()).resolves.toMatchObject({ project: { slug: 'copy-2' } });
+  });
   it('keeps plugin updates disabled and supports integrity-pinned rollback/delete', async () => {
     const base = await start();
     const createdResponse = await fetch(`${base}/api/v1/plugins`, {

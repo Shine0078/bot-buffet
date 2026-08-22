@@ -24,18 +24,27 @@ contract, not the authority.
 
 ## Built-in tools
 
-| Tool               | Risk   | Reversible | Notes                                               |
-| ------------------ | ------ | ---------- | --------------------------------------------------- |
-| `filesystem.read`  | safe   | yes        | Workspace-confined, protected paths refused         |
-| `filesystem.write` | medium | no         | Locked per file, size-capped, audited               |
-| `shell.run`        | medium | no         | Read-only probes only; explicit sandbox environment |
-| `memory.write`     | low    | yes        | Bounded by `writableScopes`; identity from the run  |
+| Tool               | Risk   | Reversible | Notes                                                                            |
+| ------------------ | ------ | ---------- | -------------------------------------------------------------------------------- |
+| `filesystem.read`  | safe   | yes        | Workspace-confined, protected paths refused; returns SHA-256/version             |
+| `filesystem.write` | medium | no         | Locked, size-capped, audited; optional SHA-256 precondition rejects stale writes |
+| `shell.run`        | medium | no         | Read-only probes only; explicit sandbox environment                              |
+| `memory.write`     | low    | yes        | Bounded by `writableScopes`; identity from the run                               |
 
 `memory.write` takes its namespace identity from the run rather than the
 caller — the schema does not accept a `namespaceId` — so an agent cannot record
 a note against another project, agent, or run. Where the memory policy requires
 approval the note is stored unapproved, which keeps it out of agent context
 until a human accepts it while still recording it.
+
+`filesystem.read` returns `sha256` and a durable `versionLabel` for the
+project-relative file. `filesystem.write` accepts an optional `expectedSha256`;
+when supplied, the harness checks both the durable file record and the current
+workspace bytes before writing. A mismatch fails with
+`filesystem_write_conflict` and leaves the existing bytes untouched. Successful
+writes update the durable `ProjectFile` record and increment its version label,
+so concurrent agents can compare-and-swap their edits instead of silently
+overwriting one another.
 
 `shell.run` receives an explicitly constructed environment: the few variables a
 process needs to execute, plus whatever the agent profile's `environmentKeys`

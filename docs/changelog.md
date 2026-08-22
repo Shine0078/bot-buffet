@@ -103,3 +103,11 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Office run-control pass: the inspector now pauses, resumes, and stops the selected agent's active run through the existing run-command API, with browser coverage for pause and stop.
 - Brand pass: the product is now Samuel Abraham's Bot Buffet in the Office chrome, README, package metadata, and bootstrap workspace name. No Munder Difflin branding remains in the Bot Buffet UI.
 - Workspace path pass: agent scratch now lives under the durable data directory so a read-only container root does not fail startup.
+- File-versioning pass: sandboxed filesystem reads now return SHA-256/version
+  witnesses, writes enforce optional expected-digest preconditions against both
+  durable metadata and current bytes, and successful edits update deterministic
+  project-file records so stale concurrent edits fail closed.
+- Project-duplication pass: the API now creates same-workspace configuration
+  copies with remapped IDs, reset active state, disabled schedules/workflows/
+  budgets, sanitized collision-safe slugs, and explicit exclusion of secrets,
+  live runs, files, memory, artifacts, webhooks, and audit history.

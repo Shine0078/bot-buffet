@@ -78,6 +78,7 @@ import { connectorCatalog, connectorPluginRecord, findConnector } from './connec
 import { renderMetrics, runToOtlp } from './telemetry.js';
 import { researchBrief, validateCitations } from './research.js';
 import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
+import { duplicateProject } from './projectDuplication.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1031,6 +1032,29 @@ export function createApi(deps: ApiDeps) {
         }) as Environment;
         await deps.store.insert(environment);
         return send(res, 201, project);
+      }
+      const duplicateMatch = path.match(/^\/api\/v1\/projects\/([^/]+)\/duplicate$/);
+      if (duplicateMatch && req.method === 'POST') {
+        const source = await required(
+          actorId,
+          await deps.store.get<Project>(duplicateMatch[1]!),
+          'write',
+          'project',
+        );
+        const body = await parseBody(req);
+        if (
+          (body.name !== undefined && typeof body.name !== 'string') ||
+          (body.slug !== undefined && typeof body.slug !== 'string')
+        )
+          throw new Error('project_duplicate_input_invalid');
+        const result = await duplicateProject(
+          deps.store,
+          source,
+          actorId,
+          body.name === undefined ? undefined : body.name.slice(0, 200),
+          body.slug === undefined ? undefined : body.slug.slice(0, 100),
+        );
+        return send(res, 201, result);
       }
       const projectMatch = path.match(/^\/api\/v1\/projects\/([^/]+)$/);
       if (projectMatch && req.method === 'PATCH') {

@@ -100,6 +100,31 @@ export class JsonStateStore {
     return operation;
   }
 
+  /** Atomically insert or update a record when a portable upsert is required. */
+  async upsert<T extends BaseEntity>(value: T): Promise<T> {
+    const operation = this.mutationQueue.then(async () => {
+      await this.load();
+      const current = this.state.entities[value.id] as T | undefined;
+      const saved = current
+        ? ({
+            ...current,
+            ...value,
+            createdAt: current.createdAt,
+            updatedAt: now(),
+            version: current.version + 1,
+          } as T)
+        : value;
+      this.state.entities[saved.id] = saved as unknown as Entity;
+      await this.persist();
+      return saved;
+    });
+    this.mutationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
   async get<T extends BaseEntity>(entityId: ID): Promise<T | undefined> {
     await this.load();
     return this.state.entities[entityId] as T | undefined;

@@ -42,7 +42,16 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - run: docker build --tag bot-buffet:${{ github.sha }} .
-      - run: docker run --detach --name bot-buffet -p 8787:8787 bot-buffet:${{ github.sha }}
-      - run: for i in {1..20}; do curl --fail http://127.0.0.1:8787/readyz && exit 0 || sleep 1; done; exit 1
-      - if: always()
-        run: docker logs bot-buffet
+      # The image deliberately has no privileged Docker socket or daemon. The
+      # control plane must receive a separately managed runner in staging and
+      # production; without one it must fail closed before advertising ready.
+      - name: Assert sandbox runner fail-closed startup
+        shell: bash
+        run: |
+          set +e
+          output="$(docker run --rm bot-buffet:${{ github.sha }} 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          grep -q "sandbox_runner_unavailable" <<< "$output"

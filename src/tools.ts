@@ -1,6 +1,15 @@
+import { createHash } from 'node:crypto';
 import { basename, relative, sep } from 'node:path';
 import { JsonStateStore } from './store.js';
-import { entity, MemoryItem, MemoryPolicy, ToolDefinition, ID, JsonSchema } from './types.js';
+import {
+  entity,
+  MemoryItem,
+  MemoryPolicy,
+  ProjectFile,
+  ToolDefinition,
+  ID,
+  JsonSchema,
+} from './types.js';
 import { canWriteMemory } from './memoryScope.js';
 import { createSandboxRuntime, SandboxRuntime } from './sandbox.js';
 import {
@@ -34,6 +43,19 @@ export interface RegisteredTool {
   definition: ToolDefinition;
   execute: (input: unknown, context: ToolContext) => Promise<unknown>;
 }
+
+const sha256Text = (value: string): string => createHash('sha256').update(value).digest('hex');
+const isSha256 = (value: unknown): value is string =>
+  typeof value === 'string' && /^[0-9a-f]{64}$/iu.test(value);
+const canonicalProjectPath = (relativePath: string): string => {
+  const portable = relativePath.replaceAll(sep, '/');
+  return process.platform === 'win32' ? portable.toLowerCase() : portable;
+};
+const projectFileId = (projectId: ID, relativePath: string): ID =>
+  `file_${createHash('sha256')
+    .update(`${projectId}\0${canonicalProjectPath(relativePath)}`)
+    .digest('hex')
+    .slice(0, 32)}`;
 
 /**
  * Sliding-window rate limiter for tool invocations.
@@ -283,8 +305,13 @@ export function createBuiltinTools(
       },
       {
         type: 'object',
-        properties: { path: { type: 'string' }, content: { type: 'string' } },
-        required: ['path', 'content'],
+        properties: {
+          path: { type: 'string' },
+          content: { type: 'string' },
+          sha256: { type: 'string' },
+          versionLabel: { type: 'string' },
+        },
+        required: ['path', 'content', 'sha256', 'versionLabel'],
         additionalProperties: false,
       },
     ),
@@ -295,12 +322,42 @@ export function createBuiltinTools(
         throw new Error('filesystem_read_denied:path_not_allowed');
       if (pathProtected(context.workspaceRoot, resolved, context.protectedPaths))
         throw new Error('filesystem_read_denied:protected_path');
+      const content = await sandbox(context.workspaceRoot).readFile(
+        relative(context.workspaceRoot, resolved),
+        context.signal,
+      );
+      const relativePath = relative(context.workspaceRoot, resolved);
+      const digest = sha256Text(content);
+      const existing = await store.get<ProjectFile>(
+        projectFileId(context.projectId, canonicalProjectPath(relativePath)),
+      );
+      const file = existing
+        ? existing.sha256 === digest && existing.size === Buffer.byteLength(content)
+          ? existing
+          : await store.put({
+              ...existing,
+              sha256: digest,
+              size: Buffer.byteLength(content),
+              versionLabel: `v${existing.version + 1}`,
+            })
+        : await store.upsert({
+            ...entity({
+              kind: 'file',
+              ownerId: context.actorId,
+              scope: context.projectId,
+              projectId: context.projectId,
+              path: relativePath,
+              sha256: digest,
+              size: Buffer.byteLength(content),
+              versionLabel: 'v1',
+            }),
+            id: projectFileId(context.projectId, canonicalProjectPath(relativePath)),
+          } as ProjectFile);
       return {
-        path: relative(context.workspaceRoot, resolved),
-        content: await sandbox(context.workspaceRoot).readFile(
-          relative(context.workspaceRoot, resolved),
-          context.signal,
-        ),
+        path: relativePath,
+        content,
+        sha256: digest,
+        versionLabel: file.versionLabel,
       };
     },
   });
@@ -311,19 +368,30 @@ export function createBuiltinTools(
       'medium',
       {
         type: 'object',
-        properties: { path: { type: 'string' }, content: { type: 'string' } },
+        properties: {
+          path: { type: 'string' },
+          content: { type: 'string' },
+          expectedSha256: { type: 'string' },
+        },
         required: ['path', 'content'],
         additionalProperties: false,
       },
       {
         type: 'object',
-        properties: { path: { type: 'string' }, bytes: { type: 'number' } },
-        required: ['path', 'bytes'],
+        properties: {
+          path: { type: 'string' },
+          bytes: { type: 'number' },
+          sha256: { type: 'string' },
+          versionLabel: { type: 'string' },
+        },
+        required: ['path', 'bytes', 'sha256', 'versionLabel'],
         additionalProperties: false,
       },
     ),
     execute: async (input, context) => {
-      const data = input as { path: string; content: string };
+      const data = input as { path: string; content: string; expectedSha256?: string };
+      if (data.expectedSha256 !== undefined && !isSha256(data.expectedSha256))
+        throw new Error('filesystem_write_denied:expected_sha256_invalid');
       const resolved = await assertWorkspaceRealPath(context.workspaceRoot, data.path, true);
       if (!pathAllowed(context.workspaceRoot, resolved, context.allowedPaths))
         throw new Error('filesystem_write_denied:path_not_allowed');
@@ -331,11 +399,47 @@ export function createBuiltinTools(
         throw new Error('filesystem_write_denied:protected_path');
       if (data.content.length > 5_000_000) throw new Error('filesystem_write_denied:file_size_cap');
       const relativePath = relative(context.workspaceRoot, resolved);
-      const lockName = `file:${context.projectId}:${relativePath}`;
+      const fileKey = canonicalProjectPath(relativePath);
+      const lockName = `file:${context.projectId}:${fileKey}`;
       if (!(await store.lock(lockName, context.runId, 30_000)))
         throw new Error('filesystem_write_denied:resource_locked');
       try {
+        const existing = await store.get<ProjectFile>(projectFileId(context.projectId, fileKey));
+        if (data.expectedSha256 !== undefined) {
+          let currentContent: string;
+          try {
+            currentContent = await sandbox(context.workspaceRoot).readFile(
+              relativePath,
+              context.signal,
+            );
+          } catch (error) {
+            if (String(error).includes('sandbox_read_failed'))
+              throw new Error('filesystem_write_conflict:current_file_unreadable');
+            throw error;
+          }
+          const currentDigest = sha256Text(currentContent);
+          if (
+            currentDigest !== data.expectedSha256 ||
+            (existing && existing.sha256 !== currentDigest)
+          )
+            throw new Error('filesystem_write_conflict:stale_sha256');
+        }
         await sandbox(context.workspaceRoot).writeFile(relativePath, data.content, context.signal);
+        const digest = sha256Text(data.content);
+        const file = {
+          ...entity({
+            kind: 'file',
+            ownerId: context.actorId,
+            scope: context.projectId,
+            projectId: context.projectId,
+            path: relativePath,
+            sha256: digest,
+            size: Buffer.byteLength(data.content),
+            versionLabel: `v${(existing?.version ?? 0) + 1}`,
+          }),
+          id: projectFileId(context.projectId, fileKey),
+        } as ProjectFile;
+        const savedFile = await store.upsert(file);
         await store.audit({
           kind: 'audit-event',
           ownerId: context.actorId,
@@ -346,12 +450,25 @@ export function createBuiltinTools(
           resourceId: `path:${data.path}`,
           risk: 'medium',
           decision: 'executed',
-          metadata: { runId: context.runId, path: data.path },
+          metadata: {
+            runId: context.runId,
+            path: data.path,
+            sha256: digest,
+            versionLabel: savedFile.versionLabel,
+            expectedSha256: data.expectedSha256,
+          },
         });
       } finally {
         await store.unlock(lockName, context.runId);
       }
-      return { path: data.path, bytes: Buffer.byteLength(data.content) };
+      const digest = sha256Text(data.content);
+      const version = await store.get<ProjectFile>(projectFileId(context.projectId, fileKey));
+      return {
+        path: relativePath,
+        bytes: Buffer.byteLength(data.content),
+        sha256: digest,
+        versionLabel: version?.versionLabel ?? 'v1',
+      };
     },
   });
   registry.register({

@@ -16,6 +16,22 @@ SSE now requires a project scope in every mode and drops events that do not carr
 
 `PATCH /api/v1/tasks/:id` requires the current task `version`, permits only the documented backlog/ready/running/blocked/done/cancelled transitions, and uses compare-and-swap persistence so stale clients receive a conflict instead of overwriting a newer state.
 
+`POST /api/v1/projects/:id/duplicate` creates a same-workspace configuration copy
+with remapped project, environment, agent, task, workflow, budget, and schedule
+IDs. Active execution state, credentials, provider/model records, files, memory,
+artifacts, webhooks, and audit history are intentionally excluded; copied agents
+and tasks start idle/ready, and workflows, budgets, and schedules start disabled.
+The optional `name` and `slug` are sanitized and sibling-slug collisions receive
+an explicit numeric suffix; duplication claims a bounded workspace lock while
+allocating the slug so concurrent copies cannot select the same name.
+
+Filesystem tools expose the same conflict model: reads return a SHA-256 content
+version and durable `versionLabel`; writes may supply `expectedSha256`, which is
+checked against both the stored `ProjectFile` record and the current sandbox
+bytes before mutation. Stale writes fail closed with
+`filesystem_write_conflict`, and successful writes update the project file
+record and audit metadata.
+
 Model registration also rejects non-finite, negative, or unbounded cost, latency, and routing-weight metadata before it reaches the router.
 
 `GET/POST /api/v1/budgets` lists or creates project and agent-scoped spend limits. Creation validates the period (`daily`, `monthly`, `lifetime`), a positive bounded `limitCents`, a `warnRatio` between 0 and 1, and that any `agentId` is readable by the caller and belongs to the same project. The list response attaches a computed status containing spend, projection, remaining cents, and `ok`/`warning`/`exceeded` state for the current window.

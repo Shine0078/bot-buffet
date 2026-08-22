@@ -26,6 +26,46 @@ describe('sandboxed builtin tools', () => {
     await tools.invoke('filesystem.write', { path: 'note.txt', content: 'safe' }, context);
     expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('safe');
   });
+  it('returns durable file hashes and rejects stale write preconditions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-'));
+    const store = createStore(dir);
+    const tools = createBuiltinTools(store);
+    const context = {
+      actorId: 'u',
+      runId: 'r',
+      projectId: 'p',
+      workspaceRoot: dir,
+      allowedPaths: ['.'],
+      protectedPaths: ['.env'],
+      network: 'blocked' as const,
+    };
+
+    await tools.invoke('filesystem.write', { path: 'note.txt', content: 'one' }, context);
+    const observed = (await tools.invoke('filesystem.read', { path: 'note.txt' }, context)) as {
+      sha256: string;
+      versionLabel: string;
+    };
+    expect(observed.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(observed.versionLabel).toBe('v1');
+
+    const updated = (await tools.invoke(
+      'filesystem.write',
+      { path: 'note.txt', content: 'two', expectedSha256: observed.sha256 },
+      context,
+    )) as { versionLabel: string };
+    expect(updated.versionLabel).toBe('v2');
+    await expect(
+      tools.invoke(
+        'filesystem.write',
+        { path: 'note.txt', content: 'stale', expectedSha256: observed.sha256 },
+        context,
+      ),
+    ).rejects.toThrow('filesystem_write_conflict');
+    expect(await readFile(join(dir, 'note.txt'), 'utf8')).toBe('two');
+    const files = await store.list((value) => value.kind === 'file');
+    expect(files).toHaveLength(1);
+    expect((files[0] as unknown as { versionLabel: string }).versionLabel).toBe('v2');
+  });
   it('blocks protected files and unsafe shell commands', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-'));
     const store = createStore(dir);
