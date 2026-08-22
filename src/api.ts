@@ -899,8 +899,18 @@ export function createApi(deps: ApiDeps) {
       }
       if (path === '/api/v1/bootstrap' && req.method === 'GET') {
         const spendSources = {
-          usage: await deps.store.list<UsageRecord>((x) => x.kind === 'usage'),
-          costs: await deps.store.list<CostRecord>((x) => x.kind === 'cost'),
+          // Usage and cost ledgers are project-scoped entities too. Filter
+          // them through the same authorization path as the visible budget
+          // records before deriving status, so a bootstrap request never
+          // computes from another tenant's spend data.
+          usage: await visible(
+            actorId,
+            await deps.store.list<UsageRecord>((x) => x.kind === 'usage'),
+          ),
+          costs: await visible(
+            actorId,
+            await deps.store.list<CostRecord>((x) => x.kind === 'cost'),
+          ),
         };
         return send(res, 200, {
           workspaces: await visible(

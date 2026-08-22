@@ -8,7 +8,15 @@ import { createApi } from '../src/api.js';
 import { CredentialVault } from '../src/secrets.js';
 import { createStore } from '../src/store.js';
 import { Orchestrator } from '../src/orchestrator.js';
-import { Membership, Project, Workspace, entity } from '../src/types.js';
+import {
+  Budget,
+  CostRecord,
+  Membership,
+  Project,
+  UsageRecord,
+  Workspace,
+  entity,
+} from '../src/types.js';
 
 const oidcKeys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const oidcPublicJwk = oidcKeys.publicKey.export({ format: 'jwk' });
@@ -86,6 +94,51 @@ async function startSeeded(): Promise<{ base: string; projectA: Project; project
   }) as Project;
   await store.insert(projectA);
   await store.insert(projectB);
+  await store.insert(
+    entity({
+      kind: 'budget',
+      ownerId: 'alice',
+      scope: projectA.id,
+      projectId: projectA.id,
+      name: 'Alice budget',
+      period: 'lifetime',
+      limitCents: 20_000,
+      warnRatio: 0.8,
+      enabled: true,
+    }) as Budget,
+  );
+
+  // Bob's ledger must not influence Alice's project budget when bootstrap
+  // computes statuses from the durable sources.
+  await store.insert(
+    entity({
+      kind: 'cost',
+      ownerId: 'bob',
+      scope: projectB.id,
+      projectId: projectB.id,
+      agentId: 'bob-agent',
+      runId: 'bob-run',
+      amountCents: 9999,
+      currency: 'USD',
+      category: 'model',
+    }) as CostRecord,
+  );
+  await store.insert(
+    entity({
+      kind: 'usage',
+      ownerId: 'bob',
+      scope: projectB.id,
+      projectId: projectB.id,
+      agentId: 'bob-agent',
+      runId: 'bob-run',
+      modelId: 'bob-model',
+      tokensIn: 100,
+      tokensOut: 100,
+      latencyMs: 1,
+      costCents: 9999,
+      recordedAt: new Date().toISOString(),
+    }) as UsageRecord,
+  );
 
   for (const membership of [
     entity({
@@ -179,5 +232,17 @@ describe('cross-tenant isolation through verified production OIDC', () => {
       code: 'request_failed',
       message: 'forbidden_or_not_found',
     });
+  });
+
+  it('does not derive Alice bootstrap data from Bob ledgers', async () => {
+    const { base } = await startSeeded();
+    const response = await fetch(base + '/api/v1/bootstrap', {
+      headers: { authorization: 'Bearer ' + tokenFor('alice') },
+    });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      budgets: Array<{ status?: { spentCents?: number } }>;
+    };
+    expect(payload.budgets.every((budget) => (budget.status?.spentCents ?? 0) === 0)).toBe(true);
   });
 });
