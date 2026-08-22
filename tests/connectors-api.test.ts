@@ -7,7 +7,8 @@ import { createApi } from '../src/api.js';
 import { CredentialVault } from '../src/secrets.js';
 import { createStore } from '../src/store.js';
 import { Orchestrator } from '../src/orchestrator.js';
-import type { AuditEvent, Plugin } from '../src/types.js';
+import { entity } from '../src/types.js';
+import type { AuditEvent, Plugin, Workspace } from '../src/types.js';
 
 /**
  * Evidence for the acceptance criterion that the named integrations are
@@ -86,6 +87,155 @@ describe('connector API', () => {
     expect(plugin.agentIds).toEqual([]);
     expect(plugin.network).toBe('allowlist');
     expect(plugin.permissions).toEqual(['github:repo', 'github:read:org']);
+  });
+
+  it('supports scoped plugin activation and agent allowlists with CAS', async () => {
+    const { base, store } = await start();
+    const workspace = entity({
+      kind: 'workspace',
+      ownerId: 'local-user',
+      scope: 'organization_local',
+      organizationId: 'organization_local',
+      name: 'Plugin workspace',
+      slug: 'plugin-workspace',
+      offlineMode: true,
+    }) as Workspace;
+    await store.insert(workspace);
+
+    const project = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId: workspace.id, name: 'Plugin project' }),
+      })
+    ).json()) as { id: string };
+    const agent = (await (
+      await fetch(`${base}/api/v1/agents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: project.id }),
+      })
+    ).json()) as { id: string; version: number };
+    const plugin = (await (
+      await fetch(`${base}/api/v1/plugins`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scope: workspace.id, name: 'Scoped connector' }),
+      })
+    ).json()) as { id: string; version: number };
+
+    const assignedProject = await fetch(`${base}/api/v1/plugins/${plugin.id}/assign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        targetType: 'project',
+        targetId: project.id,
+        version: plugin.version,
+      }),
+    });
+    expect(assignedProject.status).toBe(200);
+    const projectGrant = (await assignedProject.json()) as {
+      version: number;
+      projectIds: string[];
+      workspaceEnabled: boolean;
+    };
+    expect(projectGrant).toMatchObject({
+      version: 2,
+      projectIds: [project.id],
+      workspaceEnabled: false,
+    });
+
+    const enabled = await fetch(`${base}/api/v1/plugins/${plugin.id}/enable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: projectGrant.version }),
+    });
+    expect(enabled.status).toBe(200);
+    const enabledPlugin = (await enabled.json()) as { version: number; enabled: boolean };
+    expect(enabledPlugin).toMatchObject({ version: 3, enabled: true });
+
+    await expect(
+      fetch(`${base}/api/v1/agents/${agent.id}/plugins`).then((response) => response.json()),
+    ).resolves.toEqual([expect.objectContaining({ id: plugin.id })]);
+
+    const restricted = await fetch(`${base}/api/v1/agents/${agent.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: agent.version,
+        profile: { allowedPluginIds: ['different-plugin'] },
+      }),
+    });
+    expect(restricted.status).toBe(200);
+    const restrictedAgent = (await restricted.json()) as { version: number };
+    await expect(
+      fetch(`${base}/api/v1/agents/${agent.id}/plugins`).then((response) => response.json()),
+    ).resolves.toEqual([]);
+
+    const reopened = await fetch(`${base}/api/v1/agents/${agent.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        version: restrictedAgent.version,
+        profile: { allowedPluginIds: [plugin.id] },
+      }),
+    });
+    expect(reopened.status).toBe(200);
+    await expect(
+      fetch(`${base}/api/v1/agents/${agent.id}/plugins`).then((response) => response.json()),
+    ).resolves.toEqual([expect.objectContaining({ id: plugin.id })]);
+
+    const assignedAgent = await fetch(`${base}/api/v1/plugins/${plugin.id}/assign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        targetType: 'agent',
+        targetId: agent.id,
+        version: enabledPlugin.version,
+      }),
+    });
+    expect(assignedAgent.status).toBe(200);
+    const agentGrant = (await assignedAgent.json()) as { version: number; agentIds: string[] };
+    expect(agentGrant).toMatchObject({ version: 4, agentIds: [agent.id] });
+
+    const otherWorkspace = entity({
+      kind: 'workspace',
+      ownerId: 'local-user',
+      scope: 'organization_local',
+      organizationId: 'organization_local',
+      name: 'Other workspace',
+      slug: 'other-workspace',
+      offlineMode: true,
+    }) as Workspace;
+    await store.insert(otherWorkspace);
+    const otherProject = (await (
+      await fetch(`${base}/api/v1/projects`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workspaceId: otherWorkspace.id, name: 'Other project' }),
+      })
+    ).json()) as { id: string };
+    const mismatch = await fetch(`${base}/api/v1/plugins/${plugin.id}/assign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        targetType: 'project',
+        targetId: otherProject.id,
+        version: agentGrant.version,
+      }),
+    });
+    expect(mismatch.status).toBe(400);
+
+    const stale = await fetch(`${base}/api/v1/plugins/${plugin.id}/unassign`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        targetType: 'project',
+        targetId: project.id,
+        version: enabledPlugin.version,
+      }),
+    });
+    expect(stale.status).toBe(400);
   });
 
   it('reports a connector as installed once it has been', async () => {

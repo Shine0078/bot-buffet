@@ -23,6 +23,8 @@ SSE now requires a project scope in every mode and drops events that do not carr
 
 `PATCH /api/v1/agents/:id` updates an agent profile with the caller's current entity `version` and compare-and-swap persistence. Mutable instructions, model/tool/plugin/path allowlists, network mode, resource limits, output mode, escalation mode, and run mode are bounded before storage; approval, verification, and memory policy subdocuments remain unchanged by this general profile route. Stale versions are rejected and each accepted update increments both the entity and profile versions while retaining a bounded change log and an audit event containing only versions and changed field names.
 
+`GET /api/v1/agents/:id/plugins` returns only enabled plugins activated for the agent's workspace, project, or agent assignment and permitted by the profile's `allowedPluginIds` list. `POST /api/v1/plugins/:id/assign` and `/unassign` require the current plugin version, administrator authorization on the target, and a matching workspace boundary; target types are `workspace`, `project`, and `agent`. Enable/disable also requires the current plugin version. Enabling a plugin with project/agent assignments preserves those narrower grants instead of silently widening it to the whole workspace.
+
 `PATCH /api/v1/tasks/:id` requires the current task `version`, permits only the documented backlog/ready/running/blocked/done/cancelled transitions, and uses compare-and-swap persistence so stale clients receive a conflict instead of overwriting a newer state.
 
 `POST /api/v1/projects/:id/duplicate` creates a same-workspace configuration copy

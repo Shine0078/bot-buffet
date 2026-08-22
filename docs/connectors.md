@@ -38,10 +38,16 @@ those in `GET /api/v1/connectors` before granting anything.
 3. **Connect credentials** — through the provider/credential routes. Secrets go
    to the encrypted vault; only metadata and a fingerprint are stored on the
    record.
-4. **Enable** — `POST /api/v1/plugins/:id/enable`. This is the step that grants
-   authority, and it is audited.
-5. **Scope** — bind the plugin to specific projects or agents. A plugin enabled
-   at workspace level is available more widely than most tasks need.
+4. **Enable** — `POST /api/v1/plugins/:id/enable` with the current plugin
+   `version`. This is the step that grants authority, is compare-and-swap
+   protected, and is audited.
+5. **Scope** — use `POST /api/v1/plugins/:id/assign` with a CAS `version` to
+   bind the plugin to a workspace, project, or agent; use `/unassign` to remove
+   the grant. `GET /api/v1/agents/:id/plugins` returns effective enabled plugins
+   after workspace/project/agent checks and the agent profile's
+   `allowedPluginIds` allowlist. A plugin assigned to a project or agent stays
+   narrow when enabled; only an unassigned plugin receives the historical
+   workspace-wide enable grant.
 
 Install and enable are deliberately separate. It means an audit log can show
 what authority was requested and when it was actually granted, and it means

@@ -118,3 +118,6 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - Incident-record pass: added scoped, redacted, auditable incident creation and
   CAS lifecycle transitions plus an Office incidents table; project duplication
   excludes incidents as live operational state.
+- Plugin-activation pass: added CAS-protected workspace/project/agent
+  assignments and effective per-agent reads constrained by activation scope and
+  the profile `allowedPluginIds` allowlist.

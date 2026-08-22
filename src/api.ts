@@ -82,6 +82,7 @@ import { renderMetrics, runToOtlp } from './telemetry.js';
 import { researchBrief, validateCitations } from './research.js';
 import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
 import { duplicateProject } from './projectDuplication.js';
+import { pluginAppliesToAgent } from './plugins.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -1224,6 +1225,24 @@ export function createApi(deps: ApiDeps) {
           200,
           await visible(actorId, await deps.store.list<Agent>((x) => x.kind === 'agent')),
         );
+      const agentPluginsMatch = path.match(/^\/api\/v1\/agents\/([^/]+)\/plugins$/);
+      if (agentPluginsMatch && req.method === 'GET') {
+        const agent = await required(
+          actorId,
+          await deps.store.get<Agent>(agentPluginsMatch[1]!),
+          'read',
+          'agent',
+        );
+        const plugins = await visible(
+          actorId,
+          await deps.store.list<Plugin>((x) => x.kind === 'plugin'),
+        );
+        return send(
+          res,
+          200,
+          plugins.filter((plugin) => pluginAppliesToAgent(plugin, agent)),
+        );
+      }
       if (path === '/api/v1/agents' && req.method === 'POST') {
         const body = await parseBody(req);
         const project = await required(
@@ -2863,6 +2882,74 @@ export function createApi(deps: ApiDeps) {
         await deps.store.insert(plugin);
         return send(res, 201, plugin);
       }
+      const pluginAssignment = path.match(/^\/api\/v1\/plugins\/([^/]+)\/(assign|unassign)$/);
+      if (pluginAssignment && req.method === 'POST') {
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginAssignment[1]!),
+          'admin',
+          'plugin',
+        );
+        const body = await parseBody(req);
+        const targetType = String(body.targetType ?? '');
+        const targetId = String(body.targetId ?? '');
+        const expectedVersion = Number(body.version);
+        if (!['workspace', 'project', 'agent'].includes(targetType) || !targetId)
+          throw new Error('plugin_target_invalid');
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== plugin.version)
+          throw new Error('plugin_version_required');
+
+        const target = await deps.store.get<BaseEntity>(targetId);
+        if (!target || (target as BaseEntity & { kind?: string }).kind !== targetType)
+          throw new Error('plugin_target_forbidden_or_not_found');
+        await required(actorId, target, 'admin', targetType);
+
+        if (targetType === 'workspace') {
+          if (plugin.scope !== target.id) throw new Error('plugin_scope_mismatch');
+        } else {
+          const project =
+            targetType === 'project'
+              ? (target as Project)
+              : await deps.store.get<Project>((target as Agent).projectId);
+          if (!project || plugin.scope !== project.workspaceId)
+            throw new Error('plugin_scope_mismatch');
+        }
+
+        const assign = pluginAssignment[2] === 'assign';
+        const saved = await deps.store.putIfVersion(
+          {
+            ...plugin,
+            workspaceEnabled: targetType === 'workspace' ? assign : plugin.workspaceEnabled,
+            projectIds:
+              targetType === 'project'
+                ? assign
+                  ? [...new Set([...plugin.projectIds, targetId])]
+                  : plugin.projectIds.filter((id) => id !== targetId)
+                : plugin.projectIds,
+            agentIds:
+              targetType === 'agent'
+                ? assign
+                  ? [...new Set([...plugin.agentIds, targetId])]
+                  : plugin.agentIds.filter((id) => id !== targetId)
+                : plugin.agentIds,
+            version: plugin.version,
+          } as Plugin,
+          expectedVersion,
+        );
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope: plugin.scope,
+          actorId,
+          action: `plugin.${assign ? 'assigned' : 'unassigned'}`,
+          resourceType: 'plugin',
+          resourceId: plugin.id,
+          risk: 'medium',
+          decision: 'executed',
+          metadata: { targetType, targetId, version: saved.version },
+        });
+        return send(res, 200, saved);
+      }
       const pluginMatch = path.match(/^\/api\/v1\/plugins\/([^/]+)\/(enable|disable)$/);
       if (pluginMatch && req.method === 'POST') {
         const plugin = await required(
@@ -2871,13 +2958,28 @@ export function createApi(deps: ApiDeps) {
           'admin',
           'plugin',
         );
+        const body = await parseBody(req);
+        const expectedVersion = Number(body.version);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== plugin.version)
+          throw new Error('plugin_version_required');
         const enabled = pluginMatch[2] === 'enable';
-        const saved = await deps.store.put({
-          ...plugin,
-          enabled,
-          workspaceEnabled: enabled,
-          version: plugin.version,
-        } as Plugin);
+        const saved = await deps.store.putIfVersion(
+          {
+            ...plugin,
+            enabled,
+            // A plugin with narrower project/agent assignments stays narrow
+            // when enabled. A plugin with no assignments retains the historical
+            // workspace-wide enable behaviour.
+            workspaceEnabled:
+              enabled && plugin.projectIds.length === 0 && plugin.agentIds.length === 0
+                ? true
+                : enabled
+                  ? plugin.workspaceEnabled
+                  : false,
+            version: plugin.version,
+          } as Plugin,
+          expectedVersion,
+        );
         return send(res, 200, saved);
       }
       const pluginUpdate = path.match(/^\/api\/v1\/plugins\/([^/]+)\/(update|rollback)$/);
