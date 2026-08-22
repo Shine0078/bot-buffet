@@ -101,14 +101,11 @@ export class Orchestrator extends EventEmitter {
     const limit = Math.max(1, agent?.profile.concurrencyLimit ?? 1);
     const active = this.activeAgentRuns.get(run.agentId) ?? 0;
     if (active >= limit) {
-      const blocked = await this.deps.store.put({
-        ...run,
+      await this.updateRun(run, {
         status: 'blocked',
         error: 'agent_concurrency_limit',
         finishedAt: now(),
-        version: run.version,
-      } as Run);
-      this.emit('run', { type: 'run.blocked', run: blocked });
+      });
       return;
     }
     this.activeAgentRuns.set(run.agentId, active + 1);
@@ -434,19 +431,21 @@ export class Orchestrator extends EventEmitter {
           });
           return;
         }
-        await this.deps.store.put({
-          ...step,
-          status: 'succeeded',
-          output: redactSecrets({
-            content: responsePreview,
-            toolCalls: response.toolCalls,
-            usage: response.usage,
-          }),
-          finishedAt: now(),
-          durationMs: response.latencyMs,
-          updatedAt: now(),
-          version: step.version,
-        } as RunStep);
+        await this.deps.store.putIfVersion(
+          {
+            ...step,
+            status: 'succeeded',
+            output: redactSecrets({
+              content: responsePreview,
+              toolCalls: response.toolCalls,
+              usage: response.usage,
+            }),
+            finishedAt: now(),
+            durationMs: response.latencyMs,
+            version: step.version,
+          } as RunStep,
+          step.version,
+        );
         const nextState: Record<string, unknown> = {
           ...state,
           lastResponse: responsePreview,

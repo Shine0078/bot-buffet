@@ -380,12 +380,15 @@ export function createBuiltinTools(
       const file = existing
         ? existing.sha256 === digest && existing.size === Buffer.byteLength(content)
           ? existing
-          : await store.put({
-              ...existing,
-              sha256: digest,
-              size: Buffer.byteLength(content),
-              versionLabel: `v${existing.version + 1}`,
-            })
+          : await store.putIfVersion(
+              {
+                ...existing,
+                sha256: digest,
+                size: Buffer.byteLength(content),
+                versionLabel: `v${existing.version + 1}`,
+              },
+              existing.version,
+            )
         : await store.upsert({
             ...entity({
               kind: 'file',
