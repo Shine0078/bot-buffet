@@ -72,6 +72,7 @@ import { checkpointManifest, scanArtifact, sha256 } from './artifacts.js';
 import { formatBytes, planModelImport, verifyArtifact, volumeSpace } from './modelArtifacts.js';
 import { assessModelFit, detectHostResources } from './hostResources.js';
 import { exportLocalConfig, parseLocalConfig } from './localModelConfig.js';
+import { connectorCatalog, connectorPluginRecord, findConnector } from './connectors.js';
 import { renderMetrics, runToOtlp } from './telemetry.js';
 import { researchBrief, validateCitations } from './research.js';
 import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
@@ -2456,6 +2457,73 @@ export function createApi(deps: ApiDeps) {
         );
         await deps.store.delete(memoryMatch[1]!);
         return send(res, 204, { deleted: true });
+      }
+      if (path === '/api/v1/connectors' && req.method === 'GET') {
+        // The catalog is a static declaration, not tenant data: it lists what
+        // could be connected and on what terms. Installed state lives in the
+        // plugin records, which are authorization-filtered as usual.
+        const installed = await visible(
+          actorId,
+          await deps.store.list<Plugin>((x) => x.kind === 'plugin'),
+        );
+        const installedSources = new Set(installed.map((plugin) => plugin.source));
+        return send(res, 200, {
+          connectors: connectorCatalog().map((connector) => ({
+            ...connector,
+            installed: installedSources.has(`connector:${connector.id}`),
+          })),
+        });
+      }
+      const connectorMatch = path.match(/^\/api\/v1\/connectors\/([^/]+)\/install$/);
+      if (connectorMatch && req.method === 'POST') {
+        const connector = findConnector(String(connectorMatch[1]));
+        if (!connector) throw new Error('connector_not_found');
+        const body = await parseBody(req);
+        const scope = String(body.scope ?? 'workspace_local');
+        const scopeEntity = await deps.store.get(scope);
+        // Installing a connector is a workspace administration action even
+        // though it grants no authority by itself.
+        if (scopeEntity) await required(actorId, scopeEntity, 'admin', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('plugin_scope_required');
+
+        const existing = (
+          await deps.store.list<Plugin>(
+            (x) =>
+              x.kind === 'plugin' &&
+              x.scope === scope &&
+              (x as Plugin).source === `connector:${connector.id}`,
+          )
+        )[0];
+        if (existing) return send(res, 200, existing);
+
+        const plugin = entity({
+          kind: 'plugin',
+          ownerId: actorId,
+          scope,
+          ...connectorPluginRecord(connector),
+        }) as Plugin;
+        await deps.store.insert(plugin);
+        await deps.store.audit({
+          kind: 'audit-event',
+          ownerId: actorId,
+          scope,
+          actorId,
+          action: 'connector.install',
+          resourceType: 'plugin',
+          resourceId: plugin.id,
+          risk: 'medium',
+          decision: 'allowed',
+          metadata: {
+            connectorId: connector.id,
+            // Recorded so an audit shows exactly what authority was requested
+            // and where it may reach, without waiting for the enable step.
+            scopes: connector.scopes,
+            allowedHosts: connector.allowedHosts,
+            enabled: false,
+          },
+        });
+        return send(res, 201, plugin);
       }
       if (path === '/api/v1/plugins' && req.method === 'GET')
         return send(
