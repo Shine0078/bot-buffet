@@ -29,13 +29,10 @@ import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext, memoryToContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { labelUntrusted } from './injection.js';
-import {
-  buildSystemPrompt,
-  canStartInMode,
-  decideMode,
-  escalationOutcome,
-  requiresApproval,
-} from './modes.js';
+import { canStartInMode, decideMode } from './modes.js';
+import { escalationOutcome } from './escalation.js';
+import { buildSystemPrompt } from './prompt.js';
+import { requiresApproval } from './approval.js';
 import { verifyDeterministic } from './verification.js';
 import { selectReadableMemory } from './memoryScope.js';
 
