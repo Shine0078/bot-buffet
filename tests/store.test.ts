@@ -82,5 +82,10 @@ describe('durable state and tamper-evident audit', () => {
     const futurePath = join(dir, 'future.json');
     await writeFile(futurePath, JSON.stringify({ schemaVersion: 2 }), { mode: 0o600 });
     await expect(new JsonStateStore(futurePath).load()).rejects.toThrow('state_schema_newer');
+    const malformedPath = join(dir, 'malformed.json');
+    await writeFile(malformedPath, JSON.stringify({ schemaVersion: 1, entities: [] }), {
+      mode: 0o600,
+    });
+    await expect(new JsonStateStore(malformedPath).load()).rejects.toThrow('state_schema_invalid');
   });
 });

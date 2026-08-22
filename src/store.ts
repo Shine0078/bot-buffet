@@ -28,13 +28,18 @@ export function migrateRuntimeState(value: unknown): RuntimeState {
   if (!Number.isSafeInteger(rawVersion) || (rawVersion as number) < 0)
     throw new Error('state_schema_invalid');
   if ((rawVersion as number) > CURRENT_SCHEMA_VERSION) throw new Error('state_schema_newer');
+  const optionalRecord = <T extends Record<string, unknown>>(key: string): T => {
+    if (value[key] === undefined) return {} as T;
+    if (!isRecord(value[key])) throw new Error('state_schema_invalid');
+    return value[key] as T;
+  };
+  if (value.auditTail !== undefined && typeof value.auditTail !== 'string')
+    throw new Error('state_schema_invalid');
   return {
-    entities: isRecord(value.entities) ? (value.entities as RuntimeState['entities']) : {},
-    runState: isRecord(value.runState) ? (value.runState as RuntimeState['runState']) : {},
-    locks: isRecord(value.locks) ? (value.locks as RuntimeState['locks']) : {},
-    idempotency: isRecord(value.idempotency)
-      ? (value.idempotency as RuntimeState['idempotency'])
-      : {},
+    entities: optionalRecord<RuntimeState['entities']>('entities'),
+    runState: optionalRecord<RuntimeState['runState']>('runState'),
+    locks: optionalRecord<RuntimeState['locks']>('locks'),
+    idempotency: optionalRecord<RuntimeState['idempotency']>('idempotency'),
     auditTail: typeof value.auditTail === 'string' ? value.auditTail : 'GENESIS',
     schemaVersion: CURRENT_SCHEMA_VERSION,
   };
