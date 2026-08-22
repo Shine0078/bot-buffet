@@ -657,6 +657,17 @@ export function createApi(deps: ApiDeps) {
           archived: false,
         });
         await deps.store.insert(project);
+        const environment = entity({
+          kind: 'environment',
+          ownerId: actorId,
+          scope: project.id,
+          projectId: project.id,
+          name: 'Local Development',
+          network: 'blocked',
+          persistent: true,
+          protected: false,
+        }) as Environment;
+        await deps.store.insert(environment);
         return send(res, 201, project);
       }
       const projectMatch = path.match(/^\/api\/v1\/projects\/([^/]+)$/);

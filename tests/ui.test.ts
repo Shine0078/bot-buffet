@@ -34,7 +34,15 @@ describe('Office UI accessibility contract', () => {
     expect(app).toContain('budgets: [');
     expect(app).toContain('workflows: [');
     expect(app).toContain("alerts: ['Alerts'");
-    expect(app).toContain('await usageTable()');
+    expect(app).toContain('return usageTable()');
     expect(app).toContain("api('/api/v1/usage?groupBy=agent&period=monthly')");
+  });
+  it('wires the primary action buttons instead of leaving them inert', () => {
+    expect(app).toContain("$('#newProject').onclick");
+    expect(app).toContain("$('#viewAllRuns').onclick");
+    expect(app).toContain("$('#tableAction').onclick");
+    expect(app).toContain("api('/api/v1/projects'");
+    expect(app).toContain("api('/api/v1/tasks'");
+    expect(app).toContain("switchView('runs')");
   });
 });

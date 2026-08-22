@@ -141,4 +141,23 @@ describe('Office UI in a real browser', () => {
     expect(overflow).toBeLessThanOrEqual(1);
     await page.close();
   }, 60_000);
+  it('creates a project and switches views from the primary action buttons', async () => {
+    const page = await browser.newPage();
+    await page.goto(base, { waitUntil: 'networkidle' });
+    page.once('dialog', (dialog) => dialog.accept('Office Alpha'));
+    await page.click('#newProject');
+    await page.waitForFunction(() => {
+      const select = document.querySelector('#projectSelect');
+      return Boolean(select && /Office Alpha/.test(select.textContent ?? ''));
+    });
+    await page.click('#viewAllRuns');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    expect(await page.locator('#viewTitle').innerText()).toBe('Runs');
+    await page.click('.nav-item[data-view="tasks"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    page.once('dialog', (dialog) => dialog.accept('Ship the office floor'));
+    await page.click('#tableAction');
+    await page.waitForFunction(() => /Ship the office floor/.test(document.body.innerText));
+    await page.close();
+  }, 60_000);
 });

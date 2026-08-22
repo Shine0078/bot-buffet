@@ -960,6 +960,20 @@ describe('API boundary controls', () => {
     });
     expect(createdResponse.status).toBe(201);
     const created = (await createdResponse.json()) as { id: string };
+    const environments = (await (await fetch(`${base}/api/v1/environments`)).json()) as Array<{
+      projectId: string;
+      name: string;
+      network: string;
+    }>;
+    expect(environments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectId: created.id,
+          name: 'Local Development',
+          network: 'blocked',
+        }),
+      ]),
+    );
     const deletedResponse = await fetch(`${base}/api/v1/projects/${created.id}`, {
       method: 'DELETE',
     });

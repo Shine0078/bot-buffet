@@ -21,6 +21,60 @@ async function load() {
   state.data = await api('/api/v1/bootstrap');
   render();
 }
+function showError(message) {
+  const activity = $('#activity');
+  if (activity) activity.innerHTML = '<p class="muted">' + esc(message) + '</p>';
+}
+function switchView(view) {
+  state.view = view;
+  document
+    .querySelectorAll('.nav-item')
+    .forEach((x) => x.classList.toggle('active', x.dataset.view === state.view));
+  if (state.view === 'office') {
+    $('#officeView').classList.remove('hidden');
+    $('#tableView').classList.add('hidden');
+    $('#viewTitle').textContent = 'Office floor';
+    $('#viewSubtitle').textContent = 'A calm view of agents, work, and evidence.';
+    return Promise.resolve();
+  }
+  if (state.view === 'usage') return usageTable();
+  table(state.view);
+  return Promise.resolve();
+}
+async function createProject() {
+  const name = window.prompt('Project name');
+  if (name === null) return;
+  const trimmed = name.trim() || 'Untitled project';
+  const workspaceId = $('#workspaceSelect')?.value;
+  await api('/api/v1/projects', {
+    method: 'POST',
+    body: JSON.stringify({ name: trimmed, ...(workspaceId ? { workspaceId } : {}) }),
+  });
+  await load();
+}
+async function addScopedRecord() {
+  if (state.view === 'office') return createProject();
+  if (state.view === 'tasks') {
+    const title = window.prompt('Task title');
+    if (title === null) return;
+    const projectId = $('#projectSelect')?.value || state.data?.projects?.[0]?.id;
+    if (!projectId) throw new Error('Select a project first');
+    const environments = await api('/api/v1/environments');
+    const environment = (environments || []).find((item) => item.projectId === projectId);
+    if (!environment) throw new Error('No environment for this project');
+    await api('/api/v1/tasks', {
+      method: 'POST',
+      body: JSON.stringify({
+        projectId,
+        environmentId: environment.id,
+        title: title.trim() || 'Untitled task',
+      }),
+    });
+    await load();
+    return switchView('tasks');
+  }
+  await switchView(state.view);
+}
 function render() {
   const d = state.data || {};
   $('#workspaceSelect').innerHTML = (d.workspaces || [])
@@ -156,17 +210,7 @@ document.addEventListener('click', async (e) => {
   }
   const nav = e.target.closest('[data-view]');
   if (nav) {
-    state.view = nav.dataset.view;
-    document
-      .querySelectorAll('.nav-item')
-      .forEach((x) => x.classList.toggle('active', x.dataset.view === state.view));
-    if (state.view === 'office') {
-      $('#officeView').classList.remove('hidden');
-      $('#tableView').classList.add('hidden');
-      $('#viewTitle').textContent = 'Office floor';
-      $('#viewSubtitle').textContent = 'A calm view of agents, work, and evidence.';
-    } else if (state.view === 'usage') await usageTable();
-    else table(state.view);
+    await switchView(nav.dataset.view);
   }
 });
 document.addEventListener('keydown', (e) => {
@@ -176,6 +220,9 @@ document.addEventListener('keydown', (e) => {
   selectAgent(agent.dataset.agent);
 });
 $('#refresh').onclick = load;
+$('#newProject').onclick = () => createProject().catch((err) => showError(err.message));
+$('#viewAllRuns').onclick = () => switchView('runs');
+$('#tableAction').onclick = () => addScopedRecord().catch((err) => showError(err.message));
 $('#globalStop').onclick = async () => {
   if (confirm('Stop all active runs?')) {
     await api('/api/v1/stop-all', { method: 'POST' });
@@ -196,6 +243,7 @@ $('#chatForm').onsubmit = (e) => {
 };
 new EventSource('/events').onmessage = () => load();
 load().catch((err) => {
-  $('#activity').innerHTML =
-    `<p class="muted">Unable to load control plane: ${esc(err.message)}</p>`;
+  const fileHint =
+    location.protocol === 'file:' ? ' Open http://127.0.0.1:8787/ instead of this file.' : '';
+  showError('Unable to load control plane: ' + err.message + fileHint);
 });

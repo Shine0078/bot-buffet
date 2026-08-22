@@ -10,16 +10,18 @@ import { createBuiltinTools } from './tools.js';
 import { CredentialVault } from './secrets.js';
 import { assertSandboxConfiguration } from './sandbox.js';
 import { DeviceSessionStore, PkceSessionStore } from './oauth.js';
+import { resolveWorkspaceDir } from './paths.js';
 import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = process.env.BOT_BUFFET_DATA_DIR ?? join(root, '.data');
+const workspaceDir = resolveWorkspaceDir(dataDir, process.env.BOT_BUFFET_WORKSPACE_DIR);
 assertSandboxConfiguration();
 const store = createStore(dataDir);
 await store.load();
 const vault = new CredentialVault(join(dataDir, 'credentials.enc.json'));
 await vault.load();
-await mkdir(join(root, 'workspace'), { recursive: true });
+await mkdir(workspaceDir, { recursive: true });
 
 async function bootstrap(): Promise<void> {
   const existing = await store.list();
@@ -184,7 +186,7 @@ const orchestrator = new Orchestrator({
   store,
   router,
   tools,
-  workspaceRoot: (project) => join(root, 'workspace', project.id),
+  workspaceRoot: (project) => join(workspaceDir, project.id),
   adapters: (model) => {
     if (model.local) return new MockLocalAdapter(model.modelName);
     const provider = providers.get(model.providerId);
