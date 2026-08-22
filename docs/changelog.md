@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.0 — 2026-08-22
+
+### Gates that were not gating
+
+- Brand scan passed its two-term alternation to `git grep` without `-E`, so the pipe was literal and neither term was ever searched for; it also matched its own source and was permanently red. Fixed with `-E`, path-based self-exclusion, and a self-test that throws if the pattern stops matching the brand.
+- `npm run format:check` could not pass on Windows: Git for Windows sets `core.autocrlf=true` system-wide, so the tree checked out CRLF against LF blobs and Prettier flagged all 111 files locally while Linux CI stayed green. A `.gitattributes` pins the working tree to LF everywhere, and local `verify` now runs format and lint as CI does.
+- The CI container job declares `needs: verify`, so while verify was red it never ran — hiding a Dockerfile that omitted `tsconfig.build.json` and a server that bound `127.0.0.1` inside the container, making its published port unreachable.
+- `npm run smoke` printed "passed" and exited 127: it raced `child.kill()` against `process.exit()`, tripping a libuv assertion on Windows after every check had passed. Server shutdown now waits for the child, and scripts set `process.exitCode`.
+
+### Controls that were declared but never enforced
+
+An audit of every field on the agent profile, approval policy, and tool definition for an actual runtime read found eight, each now enforced with unit coverage for the decision and orchestrator-level coverage for the wiring:
+
+- `mode` — run modes had no semantics; `plan` could mutate files and `emergency-stop` stopped nothing.
+- `verificationPolicy` — one hardcoded check ran regardless of what a profile declared.
+- `memoryPolicy` — and the orchestrator never loaded memory into agent context at all, so the policy governed a path that did not exist.
+- `escalationPolicy` — every failure ended the run as `failed`.
+- `environmentKeys` — the local sandbox inherited the entire parent environment, including the master key and OIDC configuration.
+- `skills` — agents were never told their own skills existed.
+- `autoApproveReversible` — approval sources are now combined in one ranked decision.
+- `rateLimitPerMinute` — a looping agent could call a tool without limit.
+
+### Security
+
+- `assertSafeEndpoint(…, allowLocal)` rejected only _private_ hostnames, so a public host passed every check and a model registered through the offline-only local path could reach an arbitrary remote server over plaintext while the API reported `offlineOnly: true`. Local now means loopback, with host normalisation shared so an IPv6 literal cannot be classified two ways.
+- `allowlist` and `open` network policies had no host enforcement anywhere; the local runtime ignored the policy entirely, making a non-blocked policy strictly weaker than `blocked`. Both runtimes now refuse identically.
+- The container sandbox never passed `--interactive`, so every sandboxed file write saw EOF on stdin, wrote an empty file, and exited 0. Found by running the sandbox against a live Docker daemon for the first time.
+- Sandbox image and container base images are pinned by digest, with production failing closed on an unpinned image.
+
+### Added
+
+- Installation preflight (`npm run preflight`) enforcing the Node floor from `package.json`, separating blockers from warnings, with per-platform remediation.
+- Checksum-verified model artifact import, fail-closed at every step, with a dry-run planning endpoint that reports size, free space, and host resources before any transfer.
+- Host resource detection that reports GPU and VRAM as explicitly undetected rather than guessed.
+- Portable local model configuration export/import carrying no credential material.
+- A permission-scoped connector catalog for the eight named integrations; installing one produces a disabled, host-allowlisted plugin that grants no authority.
+- `memory.write` for agents, bounded by write scope, with approval before persistence.
+
+### Verified
+
+- Container sandbox against a live Docker daemon: non-root execution, no network, read-only root filesystem, workspace-confined reads and writes, with `BOT_BUFFET_REQUIRE_DOCKER_TESTS=1` in CI so the coverage cannot skip silently.
+- Container image serves health, readiness, UI, and API through its published port as a non-root user, with Docker's own healthcheck reporting healthy.
+- 519 tests across 57 files; coverage ratcheted to the measured figures so a regression fails the build.
+
 ## 0.1.0 — 2026-08-21
 
 - Initial Bot Buffet control-plane baseline with durable local state, orchestrator, policy/sandbox controls, model routing, Office UI, tests, CI, container, SBOM, and operational docs.
