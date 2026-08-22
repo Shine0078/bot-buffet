@@ -24,6 +24,7 @@
     "backup": "node scripts/backup.mjs",
     "restore": "node scripts/restore.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "restore:drill": "node scripts/restore-drill.mjs",
     "verify": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
