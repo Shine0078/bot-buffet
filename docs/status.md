@@ -231,7 +231,8 @@ canonical artifacts and SARIF export are at
 `C:\Users\samue\AppData\Local\Temp\codex-security-scans-YrbIFO\Bot-Buffet\cf869564dd9023b0283512b9f20c4fa07f62728a_20260822T104520Z_h5b49p9t`.
 The report targets the immutable `cf86956` snapshot and explicitly warns that
 the repository `HEAD` changed while it ran; the follow-on current-tree fixes
-including the schedule dispatcher, expiry-pruning, and CAS run-control changes
+including the schedule dispatcher, expiry-pruning, CAS run-control, and state
+migration-boundary changes
 are covered by the local evidence above but are not part of that sealed snapshot. No replacement
 connector scan is available in this environment. TAC access remained
 unavailable because the security connector is not connected.
