@@ -18,6 +18,7 @@ import {
   Task,
   UsageRecord,
   Workspace,
+  type ID,
   entity,
   id,
   now,
@@ -47,6 +48,8 @@ export interface RunCommand {
   runId: string;
   type: 'pause' | 'resume' | 'cancel' | 'stop' | 'fork' | 'rollback';
   checkpointId?: string;
+  /** Authenticated operator. Internal callers may omit it and fall back to the run owner. */
+  actorId?: ID;
 }
 
 export class Orchestrator extends EventEmitter {
@@ -177,7 +180,6 @@ export class Orchestrator extends EventEmitter {
           break;
         }
         if (current.status === 'paused') {
-          this.emit('run', { type: 'run.paused', run: current });
           return;
         }
         const state = await this.deps.store.getRunState(runId);
@@ -817,12 +819,13 @@ export class Orchestrator extends EventEmitter {
     risk: RunStep['type'] extends never ? never : 'safe' | 'low' | 'medium' | 'high' | 'critical',
     decision: 'allowed' | 'denied' | 'approval-required' | 'executed',
     metadata: Record<string, unknown>,
+    actorId: ID = run.ownerId,
   ): Promise<void> {
     await this.deps.store.audit({
       kind: 'audit-event',
       ownerId: run.ownerId,
       scope: run.projectId,
-      actorId: run.ownerId,
+      actorId,
       action,
       resourceType: 'run',
       resourceId: run.id,
@@ -835,8 +838,8 @@ export class Orchestrator extends EventEmitter {
   async command(command: RunCommand): Promise<Run | undefined> {
     const run = await this.deps.store.get<Run>(command.runId);
     if (!run) return undefined;
-    if (command.type === 'pause')
-      return this.deps.store.putIfVersion(
+    if (command.type === 'pause') {
+      const paused = await this.deps.store.putIfVersion(
         {
           ...run,
           status: 'paused',
@@ -845,6 +848,17 @@ export class Orchestrator extends EventEmitter {
         } as Run,
         run.version,
       );
+      await this.emitAudit(
+        paused,
+        'run.paused',
+        'low',
+        'executed',
+        { previousStatus: run.status, version: paused.version },
+        command.actorId,
+      );
+      this.emit('run', { type: 'run.paused', run: paused });
+      return paused;
+    }
     if (command.type === 'resume') {
       const resumed = await this.deps.store.putIfVersion(
         {
@@ -855,13 +869,22 @@ export class Orchestrator extends EventEmitter {
         } as Run,
         run.version,
       );
+      await this.emitAudit(
+        resumed,
+        'run.resumed',
+        'low',
+        'executed',
+        { previousStatus: run.status, version: resumed.version },
+        command.actorId,
+      );
+      this.emit('run', { type: 'run.resumed', run: resumed });
       void this.start(resumed.id);
       return resumed;
     }
     if (command.type === 'cancel' || command.type === 'stop') {
       const controller = this.controllers.get(run.id);
       controller?.abort();
-      return this.deps.store.putIfVersion(
+      const cancelled = await this.deps.store.putIfVersion(
         {
           ...run,
           cancelRequested: true,
@@ -871,6 +894,16 @@ export class Orchestrator extends EventEmitter {
         } as Run,
         run.version,
       );
+      await this.emitAudit(
+        cancelled,
+        command.type === 'stop' ? 'run.stopped' : 'run.cancelled',
+        'medium',
+        'executed',
+        { previousStatus: run.status, version: cancelled.version },
+        command.actorId,
+      );
+      this.emit('run', { type: 'run.cancelled', run: cancelled });
+      return cancelled;
     }
     if (command.type === 'fork') {
       const checkpoint = command.checkpointId
@@ -895,6 +928,15 @@ export class Orchestrator extends EventEmitter {
       };
       await this.deps.store.insert(fork);
       if (checkpoint) await this.deps.store.setRunState(fork.id, checkpoint.state);
+      await this.emitAudit(
+        run,
+        'run.forked',
+        'medium',
+        'executed',
+        { forkId: fork.id, checkpointId: checkpoint?.id, version: fork.version },
+        command.actorId,
+      );
+      this.emit('run', { type: 'run.forked', run: fork, parentRunId: run.id });
       return fork;
     }
     if (command.type === 'rollback') {
@@ -915,6 +957,15 @@ export class Orchestrator extends EventEmitter {
         run.version,
       );
       if (checkpoint) await this.deps.store.setRunState(run.id, checkpoint.state);
+      await this.emitAudit(
+        rolledBack,
+        'run.rolled_back',
+        'high',
+        'executed',
+        { checkpointId: checkpoint?.id, version: rolledBack.version },
+        command.actorId,
+      );
+      this.emit('run', { type: 'run.rolled_back', run: rolledBack });
       return rolledBack;
     }
     return run;

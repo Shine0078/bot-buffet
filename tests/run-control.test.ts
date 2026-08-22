@@ -7,7 +7,7 @@ import { ModelRouter } from '../src/router.js';
 import { Orchestrator } from '../src/orchestrator.js';
 import { createStore } from '../src/store.js';
 import { createBuiltinTools } from '../src/tools.js';
-import { entity, type Checkpoint, type Run } from '../src/types.js';
+import { entity, type AuditEvent, type Checkpoint, type Run } from '../src/types.js';
 import { fixtures } from './helpers/orchestrator-fixtures.js';
 
 /**
@@ -86,6 +86,29 @@ describe('pause and resume', () => {
       reason: expect.objectContaining({ message: 'concurrent_update' }),
     });
     expect((await store.get<Run>(run.id))?.version).toBe(run.version + 1);
+  });
+
+  it('records the authenticated operator and emits control events', async () => {
+    const { store, orchestrator, run } = await harness();
+    const events: string[] = [];
+    orchestrator.on('run', (event: { type?: string }) => {
+      if (event.type) events.push(event.type);
+    });
+
+    await orchestrator.command({ runId: run.id, type: 'pause', actorId: 'operator-1' });
+    await orchestrator.command({ runId: run.id, type: 'cancel', actorId: 'operator-1' });
+    const fork = await orchestrator.command({ runId: run.id, type: 'fork', actorId: 'operator-1' });
+    await orchestrator.command({ runId: fork!.id, type: 'rollback', actorId: 'operator-1' });
+
+    const audit = await store.list<AuditEvent>(
+      (value) => value.kind === 'audit-event' && value.actorId === 'operator-1',
+    );
+    expect(audit.map((event) => event.action)).toEqual(
+      expect.arrayContaining(['run.paused', 'run.cancelled', 'run.forked', 'run.rolled_back']),
+    );
+    expect(events).toEqual(
+      expect.arrayContaining(['run.paused', 'run.cancelled', 'run.forked', 'run.rolled_back']),
+    );
   });
 });
 

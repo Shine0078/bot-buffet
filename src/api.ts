@@ -3702,6 +3702,7 @@ export function createApi(deps: ApiDeps) {
           runId: runMatch[1]!,
           type: runMatch[2] as never,
           checkpointId: body.checkpointId ? String(body.checkpointId) : undefined,
+          actorId,
         });
         return send(res, 200, result ?? { code: 'not_found' });
       }
@@ -3748,7 +3749,7 @@ export function createApi(deps: ApiDeps) {
           approval.version,
         );
         if (status === 'approved')
-          await deps.orchestrator.command({ runId: approval.runId, type: 'resume' });
+          await deps.orchestrator.command({ runId: approval.runId, type: 'resume', actorId });
         else {
           await deps.store.putIfVersion(
             {
@@ -3793,7 +3794,8 @@ export function createApi(deps: ApiDeps) {
           ),
           'run',
         );
-        for (const run of runs) await deps.orchestrator.command({ runId: run.id, type: 'stop' });
+        for (const run of runs)
+          await deps.orchestrator.command({ runId: run.id, type: 'stop', actorId });
         return send(res, 200, { stopped: runs.length });
       }
       if (path === '/' || !path.startsWith('/api/')) {
