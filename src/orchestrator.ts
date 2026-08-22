@@ -29,7 +29,13 @@ import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext, memoryToContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { labelUntrusted } from './injection.js';
-import { buildSystemPrompt, canStartInMode, decideMode, escalationOutcome } from './modes.js';
+import {
+  buildSystemPrompt,
+  canStartInMode,
+  decideMode,
+  escalationOutcome,
+  requiresApproval,
+} from './modes.js';
 import { verifyDeterministic } from './verification.js';
 import { selectReadableMemory } from './memoryScope.js';
 
@@ -457,16 +463,17 @@ export class Orchestrator extends EventEmitter {
                 risks: [risk],
               })),
             );
-            if (
-              decisionPolicy.decision === 'approval-required' ||
-              // The mode's own approval threshold. Supervised mode approves
-              // every action that is not read-only, which policy alone would
-              // not require.
-              modeDecision.requiresApproval ||
-              tool.definition.risk === 'high' ||
-              tool.definition.risk === 'critical' ||
-              agent.profile.approvalPolicy.requiredRisks.includes(tool.definition.risk)
-            ) {
+            // Policy, mode, and the agent's own approval policy are combined in
+            // one place, so no single source can silently override another.
+            const approval = requiresApproval({
+              policyDecision: decisionPolicy.decision,
+              modeRequiresApproval: modeDecision.requiresApproval,
+              risk: tool.definition.risk,
+              reversible: tool.definition.reversible,
+              autoApproveReversible: agent.profile.approvalPolicy.autoApproveReversible,
+              requiredRisks: agent.profile.approvalPolicy.requiredRisks,
+            });
+            if (approval.required) {
               await this.requestApproval(
                 run,
                 step.id,
