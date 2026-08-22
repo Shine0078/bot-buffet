@@ -62,6 +62,31 @@ The final agent-profile/redaction working-tree diff was reviewed in scan `c1b432
 
 The profile-audit working-tree diff was reviewed in scan `be142bc7-f697-411d-a7f9-59846ef5dcfa` against `2e00e9481f7eeae5688ad79237d8d9fca68dbf27`; the changed API handler and regression assertion were fully covered with zero reportable findings. TAC remained unavailable because the security-access connector was not connected.
 
+## Completion assessment (2026-08-21)
+
+Measured against the master prompt's acceptance criteria, not against effort spent.
+
+| Area | State | Evidence |
+| --- | --- | --- |
+| Control plane, entities, audit chain | Complete | 105 tests, audit chain verification endpoint |
+| Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete | `tests/orchestrator.test.ts` |
+| Local model registry and offline enforcement | Complete | discovery/registration routes, offline-only contracts |
+| Online provider adapters | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3 |
+| Routing, budgets, cost/usage reporting | Complete | `src/router.ts`, `src/budgets.ts`, `src/reporting.ts` |
+| Tools, permissions, approvals, audit | Complete | typed contracts, CAS approvals, tamper-evident log |
+| Sandboxing | Implemented; kernel isolation unverified | Docker mode required in production; Docker daemon unavailable locally |
+| Memory, context budgeting, compaction | Complete | `src/context.ts`, memory approval CAS |
+| Workflows and artifacts | Complete | DAG validation/scheduling, scanned artifact registry, manifests |
+| Office UI and accessible tables | Functional | table alternative, keyboard/focus/reduced-motion coverage |
+| Browser, screenshot, and axe accessibility tests | Not implemented | no Playwright/axe suite in repo |
+| Observability | Partial | summary/usage/alerts endpoints; no OpenTelemetry exporter |
+| Evaluations | Partial | deterministic case execution; no LLM-as-judge or golden regression suite |
+| CI/CD | Complete locally | format, types, tests, lint, audit, secret scan, build, smoke, SBOM, provenance |
+| Deployment, backups, rollback | Prepared, unverified | scripts and docs exist; no staging deploy or restore drill |
+| Documentation | Complete for implemented surface | 29 documents kept in sync per commit |
+
+Honest completion estimate: roughly 70 percent of the specification. The local harness is genuinely built and verified; the remaining work is dominated by requirements that cannot be truthfully claimed without external systems (real provider accounts, a container runtime, a staging environment, restore and rollback drills) plus three feasible local gaps: browser/accessibility test automation, OpenTelemetry export, and the evaluation regression suite.
+
 ## External owner gates (not claimable locally)
 
 1. Configure an identity provider and production secret store; owner must set least-privilege OAuth/API credentials.
