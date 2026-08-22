@@ -18,6 +18,7 @@ import { assertSandboxConfiguration } from './sandbox.js';
 import { DeviceSessionStore, PkceSessionStore } from './oauth.js';
 import { resolveWorkspaceDir } from './paths.js';
 import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
+import { ScheduleDispatcher } from './scheduler.js';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = process.env.BOT_BUFFET_DATA_DIR ?? join(root, '.data');
@@ -210,6 +211,11 @@ const orchestrator = new Orchestrator({
     return adapterFor(provider, resolveProviderToken(provider, vault.getSync(provider.id)));
   },
 });
+const scheduler = new ScheduleDispatcher({ store, orchestrator });
+// The dispatcher is deliberately local and unref'd: it provides a durable
+// development/desktop worker while allowing short-lived CLI/test processes to
+// exit. Production deployments may run the same class from a dedicated worker.
+scheduler.start();
 const server = createApi({
   store,
   orchestrator,
@@ -238,4 +244,4 @@ server.listen(port, host, () =>
   console.log(`Samuel Abraham — Bot Buffet listening on http://${host}:${port}`),
 );
 
-export { store, orchestrator, server };
+export { store, orchestrator, scheduler, server };

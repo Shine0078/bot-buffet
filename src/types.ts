@@ -611,6 +611,9 @@ export interface Schedule extends BaseEntity {
   taskId: ID;
   enabled: boolean;
   timezone: string;
+  lastTriggeredAt?: ISODate;
+  lastRunId?: ID;
+  lastError?: string;
 }
 export interface Webhook extends BaseEntity {
   kind: 'webhook';

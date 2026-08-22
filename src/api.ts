@@ -83,6 +83,7 @@ import { researchBrief, validateCitations } from './research.js';
 import { WEBHOOK_EVENTS, deliverySchedule, isKnownEvent, signPayload } from './webhooks.js';
 import { duplicateProject } from './projectDuplication.js';
 import { pluginAppliesToAgent } from './plugins.js';
+import { assertScheduleTimeZone, parseCronExpression } from './scheduler.js';
 
 export interface ApiDeps {
   store: JsonStateStore;
@@ -3087,8 +3088,14 @@ export function createApi(deps: ApiDeps) {
           'task',
         );
         if (task.projectId !== project.id) throw new Error('schedule_project_mismatch');
-        const cron = String(body.cron ?? '');
-        if (cron.length > 128 || !cron.trim()) throw new Error('schedule_cron_invalid');
+        const cron = String(body.cron ?? '').trim();
+        try {
+          parseCronExpression(cron);
+        } catch {
+          throw new Error('schedule_cron_invalid');
+        }
+        const timezone = String(body.timezone ?? 'UTC').trim();
+        assertScheduleTimeZone(timezone);
         const schedule = entity({
           kind: 'schedule',
           ownerId: actorId,
@@ -3097,7 +3104,7 @@ export function createApi(deps: ApiDeps) {
           cron,
           taskId: task.id,
           enabled: false,
-          timezone: String(body.timezone ?? 'UTC'),
+          timezone,
         }) as Schedule;
         await deps.store.insert(schedule);
         return send(res, 201, schedule);

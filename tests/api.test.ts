@@ -826,6 +826,23 @@ describe('API boundary controls', () => {
       assigneeAgentId: agent.id,
       status: 'ready',
     });
+    const invalidScheduleResponse = await fetch(`${base}/api/v1/schedules`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: project.id, taskId: task.id, cron: 'every hour' }),
+    });
+    expect(invalidScheduleResponse.status).toBe(400);
+    const invalidTimezoneResponse = await fetch(`${base}/api/v1/schedules`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        taskId: task.id,
+        cron: '0 * * * *',
+        timezone: 'Not/AZone',
+      }),
+    });
+    expect(invalidTimezoneResponse.status).toBe(400);
     const scheduleResponse = await fetch(`${base}/api/v1/schedules`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
