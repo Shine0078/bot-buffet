@@ -44,6 +44,7 @@ An audit of every field on the agent profile, approval policy, and tool definiti
 - State loading now has an explicit schema migration boundary: legacy documents are normalized and persisted, malformed state is rejected, and future schema versions fail closed instead of being silently misread.
 - Plugin lifecycle now exposes dependency, declared-permission/network/retention, and auth-status review; vault-backed API-key/custom auth uses version checks and short fingerprints, revoke/uninstall removes the credential, and arbitrary package execution remains disabled until an isolated host is supplied.
 - Plugin update/rollback/uninstall now require current-version compare-and-swap tokens; update and rollback operations force integrity-pinned releases and write high-risk audit records.
+- Each model request now dynamically exposes only enabled, agent-allowlisted tool schemas, while execution retains a second allowlist check; a regression confirms provider-facing tool exposure cannot widen runtime authority.
 
 ### Verified
 

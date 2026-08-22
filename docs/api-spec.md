@@ -19,6 +19,8 @@ SSE now requires a project scope in every mode and drops events that do not carr
 
 `GET/POST /api/v1/model-routes` lists or creates scoped routing policies. Creation validates strategy, project/agent parent scope, bounded primary/fallback model lists, offline-only mode, and optional non-negative cost ceilings; the router consumes project/agent routes before its default health/privacy ordering.
 
+Each model request receives only enabled tools whose stable name or ID is present in the agent profile's `allowedToolIds`; the request carries the typed input schema and bounded description used by the provider adapter. The orchestrator repeats the allowlist check before execution, so provider-supplied or stale tool calls cannot widen authority.
+
 `GET/POST /api/v1/environments`, `/api/v1/agents`, and `/api/v1/tasks` provide the authenticated project workbench lifecycle. Environment creation defaults to a blocked network; agent creation requires a project/environment pair and emits a bounded fail-safe profile; task creation validates environment, assignee, parent, and dependency project scope before persistence.
 
 `PATCH /api/v1/agents/:id` updates an agent profile with the caller's current entity `version` and compare-and-swap persistence. Mutable instructions, model/tool/plugin/path allowlists, network mode, resource limits, output mode, escalation mode, and run mode are bounded before storage; approval, verification, and memory policy subdocuments remain unchanged by this general profile route. Stale versions are rejected and each accepted update increments both the entity and profile versions while retaining a bounded change log and an audit event containing only versions and changed field names.

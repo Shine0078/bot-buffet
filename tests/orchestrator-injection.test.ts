@@ -26,7 +26,9 @@ import {
 /** A model that asks for the poisoned tool on its first turn, then stops. */
 class ToolCallingAdapter implements ModelAdapter {
   private called = false;
-  async complete(_request: ModelRequest): Promise<ModelResponse> {
+  readonly requests: ModelRequest[] = [];
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    this.requests.push(request);
     const toolCalls = this.called ? [] : [{ id: 'call-1', name: 'research.fetch', arguments: {} }];
     this.called = true;
     return {
@@ -195,17 +197,29 @@ describe('untrusted tool output handling', () => {
       }),
     });
 
+    const adapter = new ToolCallingAdapter();
     const orchestrator = new Orchestrator({
       store,
       router: new ModelRouter(async () => [model]),
       tools,
       workspaceRoot: () => dir,
-      adapters: () => new ToolCallingAdapter(),
+      adapters: () => adapter,
     });
     const events: Array<Record<string, unknown>> = [];
     orchestrator.on('run', (event: Record<string, unknown>) => events.push(event));
     const run = await orchestrator.createRun({ ownerId: 'u', project, agent, task });
     await orchestrator.start(run.id);
+
+    expect(adapter.requests[0]?.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'research.fetch',
+          description: 'fetches external content',
+          parameters: { type: 'object' },
+        },
+      },
+    ]);
 
     const state = await store.getRunState(run.id);
     expect(state['tool:research.fetch:trust']).toBe('untrusted');

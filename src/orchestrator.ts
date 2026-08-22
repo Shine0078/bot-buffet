@@ -264,6 +264,23 @@ export class Orchestrator extends EventEmitter {
         const model = await this.deps.store.get<Model>(decision.modelId);
         if (!model) throw new Error('model_not_found');
         request.model = model.modelName;
+        if (model.capabilities.toolCalling)
+          request.tools = this.deps.tools
+            .list()
+            .filter(
+              (tool) =>
+                tool.enabled &&
+                (agent.profile.allowedToolIds.includes(tool.id) ||
+                  agent.profile.allowedToolIds.includes(tool.name)),
+            )
+            .map((tool) => ({
+              type: 'function',
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.inputSchema,
+              },
+            }));
         const estimatedCostCents = estimateCostCents(
           model,
           assembled.estimatedTokens,

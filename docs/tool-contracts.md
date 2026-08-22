@@ -22,6 +22,12 @@ Approval, run-mode constraints, and the agent's tool allowlist are enforced by
 the orchestrator _before_ it reaches this point — the registry's job is the
 contract, not the authority.
 
+The model-facing tool list is also filtered before each model call: only enabled
+definitions whose stable name or ID is in the agent profile's `allowedToolIds`
+are serialized as provider function schemas. A provider cannot request a tool
+that was not exposed, and the execution-time allowlist check remains in place
+as a second boundary against stale or forged tool calls.
+
 ## Built-in tools
 
 | Tool               | Risk   | Reversible | Notes                                                                            |
