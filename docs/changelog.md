@@ -56,4 +56,5 @@
 - Office action pass: wired New project, View all, and table Add so they create a project, open the runs table, and create a scoped task; project creation now provisions a blocked-network environment so tasks can be added immediately.
 - Office run pass: inspector Start run and scoped chat now post a run and agent memory through the control plane, and Settings is a real table view of workspace/project/auth state.
 - Office add pass: the table Add button now creates memory notes, local model registrations, monthly budgets, and workflow graphs for the active project, with browser coverage for each path.
+- Office run-control pass: the inspector now pauses, resumes, and stops the selected agent's active run through the existing run-command API, with browser coverage for pause and stop.
 - Workspace path pass: agent scratch now lives under the durable data directory so a read-only container root does not fail startup.

@@ -56,7 +56,13 @@ const startServer = async (): Promise<string> => {
       return run;
     },
     start: async () => undefined,
-    command: async () => undefined,
+    command: async (input: { runId: string; type: string }) => {
+      const run = await store.get(input.runId);
+      if (!run) return undefined;
+      const status =
+        input.type === 'pause' ? 'paused' : input.type === 'resume' ? 'queued' : 'cancelled';
+      return store.put({ ...run, status, version: run.version } as never);
+    },
   }) as unknown as Orchestrator;
   const api = createApi({
     store,
@@ -289,6 +295,59 @@ describe('Office UI in a real browser', () => {
     await page.click('#tableAction');
     await page.waitForFunction(() =>
       /Review loop/.test(document.querySelector('#tableBody')?.textContent ?? ''),
+    );
+    await page.close();
+  }, 60_000);
+  it('pauses and stops the selected agent run from the inspector', async () => {
+    const page = await browser.newPage();
+    await page.goto(base, { waitUntil: 'networkidle' });
+    const project = (await (
+      await fetch(base + '/api/v1/projects', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Control project' }),
+      })
+    ).json()) as { id: string };
+    const environments = (await (await fetch(base + '/api/v1/environments')).json()) as Array<{
+      id: string;
+      projectId: string;
+    }>;
+    const environment = environments.find((item) => item.projectId === project.id);
+    await fetch(base + '/api/v1/agents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        environmentId: environment?.id,
+        name: 'Controller',
+      }),
+    });
+    await fetch(base + '/api/v1/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        environmentId: environment?.id,
+        title: 'Operate the run',
+      }),
+    });
+    await page.click('#refresh');
+    await page.waitForFunction(() => document.querySelectorAll('[data-agent]').length > 0);
+    await page.locator('[data-agent]').first().click();
+    await page.click('#startRun');
+    await page.click('#pauseRun');
+    await page.click('.nav-item[data-view="runs"]');
+    await page.waitForSelector('#tableView:not(.hidden)');
+    await page.waitForFunction(() =>
+      /paused/.test(document.querySelector('#tableBody')?.textContent ?? ''),
+    );
+    await page.click('.nav-item[data-view="office"]');
+    await page.waitForSelector('#officeView:not(.hidden)');
+    await page.locator('[data-agent]').first().click();
+    await page.click('#stopRun');
+    await page.click('.nav-item[data-view="runs"]');
+    await page.waitForFunction(() =>
+      /cancelled/.test(document.querySelector('#tableBody')?.textContent ?? ''),
     );
     await page.close();
   }, 60_000);

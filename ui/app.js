@@ -174,6 +174,22 @@ async function startSelectedRun() {
   await load();
   return run;
 }
+function activeRunFor(agent) {
+  return (
+    (state.data?.runs || []).find((run) => run.id === agent?.currentRunId) ||
+    (state.data?.runs || []).find(
+      (run) =>
+        run.agentId === agent?.id &&
+        ['queued', 'running', 'waiting_approval', 'paused', 'retrying'].includes(run.status),
+    )
+  );
+}
+async function commandSelectedRun(type) {
+  const run = activeRunFor(selectedAgent());
+  if (!run) throw new Error('No active run for this agent');
+  await api('/api/v1/runs/' + run.id + '/' + type, { method: 'POST', body: JSON.stringify({}) });
+  await load();
+}
 async function sendChat(text) {
   const agent = selectedAgent();
   const project = (state.data?.projects || []).find((item) => item.id === agent?.projectId);
@@ -253,9 +269,17 @@ function selectAgent(id) {
   const a = (state.data.agents || []).find((x) => x.id === id);
   if (!a) return;
   $('#inspectorContent').innerHTML =
-    `<div class="agent-detail"><div class="detail-head"><div class="avatar">${esc(a.profile?.avatar || '◈')}</div><div><h2>${esc(a.profile?.name)}</h2><div class="detail-role">${esc(a.profile?.mission)}</div></div></div><div class="detail-list"><div><span>Status</span><strong>${esc(a.status)}</strong></div><div><span>Mode</span><strong>${esc(a.profile?.mode)}</strong></div><div><span>Network</span><strong>${esc(a.profile?.network)}</strong></div><div><span>Max steps</span><strong>${esc(a.profile?.maxSteps)}</strong></div><div><span>Tools</span><strong>${a.profile?.allowedToolIds?.length || 0} allowed</strong></div><div><span>Memory</span><strong>Project scoped</strong></div></div><button id="startRun" class="primary" type="button">Start run</button></div>`;
+    `<div class="agent-detail"><div class="detail-head"><div class="avatar">${esc(a.profile?.avatar || '◈')}</div><div><h2>${esc(a.profile?.name)}</h2><div class="detail-role">${esc(a.profile?.mission)}</div></div></div><div class="detail-list"><div><span>Status</span><strong>${esc(a.status)}</strong></div><div><span>Mode</span><strong>${esc(a.profile?.mode)}</strong></div><div><span>Network</span><strong>${esc(a.profile?.network)}</strong></div><div><span>Max steps</span><strong>${esc(a.profile?.maxSteps)}</strong></div><div><span>Tools</span><strong>${a.profile?.allowedToolIds?.length || 0} allowed</strong></div><div><span>Memory</span><strong>Project scoped</strong></div></div><div class="heading-actions"><button id="startRun" class="primary" type="button">Start run</button><button id="pauseRun" class="secondary" type="button">Pause</button><button id="resumeRun" class="secondary" type="button">Resume</button><button id="stopRun" class="danger" type="button">Stop</button></div></div>`;
   const start = $('#startRun');
   if (start) start.onclick = () => startSelectedRun().catch((err) => showError(err.message));
+  const pause = $('#pauseRun');
+  if (pause)
+    pause.onclick = () => commandSelectedRun('pause').catch((err) => showError(err.message));
+  const resume = $('#resumeRun');
+  if (resume)
+    resume.onclick = () => commandSelectedRun('resume').catch((err) => showError(err.message));
+  const stop = $('#stopRun');
+  if (stop) stop.onclick = () => commandSelectedRun('stop').catch((err) => showError(err.message));
 }
 async function usageTable() {
   $('#viewTitle').textContent = 'Usage and cost';

@@ -58,4 +58,10 @@ describe('Office UI accessibility contract', () => {
     expect(app).toContain("api('/api/v1/workflows'");
     expect(app).toContain("namespace: 'project'");
   });
+  it('wires inspector pause, resume, and stop to run command routes', () => {
+    expect(app).toContain('id="pauseRun"');
+    expect(app).toContain('id="resumeRun"');
+    expect(app).toContain('id="stopRun"');
+    expect(app).toContain("/api/v1/runs/' + run.id + '/' + type");
+  });
 });
