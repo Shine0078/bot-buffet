@@ -29,7 +29,7 @@ import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext, memoryToContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
 import { labelUntrusted } from './injection.js';
-import { canStartInMode, decideMode } from './modes.js';
+import { canStartInMode, decideMode, escalationOutcome } from './modes.js';
 import { verifyDeterministic } from './verification.js';
 import { selectReadableMemory } from './memoryScope.js';
 
@@ -579,12 +579,35 @@ export class Orchestrator extends EventEmitter {
         });
     } catch (error) {
       const current = await this.deps.store.get<Run>(runId);
-      if (current)
-        await this.updateRun(current, {
-          status: controller.signal.aborted ? 'cancelled' : 'failed',
-          error: redactSecrets((error as Error).message) as string,
-          finishedAt: now(),
-        });
+      if (current) {
+        const message = redactSecrets((error as Error).message) as string;
+        if (controller.signal.aborted) {
+          await this.updateRun(current, {
+            status: 'cancelled',
+            error: message,
+            finishedAt: now(),
+          });
+        } else {
+          // The profile's escalation policy decides what a failure means.
+          // It was validated on write and never consulted, so every failure
+          // ended the run regardless of what the operator had chosen.
+          const escalation = agent.profile.escalationPolicy;
+          const outcome = escalationOutcome(escalation);
+          await this.updateRun(current, {
+            status: outcome.status,
+            error: message,
+            // A paused run keeps its checkpoint and can be resumed, so it must
+            // not be stamped as finished.
+            finishedAt: outcome.status === 'paused' ? undefined : now(),
+            pausedAt: outcome.status === 'paused' ? now() : undefined,
+          });
+          await this.emitAudit(current, 'run.escalated', 'medium', 'executed', {
+            escalationPolicy: escalation,
+            status: outcome.status,
+            reason: outcome.reason,
+          });
+        }
+      }
     } finally {
       this.controllers.delete(runId);
     }
