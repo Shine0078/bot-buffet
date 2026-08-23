@@ -14,6 +14,7 @@ export function buildSystemPrompt(profile: {
   projectRules: string[];
   skills: string[];
   outputFormat?: OutputFormat;
+  changelog?: string[];
 }): string {
   const sections = [profile.systemInstructions];
   if (profile.projectRules.length) {
@@ -24,6 +25,10 @@ export function buildSystemPrompt(profile: {
       'Available skills (read the referenced material before relying on one):\n' +
         profile.skills.map((skill) => '- ' + skill).join('\n'),
     );
+  }
+  const latestChange = profile.changelog?.filter((entry) => entry.trim()).at(-1);
+  if (latestChange) {
+    sections.push('Latest profile change: ' + latestChange);
   }
   const formatInstruction = outputFormatInstruction(profile.outputFormat ?? 'text');
   if (formatInstruction) sections.push(formatInstruction);

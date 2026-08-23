@@ -44,4 +44,14 @@ describe('system prompt assembly', () => {
     expect(prompt.indexOf('You maintain the billing service.')).toBe(0);
     expect(prompt.indexOf('Project rules')).toBeLessThan(prompt.indexOf('Available skills'));
   });
+
+  it('includes the latest changelog entry after skills', () => {
+    const prompt = buildSystemPrompt(
+      profile({ skills: ['skill'], changelog: ['Initial profile', 'Raised step limit'] }),
+    );
+    expect(prompt).toContain('Latest profile change: Raised step limit');
+    expect(prompt.indexOf('Available skills')).toBeLessThan(
+      prompt.indexOf('Latest profile change'),
+    );
+  });
 });

@@ -13,6 +13,7 @@
 - Stored `Policy` records now have create/enable API routes and are consulted at tool time. An enabled deny rule fails the run closed.
 - Policy rule `paths` and `environments` now filter matches instead of being stored and ignored.
 - A plugin with a blank `retention` declaration can no longer be invoked. Retention is required before any connector path is used.
+- Profile `changelog` is no longer write-only: the latest entry is included in the system prompt and shown in the Office inspector.
 - Enabled schedules now fire through a bounded five-field cron matcher and `tickSchedules`. A due assigned task starts a run; the same UTC minute will not start a second one. Stored IANA timezones are honoured, and unknown zones fail closed.
 
 ## 0.2.0 — 2026-08-22

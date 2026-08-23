@@ -76,4 +76,8 @@ describe('Office UI accessibility contract', () => {
     expect(html).not.toContain('v0.1.0');
     expect(css).toContain('control-plane-banner');
   });
+  it('shows the latest profile changelog in the inspector', () => {
+    expect(app).toContain('Profile change');
+    expect(app).toContain('changelog');
+  });
 });
