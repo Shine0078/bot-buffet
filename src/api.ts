@@ -2369,6 +2369,21 @@ export function createApi(deps: ApiDeps) {
           await visible(actorId, await deps.store.list<Alert>((x) => x.kind === 'alert')),
         );
       }
+      const alertAck = path.match(/^\/api\/v1\/alerts\/([^/]+)\/acknowledge$/);
+      if (alertAck && req.method === 'POST') {
+        const alert = await required(
+          actorId,
+          await deps.store.get<Alert>(alertAck[1]!),
+          'write',
+          'alert',
+        );
+        const saved = await deps.store.put({
+          ...alert,
+          acknowledged: true,
+          version: alert.version,
+        } as Alert);
+        return send(res, 200, saved);
+      }
       if (path === '/api/v1/policies' && req.method === 'GET') {
         return send(
           res,

@@ -16,6 +16,7 @@
 - Profile `changelog` is no longer write-only: the latest entry is included in the system prompt and shown in the Office inspector.
 - A pinned plugin now requires a 64-character SHA-256 digest before invocation, not only before update.
 - Profile `description` is included in the system prompt and shown in the Office inspector instead of being stored unused.
+- Alerts can be acknowledged through `POST /api/v1/alerts/:id/acknowledge` and the Office alerts table, so unacknowledged metrics are no longer write-only.
 - Enabled schedules now fire through a bounded five-field cron matcher and `tickSchedules`. A due assigned task starts a run; the same UTC minute will not start a second one. Stored IANA timezones are honoured, and unknown zones fail closed.
 
 ## 0.2.0 — 2026-08-22

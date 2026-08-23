@@ -687,6 +687,41 @@ describe('API boundary controls', () => {
     await expect(alerts.json()).resolves.toEqual([]);
   });
 
+  it('acknowledges an existing alert instead of leaving it unread', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-alert-'));
+    const store = createStore(dir);
+    const alert = entity({
+      kind: 'alert',
+      ownerId: 'local-user',
+      scope: 'p',
+      severity: 'warning',
+      title: 'Budget warning',
+      message: 'soft limit',
+      acknowledged: false,
+    });
+    await store.insert(alert);
+    const server = createApi({
+      store,
+      orchestrator: new EventEmitter() as unknown as Orchestrator,
+      uiRoot: dir,
+      vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+    const base = `http://127.0.0.1:${address.port}`;
+    const response = await fetch(`${base}/api/v1/alerts/${alert.id}/acknowledge`, {
+      method: 'POST',
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: alert.id, acknowledged: true });
+    const listed = await fetch(`${base}/api/v1/alerts`);
+    expect(await listed.json()).toEqual([
+      expect.objectContaining({ id: alert.id, acknowledged: true }),
+    ]);
+  });
+
   it('creates scoped environments, agents, and tasks with safe defaults', async () => {
     const base = await start();
     const projectResponse = await fetch(`${base}/api/v1/projects`, {

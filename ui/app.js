@@ -396,6 +396,28 @@ function table(view) {
   $('#tableView').classList.remove('hidden');
   $('#tableTitle').textContent = cfg[0];
   $('#tableHead').innerHTML = '<tr>' + cfg[2].map((x) => `<th>${esc(x)}</th>`).join('') + '</tr>';
+  if (view === 'alerts') {
+    const alerts = d.alerts || [];
+    const columns = ['severity', 'title', 'message', 'acknowledged', 'action'];
+    $('#tableHead').innerHTML =
+      '<tr>' + columns.map((x) => `<th>${esc(x)}</th>`).join('') + '</tr>';
+    $('#tableBody').innerHTML =
+      alerts
+        .map((alert) => {
+          const alertActionHtml = alert.acknowledged
+            ? '<span class="muted">Done</span>'
+            : '<button type="button" data-alert="' + esc(alert.id) + '">Acknowledge</button>';
+          return (
+            '<tr>' +
+            ['severity', 'title', 'message', 'acknowledged']
+              .map((key) => `<td>${esc(alert[key])}</td>`)
+              .join('') +
+            `<td>${alertActionHtml}</td></tr>`
+          );
+        })
+        .join('') || '<tr><td colspan="5" class="muted">No records in this scope.</td></tr>';
+    return;
+  }
   $('#tableBody').innerHTML =
     cfg[1]
       .map((row) => '<tr>' + cfg[2].map((k) => `<td>${esc(row[k])}</td>`).join('') + '</tr>')
@@ -414,6 +436,13 @@ document.addEventListener('click', async (e) => {
       body: JSON.stringify({ approved: a.dataset.approved === 'true' }),
     });
     await load();
+    return;
+  }
+  const alertButton = e.target.closest('[data-alert]');
+  if (alertButton) {
+    await api('/api/v1/alerts/' + alertButton.dataset.alert + '/acknowledge', { method: 'POST' });
+    await load();
+    if (state.view === 'alerts') table('alerts');
     return;
   }
   const nav = e.target.closest('[data-view]');
