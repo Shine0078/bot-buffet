@@ -51,6 +51,12 @@ export interface RunCommand {
   checkpointId?: string;
 }
 
+export function approvalExpiryMs(value: number | undefined): number {
+  // Bounds keep a misconfigured profile from minting an approval that never expires,
+  // or one that expires before a human can see it.
+  return Math.min(24 * 60 * 60_000, Math.max(1_000, value ?? 15 * 60_000));
+}
+
 export class Orchestrator extends EventEmitter {
   private readonly controllers = new Map<string, AbortController>();
   private readonly runPromises = new Map<string, Promise<void>>();
@@ -830,6 +836,8 @@ export class Orchestrator extends EventEmitter {
     action: string,
     payload: unknown,
   ): Promise<ApprovalRequest> {
+    const agent = await this.deps.store.get<Agent>(run.agentId);
+    const expiryMs = approvalExpiryMs(agent?.profile.approvalPolicy.expiryMs);
     const request = entity({
       kind: 'approval-request',
       ownerId: run.ownerId,
@@ -841,9 +849,8 @@ export class Orchestrator extends EventEmitter {
       payload: redactSecrets(payload),
       status: 'pending' as const,
       requestedAt: now(),
-      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
-      delegates:
-        (await this.deps.store.get<Agent>(run.agentId))?.profile.approvalPolicy.delegates ?? [],
+      expiresAt: new Date(Date.now() + expiryMs).toISOString(),
+      delegates: agent?.profile.approvalPolicy.delegates ?? [],
     }) as ApprovalRequest;
     await this.deps.store.insert(request);
     await this.emitAudit(run, 'approval.requested', risk, 'approval-required', {
