@@ -38,6 +38,9 @@ export function invokePlugin(
   if (plugin.agentIds.length > 0 && !plugin.agentIds.includes(agent.id)) {
     throw new Error(`plugin_not_bound:${input.pluginId}`);
   }
+  if (!plugin.permissions.length) {
+    throw new Error(`plugin_permissions_empty:${input.pluginId}`);
+  }
   if (plugin.network === 'open') {
     throw new Error(`plugin_network_open_forbidden:${input.pluginId}`);
   }

@@ -71,7 +71,7 @@ const plugin = (overrides: Partial<Plugin> = {}): Plugin =>
     agentIds: [],
     network: 'allowlist',
     retention: 'none',
-    permissions: [],
+    permissions: ['github:repo'],
     ...overrides,
   }) as Plugin;
 
@@ -144,6 +144,16 @@ describe('plugin invocation authority', () => {
         tool: 'custom.tool',
       }),
     ).toThrow(/plugin_allowlist_empty/);
+  });
+
+  it('refuses a plugin with no permissions instead of treating an empty list as authority', () => {
+    const empty = plugin({ permissions: [] });
+    expect(() =>
+      invokePlugin(agent([empty.id]), [empty], {
+        pluginId: empty.id,
+        tool: 'github.list_repositories',
+      }),
+    ).toThrow(/plugin_permissions_empty/);
   });
 });
 
