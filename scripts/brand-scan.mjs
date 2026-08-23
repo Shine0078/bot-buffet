@@ -111,12 +111,14 @@ export function filterHits(output, allowed = ALLOWED, gatePaths = GATE_PATHS) {
 }
 
 function runGrep() {
+  // --cached searches the index, not the working tree, so an untracked local note cannot fail the product-surface gate.
   try {
     return execFileSync(
       'git',
       [
         'grep',
         '-E',
+        '--cached',
         '-i',
         '-I',
         '-n',
