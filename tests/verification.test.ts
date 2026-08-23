@@ -115,7 +115,7 @@ describe('policy drives which checks run', () => {
 
   it('exposes the available check names so a policy can be validated', () => {
     expect(AVAILABLE_CHECKS.sort()).toEqual(
-      ['acceptance', 'no-errors', 'no-injection', 'tool-used'].sort(),
+      ['acceptance', 'no-errors', 'no-injection', 'output-format', 'tool-used'].sort(),
     );
     for (const name of AVAILABLE_CHECKS) expect(typeof DETERMINISTIC_CHECKS[name]).toBe('function');
   });
@@ -237,5 +237,39 @@ describe('inferential policy', () => {
     );
     expect(result.passed).toBe(false);
     expect(result.unknownReviewer).toBe(true);
+  });
+});
+
+describe('output-format check', () => {
+  it('fails markdown policy when the last response is unstructured', () => {
+    const result = verifyDeterministic(policy({ deterministic: ['output-format'] }), {
+      task: task([]),
+      state: {},
+      outputFormat: 'markdown',
+      lastResponse: 'plain completion',
+    });
+    expect(result.passed).toBe(false);
+    expect(result.results[0]?.name).toBe('output-format');
+  });
+
+  it('passes markdown policy when the last response has structure', () => {
+    const result = verifyDeterministic(policy({ deterministic: ['output-format'] }), {
+      task: task([]),
+      state: {},
+      outputFormat: 'markdown',
+      lastResponse: '# Done\n\n- shipped',
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it('auto-runs output-format for markdown even when the policy did not name it', () => {
+    const result = verifyDeterministic(policy({ deterministic: ['tool-used'] }), {
+      task: task([]),
+      state: { 'tool:fs.read': 'ok' },
+      outputFormat: 'markdown',
+      lastResponse: 'plain completion',
+    });
+    expect(result.results.map((entry) => entry.name)).toEqual(['tool-used', 'output-format']);
+    expect(result.passed).toBe(false);
   });
 });

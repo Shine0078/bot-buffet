@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `outputFormat: markdown` is now a real runtime format: the system prompt instructs Markdown, providers still receive `text` unless JSON is requested, and verification fails unstructured Markdown.
+- Opening the Office UI as `file://` now shows a blocking banner and disables buttons instead of looking like a live, unresponsive office.
+- `allowedPluginIds` is enforced on `plugin.invoke`. Installed connectors still fail closed without a live credential.
+
 ## 0.2.0 — 2026-08-22
 
 ### Gates that were not gating

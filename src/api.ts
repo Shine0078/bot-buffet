@@ -45,6 +45,7 @@ import {
   now,
 } from './types.js';
 import { Orchestrator } from './orchestrator.js';
+import { BOT_BUFFET_VERSION } from './version.js';
 import {
   adapterFor,
   defaultCapabilities,
@@ -898,6 +899,8 @@ export function createApi(deps: ApiDeps) {
           costs: await deps.store.list<CostRecord>((x) => x.kind === 'cost'),
         };
         return send(res, 200, {
+          version: BOT_BUFFET_VERSION,
+          origin: 'control-plane',
           workspaces: await visible(
             actorId,
             await deps.store.list<Workspace>((x) => x.kind === 'workspace'),

@@ -16,4 +16,7 @@ browser-out.log
 
 Handover Continuatio.txt
 verify-out.txt
+scripts/_*.cjs
+scripts/_*.mjs
+scripts/_*.json
 

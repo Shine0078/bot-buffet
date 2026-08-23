@@ -27,6 +27,7 @@ import {
 import { ModelAdapter, ModelRequest, ModelResponse } from './providers.js';
 import { ModelRouter } from './router.js';
 import { ToolContext, ToolRegistry } from './tools.js';
+import { providerResponseFormat } from './outputFormat.js';
 import { decidePolicy, redactSecrets } from './security.js';
 import { assembleContext, memoryToContext } from './context.js';
 import { BudgetDecision, estimateCostCents, evaluateBudgets } from './budgets.js';
@@ -267,7 +268,7 @@ export class Orchestrator extends EventEmitter {
             },
           ],
           maxTokens: Math.min(agent.profile.tokenLimit, 4096),
-          responseFormat: agent.profile.outputFormat === 'json' ? 'json' : 'text',
+          responseFormat: providerResponseFormat(agent.profile.outputFormat),
           signal: controller.signal,
         };
         const route = await this.deps.store.list<ModelRoute>(
@@ -531,7 +532,11 @@ export class Orchestrator extends EventEmitter {
               )[0] as ToolContext['network'],
               signal: controller.signal,
             };
-            const output = await this.deps.tools.invoke(call.name, call.arguments, context);
+            const output = await this.deps.tools.invoke(call.name, call.arguments, {
+              ...context,
+              agent,
+              plugins: await this.deps.store.list((x) => x.kind === 'plugin'),
+            });
             // Tool output is external data. Label it untrusted before it can re-enter model
             // context, and record any instruction-shaped payload it carries.
             const labeled = labelUntrusted(
@@ -569,6 +574,8 @@ export class Orchestrator extends EventEmitter {
           task,
           state: nextState,
           reviewerExists,
+          outputFormat: agent.profile.outputFormat,
+          lastResponse: typeof nextState.lastResponse === 'string' ? nextState.lastResponse : '',
         });
         const verifyStep = entity({
           kind: 'run-step',

@@ -1168,13 +1168,22 @@ export class MockLocalAdapter implements ModelAdapter {
   constructor(private readonly name: string) {}
   async complete(request: ModelRequest): Promise<ModelResponse> {
     const last = request.messages.at(-1)?.content ?? '';
+    const markdownRequested = request.messages.some(
+      (message) =>
+        message.role === 'system' &&
+        message.content.includes('Respond in GitHub-flavored Markdown'),
+    );
     const content =
       request.responseFormat === 'json'
         ? JSON.stringify({
             type: 'message',
             text: `Local model ${this.name}: ${last.slice(0, 300)}`,
           })
-        : `Local model ${this.name}: ${last.slice(0, 300)}`;
+        : markdownRequested
+          ? `# Local model ${this.name}
+
+- ${last.slice(0, 120)}`
+          : `Local model ${this.name}: ${last.slice(0, 300)}`;
     return {
       id: `local_${Date.now()}`,
       content,

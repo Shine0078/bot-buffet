@@ -1,4 +1,5 @@
 import type { Task, VerificationPolicy } from './types.js';
+import { validateOutputFormat, type OutputFormat } from './outputFormat.js';
 
 /**
  * Deterministic verification.
@@ -21,6 +22,8 @@ export interface VerificationInput {
   state: Record<string, unknown>;
   /** True when policy.reviewerAgentId names an agent that actually exists. */
   reviewerExists?: boolean;
+  outputFormat?: OutputFormat;
+  lastResponse?: string;
 }
 
 export interface CheckResult {
@@ -97,11 +100,22 @@ const toolUsed: DeterministicCheck = ({ state }) => {
   };
 };
 
+const outputFormat: DeterministicCheck = ({ outputFormat: format, lastResponse }) => {
+  const result = validateOutputFormat(format ?? 'text', lastResponse ?? '');
+  return {
+    name: 'output-format',
+    passed: result.passed,
+    detail: result.detail,
+    evidence: result.passed ? [format ?? 'text'] : [],
+  };
+};
+
 export const DETERMINISTIC_CHECKS: Record<string, DeterministicCheck> = {
   acceptance,
   'no-errors': noErrors,
   'no-injection': noInjection,
   'tool-used': toolUsed,
+  'output-format': outputFormat,
 };
 
 export const AVAILABLE_CHECKS = Object.keys(DETERMINISTIC_CHECKS);
@@ -130,11 +144,19 @@ export function verifyDeterministic(
   policy: VerificationPolicy,
   input: VerificationInput,
 ): VerificationOutcome {
-  const names = policy.deterministic.length
-    ? policy.deterministic
-    : policy.requireEvidence
-      ? ['acceptance']
-      : [];
+  const names = [
+    ...(policy.deterministic.length
+      ? policy.deterministic
+      : policy.requireEvidence
+        ? ['acceptance']
+        : []),
+  ];
+  if (
+    (input.outputFormat === 'json' || input.outputFormat === 'markdown') &&
+    !names.includes('output-format')
+  ) {
+    names.push('output-format');
+  }
 
   const unknownChecks = names.filter((name) => !DETERMINISTIC_CHECKS[name]);
   const results = names

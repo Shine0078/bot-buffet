@@ -5,8 +5,17 @@ const esc = (v) =>
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[c],
   );
+function controlPlaneOrigin() {
+  if (location.protocol === 'file:') return '';
+  return location.origin;
+}
+function controlPlaneUrl(path) {
+  const origin = controlPlaneOrigin();
+  if (!origin) throw new Error('control_plane_unserved');
+  return origin + path;
+}
 async function api(path, options = {}) {
-  const r = await fetch(path, {
+  const r = await fetch(controlPlaneUrl(path), {
     headers: {
       'content-type': 'application/json',
       'x-bot-buffet-user': 'local-user',
@@ -17,8 +26,38 @@ async function api(path, options = {}) {
   if (!r.ok) throw new Error((await r.json()).message || r.statusText);
   return r.json();
 }
+function setOfficeInteractive(enabled) {
+  document.querySelectorAll('button, select, input').forEach((node) => {
+    if (node.id === 'closeInspector') return;
+    node.disabled = !enabled;
+  });
+}
+function showControlPlaneFailure(message) {
+  setOfficeInteractive(false);
+  const banner =
+    $('#controlPlaneBanner') ||
+    (() => {
+      const node = document.createElement('div');
+      node.id = 'controlPlaneBanner';
+      node.className = 'control-plane-banner';
+      node.setAttribute('role', 'alert');
+      document.body.prepend(node);
+      return node;
+    })();
+  banner.innerHTML =
+    '<strong>Office UI is not connected.</strong><p>' +
+    esc(message) +
+    '</p><p>Run <code>npm run dev</code> from the Bot Buffet repository and open <code>http://127.0.0.1:8787</code>. Opening <code>index.html</code> as a file cannot talk to the control plane.</p>';
+  showError(message);
+}
 async function load() {
   state.data = await api('/api/v1/bootstrap');
+  setOfficeInteractive(true);
+  const banner = $('#controlPlaneBanner');
+  if (banner) banner.remove();
+  const version = $('#productVersion');
+  if (version && state.data && state.data.version)
+    version.textContent = 'v' + state.data.version + ' · local';
   render();
 }
 function showError(message) {
@@ -410,9 +449,15 @@ $('#chatForm').onsubmit = (e) => {
   sendChat(text).catch((err) => showError(err.message));
   $('#chatInput').value = '';
 };
-new EventSource('/events').onmessage = () => load();
+try {
+  new EventSource(controlPlaneUrl('/events')).onmessage = () => load();
+} catch {
+  // file:// has no origin; the load() failure below renders the blocking banner.
+}
 load().catch((err) => {
-  const fileHint =
-    location.protocol === 'file:' ? ' Open http://127.0.0.1:8787/ instead of this file.' : '';
-  showError('Unable to load control plane: ' + err.message + fileHint);
+  const message =
+    location.protocol === 'file:' || err.message === 'control_plane_unserved'
+      ? 'This page was opened as a local file, so buttons cannot reach the API.'
+      : 'Unable to load control plane: ' + err.message;
+  showControlPlaneFailure(message);
 });

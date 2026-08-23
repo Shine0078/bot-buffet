@@ -19,8 +19,9 @@ means verified on this machine; it does not mean verified in production.
 | Approvals                      | Complete locally                           | Expiry, CAS transitions, ranked mode/risk/policy decision, malformed decision treated as rejection                                                                                                                                   |
 | Pinned egress rebinding        | Complete locally                           | fetchPinned connects to the preflight IP and tests/egress.test.ts proves a later lookup answering 8.8.8.8 cannot redirect the socket                                                                                                 |
 | Agent presence                 | Complete locally                           | Derived from live runs in src/presence.ts; updateRun and operator commands keep Agent.status/currentRunId/currentTaskId in step; a failed presence write cannot fail the run (tests/presence.test.ts)                                |
-| Office UI                      | Complete locally                           | Accessible table alternative, keyboard focus, WCAG2 A/AA via axe, structural escaping guard                                                                                                                                          |
-| Plugins                        | Complete locally                           | Lifecycle with integrity pinning, scoped activation, and the eight-connector catalog that grants no authority on install                                                                                                             |
+| Office UI                      | Complete locally                           | Accessible table alternative, keyboard focus, WCAG2 A/AA via axe, structural escaping guard. file:// opens now show a blocking banner and disable controls.                                                                          |
+| Plugins                        | Complete locally, live connectors unproven | Lifecycle with integrity pinning, scoped activation, allowedPluginIds enforced on plugin.invoke, and the eight-connector catalog that grants no authority on install                                                                 |
+| Output format                  | Complete locally                           | text/json/markdown now change prompt, provider request format, and verification (src/outputFormat.ts)                                                                                                                                |
 | Observability                  | Complete locally                           | OTLP run traces from durable steps, `/metrics`, usage/cost/alert endpoints                                                                                                                                                           |
 | Evaluations                    | Complete locally                           | Six graders, separated judge, golden baseline, audited release gate                                                                                                                                                                  |
 | CI/CD                          | Complete locally                           | Full pipeline published; container job asserts hardening; provenance verified in-run; rollback drill wired                                                                                                                           |
@@ -208,10 +209,9 @@ orchestrator-level coverage for the wiring — because a pure function passing
 its tests proves nothing about whether the loop consults it, which is precisely
 how these survived.
 
-The remaining unread field is `allowedPluginIds`, which is honest rather than
-broken: agents have no plugin invocation path yet, so there is nothing to
-constrain. It is recorded here rather than quietly enforced against a path that
-does not exist.
+`allowedPluginIds` is now enforced on `plugin.invoke`. An agent cannot call a
+plugin that is missing from the allowlist, disabled, unbound, or unknown, and a
+live connector still returns `unavailable` until a real credential exists.
 
 Suite: 451 tests across 52 files, all passing, with `verify` covering format,
 lint, types, tests, build, and the brand gate. Coverage thresholds are ratcheted
@@ -314,7 +314,7 @@ Measured against the master prompt's acceptance criteria, not against effort spe
 
 | Area                                                       | State                                       | Evidence                                                                       |
 | ---------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------ |
-| Control plane, entities, audit chain                       | Complete                                    | 700 tests, audit chain verification, cross-tenant isolation suite              |
+| Control plane, entities, audit chain                       | Complete                                    | 718 tests across 73 files, audit chain verification, cross-tenant isolation suite |
 | Orchestrator loop, checkpoints, pause/resume/fork/rollback | Complete                                    | `tests/orchestrator.test.ts`                                                   |
 | Local model registry and offline enforcement               | Complete                                    | discovery/registration routes, offline-only contracts                          |
 | Online provider adapters                                   | Implemented, unproven against real accounts | wire/signature unit coverage only; owner gate 3                                |

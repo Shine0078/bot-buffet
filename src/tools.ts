@@ -4,11 +4,14 @@ import {
   entity,
   MemoryItem,
   MemoryPolicy,
+  Plugin,
   ProjectFile,
   ToolDefinition,
+  Agent,
   ID,
   JsonSchema,
 } from './types.js';
+import { invokePlugin } from './plugins.js';
 import { canWriteMemory } from './memoryScope.js';
 import { conflictError, detectConflict, detectCreateConflict, hashContent } from './conflicts.js';
 import { createSandboxRuntime, SandboxRuntime } from './sandbox.js';
@@ -37,6 +40,10 @@ export interface ToolContext {
   /** Environment variable names this agent may see. Anything not listed is
    *  withheld from the sandbox, in both runtimes. */
   environmentKeys?: string[];
+  /** Plugin invocation is fail-closed unless the orchestrator supplies the agent
+   *  and the currently installed plugin records. */
+  agent?: Pick<Agent, 'id' | 'profile'>;
+  plugins?: readonly Plugin[];
   signal?: AbortSignal;
 }
 export interface RegisteredTool {
@@ -475,6 +482,44 @@ export function createBuiltinTools(
         context.signal,
       );
       return { path, size: info.size, isFile: info.isFile };
+    },
+  });
+  registry.register({
+    definition: toolBase(
+      'plugin.invoke',
+      'Invoke an installed plugin or connector that this agent is allowed to use.',
+      'medium',
+      {
+        type: 'object',
+        properties: {
+          pluginId: { type: 'string' },
+          tool: { type: 'string' },
+          arguments: { type: 'object' },
+        },
+        required: ['pluginId', 'tool'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: {
+          pluginId: { type: 'string' },
+          pluginName: { type: 'string' },
+          tool: { type: 'string' },
+          connectorId: { type: 'string' },
+          status: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['pluginId', 'pluginName', 'tool', 'status', 'reason'],
+        additionalProperties: false,
+      },
+    ),
+    execute: async (input, context) => {
+      if (!context.agent) throw new Error('plugin_invoke_requires_orchestrator');
+      return invokePlugin(
+        context.agent,
+        context.plugins ?? [],
+        input as { pluginId: string; tool: string; arguments?: Record<string, unknown> },
+      );
     },
   });
   registry.register({

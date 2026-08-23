@@ -67,4 +67,13 @@ describe('Office UI accessibility contract', () => {
     expect(app).toContain('id="stopRun"');
     expect(app).toContain("/api/v1/runs/' + run.id + '/' + type");
   });
+  it('blocks file:// opens instead of leaving buttons inert', () => {
+    expect(app).toContain("location.protocol === 'file:'");
+    expect(app).toContain('showControlPlaneFailure');
+    expect(app).toContain('control_plane_unserved');
+    expect(app).toContain('http://127.0.0.1:8787');
+    expect(html).toContain('id="productVersion"');
+    expect(html).not.toContain('v0.1.0');
+    expect(css).toContain('control-plane-banner');
+  });
 });
