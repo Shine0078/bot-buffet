@@ -354,11 +354,33 @@ class LocalSandbox implements SandboxRuntime {
   }
 }
 
+/** True when this process is a container that cannot reach a Docker daemon. */
+export function containerWithoutDocker(
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (path: string) => boolean = (path) => {
+    try {
+      return require('node:fs').existsSync(path);
+    } catch {
+      return false;
+    }
+  },
+): boolean {
+  const inContainer = exists('/.dockerenv') || Boolean(env.BOT_BUFFET_IN_CONTAINER);
+  if (!inContainer) return false;
+  const host = env.DOCKER_HOST ?? '';
+  if (host.startsWith('tcp://') || host.startsWith('ssh://') || host.startsWith('npipe:'))
+    return false;
+  const socket = host.startsWith('unix://') ? host.slice('unix://'.length) : '/var/run/docker.sock';
+  return !exists(socket);
+}
+
 export function createSandboxRuntime(workspaceRoot: string): SandboxRuntime {
   const mode = (process.env.BOT_BUFFET_SANDBOX_MODE ?? 'local') as SandboxMode;
   if (mode !== 'local' && mode !== 'docker') throw new Error('sandbox_mode_invalid');
   if (process.env.BOT_BUFFET_AUTH_MODE === 'production' && mode !== 'docker')
     throw new Error('sandbox_runtime_required');
+  if (mode === 'docker' && containerWithoutDocker())
+    throw new Error('sandbox_topology_unavailable');
   return mode === 'docker' ? new DockerSandbox(workspaceRoot) : new LocalSandbox(workspaceRoot);
 }
 

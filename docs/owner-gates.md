@@ -16,7 +16,7 @@
   3. **Point the app at a remote or rootless daemon over mutual TLS.** Keeps the control plane containerized and the daemon outside its trust boundary; requires provisioning the daemon, certificates, and rotation.
   4. **Replace the backend with a microVM runner** (Firecracker, Kata, or a managed sandbox service). Strongest isolation; requires implementing it behind the existing `SandboxRuntime` contract and producing fresh escape evidence.
 
-  Record the choice, then re-run the sandbox suite with `BOT_BUFFET_REQUIRE_DOCKER_TESTS=1` in the target environment, so the evidence reflects the deployed topology rather than a developer workstation.
+  Until then, a containerized production process now fails closed with sandbox_topology_unavailable instead of a generic missing-docker error. Record the choice, then re-run the sandbox suite with `BOT_BUFFET_REQUIRE_DOCKER_TESTS=1` in the target environment, so the evidence reflects the deployed topology rather than a developer workstation.
 
 - Release owner: configure CI OIDC signing/attestation and artifact registry policy, deploy staging, perform restore and rollback drills, collect `/readyz` and smoke evidence, approve production.
 

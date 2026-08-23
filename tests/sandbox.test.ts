@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  containerWithoutDocker,
   createSandboxRuntime,
   dockerRunArgs,
   isDigestPinned,
@@ -51,6 +52,30 @@ describe('sandbox runtime policy', () => {
     process.env.BOT_BUFFET_AUTH_MODE = 'development';
     process.env.BOT_BUFFET_SANDBOX_MODE = 'local';
     expect(createSandboxRuntime('C:/workspace/project').mode).toBe('local');
+  });
+
+  it('fails closed inside a container that cannot reach Docker', () => {
+    process.env.BOT_BUFFET_AUTH_MODE = 'production';
+    process.env.BOT_BUFFET_SANDBOX_MODE = 'docker';
+    process.env.BOT_BUFFET_SANDBOX_IMAGE = 'node@sha256:' + 'a'.repeat(64);
+    process.env.BOT_BUFFET_IN_CONTAINER = '1';
+    delete process.env.DOCKER_HOST;
+    expect(() => createSandboxRuntime('C:/workspace/project')).toThrow(
+      'sandbox_topology_unavailable',
+    );
+    delete process.env.BOT_BUFFET_IN_CONTAINER;
+    delete process.env.BOT_BUFFET_SANDBOX_IMAGE;
+  });
+
+  it('detects a container with no daemon socket', () => {
+    expect(containerWithoutDocker({ BOT_BUFFET_IN_CONTAINER: '1' }, () => false)).toBe(true);
+    expect(
+      containerWithoutDocker(
+        { BOT_BUFFET_IN_CONTAINER: '1', DOCKER_HOST: 'tcp://docker:2376' },
+        () => false,
+      ),
+    ).toBe(false);
+    expect(containerWithoutDocker({}, () => false)).toBe(false);
   });
 });
 
