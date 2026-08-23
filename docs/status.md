@@ -1,6 +1,80 @@
 # Samuel Abraham — Bot Buffet status ledger
 
-Updated 2026-08-22. This is the source of truth for implementation evidence.
+Updated 2026-08-23. This is the source of truth for implementation evidence.
+
+## 2026-08-23 — container sandbox gate: evidence produced
+
+This gate could not previously be attempted because Docker Desktop on this
+machine would not start: its Inference manager could not remove a stale
+`AppData/Local/Docker/run/dockerInference` socket whose reparse data was
+corrupt, so the engine never came up. Per-file deletion is impossible for those
+entries; the socket directory was rotated aside and the optional Docker AI
+feature that owns that socket was disabled in `settings-store.json` (backed up
+first). Everything below was then verified against a live engine — Docker
+29.5.3, Linux containers.
+
+### What running against a real daemon found
+
+The owner gate says the local child-process boundary is not sufficient
+evidence. That proved literally true:
+
+| Defect                                                                 | Effect                                                                                                                                                                                               |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker run` was never passed `--interactive`                          | Every sandboxed file write saw EOF on stdin, wrote an **empty file**, and exited 0 — silent data loss reported as success. The argument list looks correct either way, so no unit test could see it. |
+| `prettier --check .` and `eslint .` walked the untracked upstream tree | 804 format failures and 17 lint errors that no Bot Buffet change could fix, so `npm run verify` could not pass in this working tree at all                                                           |
+| `COPY src ./src`                                                       | ~3.4 MB of untracked upstream `src/main`, `src/renderer`, `src/preload`, `src/shared` shipped inside the image                                                                                       |
+
+### Application container evidence
+
+Built from the repository Dockerfile and run with `--read-only`, `--tmpfs /tmp`,
+`--cap-drop ALL`, `--security-opt no-new-privileges:true`, `--pids-limit 128`,
+`--memory 512m`, `--cpus 1`, and a named volume at `/data`:
+
+- `/healthz` and `/readyz` answer through the published port; Docker's own
+  healthcheck reports `healthy`.
+- The Office UI is served, the API creates a project, `/metrics` responds, and
+  `GET /api/v1/audit/verify` returns `{"valid":true}`.
+- Security headers present: CSP `script-src 'self'`, `nosniff`, `no-referrer`.
+- Runs as `uid=100(buffet)`, not root; the root filesystem refuses writes and
+  only the `/data` volume accepts them.
+- State survives `docker restart`: project count unchanged, audit chain still
+  verifies.
+
+### Agent sandbox evidence
+
+`BOT_BUFFET_SANDBOX_MODE=docker` exercised against the live engine and covered
+by `tests/sandbox-docker.integration.test.ts`:
+
+- Container runtime selected rather than the local fallback; reads and writes
+  round-trip through the bind mount and are confirmed on the host.
+- Executes as uid 65532; `process.setuid(0)` refused with `EPERM`, so
+  `no-new-privileges` is demonstrably effective.
+- Network unreachable; root filesystem refuses writes with `EROFS`; non-zero
+  exits reported; any network policy other than `blocked` refused.
+- Escape and TOCTOU containment: symlinks planted directly in the workspace —
+  bypassing every harness path check, so the race is assumed already lost —
+  resolve inside the container namespace and never to the host; no host mount
+  root is reachable; and the Docker socket is absent, so a compromised sandbox
+  cannot start a less restricted sibling container.
+
+`BOT_BUFFET_REQUIRE_DOCKER_TESTS=1` in CI turns a missing daemon into a failure,
+so this evidence cannot skip silently.
+
+### Constraint found — still an owner decision
+
+The shipped image contains neither the Docker CLI nor a daemon socket, so
+`BOT_BUFFET_SANDBOX_MODE=docker` **cannot run from inside the container as
+built**, while `assertSandboxConfiguration()` requires docker mode in
+production. A containerized production deployment therefore fails closed at
+startup. That is correct behaviour, but it forces a topology choice, and the
+options with their trade-offs are recorded in `docs/owner-gates.md`. The
+harness should not choose on the owner's behalf.
+
+### Still not claimed
+
+A kernel-level container-escape audit by a security specialist, a microVM
+runner, and staging or production deployment. What is claimed above is what was
+executed and observed on this machine.
 
 ## 2026-08-22 session
 
