@@ -37,6 +37,17 @@ describe('model routing', () => {
       (await router.choose({ contextTokens: 100, privacy: 'private', offline: true })).modelId,
     ).toBe('local');
   });
+
+  it('does not route to a model whose provider admission has been revoked', async () => {
+    const router = new ModelRouter(
+      async () => [model('revoked', true)],
+      async () => true,
+      async () => false,
+    );
+    await expect(
+      router.choose({ contextTokens: 100, privacy: 'private', offline: true }),
+    ).rejects.toThrow('routing:no_eligible_models');
+  });
   it('limits automatic selection to authorized model scopes', async () => {
     const router = new ModelRouter(async () => [
       { ...model('other', true), scope: 'other-project' },

@@ -229,6 +229,7 @@ const device = new DeviceSessionStore();
 const router = new ModelRouter(
   async () => store.list<Model>((x) => x.kind === 'model'),
   async () => true,
+  async (model) => (await store.get<ModelProvider>(model.providerId))?.enabled === true,
 );
 const providers = new Map(
   (await store.list<ModelProvider>((x) => x.kind === 'model-provider')).map((provider) => [

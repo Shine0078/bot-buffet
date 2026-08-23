@@ -26,6 +26,7 @@ export class ModelRouter {
   constructor(
     private readonly models: () => Promise<Model[]>,
     private readonly health: (modelId: ID) => Promise<boolean> = async () => true,
+    private readonly admitted: (model: Model) => Promise<boolean> = async () => true,
   ) {}
 
   async choose(
@@ -33,7 +34,13 @@ export class ModelRouter {
     route?: ModelRoute,
     overrideModelId?: ID,
   ): Promise<RoutingDecision> {
-    const inventory = await this.models();
+    const inventory = (
+      await Promise.all(
+        (await this.models()).map(async (model) =>
+          (await this.admitted(model)) ? model : undefined,
+        ),
+      )
+    ).filter((model): model is Model => Boolean(model));
     const estimateCost = (model: Model) =>
       request.estimatedCostCents ??
       (Math.max(0, request.contextTokens) * model.inputCostPerMillionCents +
