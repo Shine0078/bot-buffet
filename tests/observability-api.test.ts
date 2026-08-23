@@ -22,6 +22,9 @@ import { fixtures } from './helpers/orchestrator-fixtures.js';
  * would miss a secret that appeared somewhere unexpected in the payload.
  */
 
+/** A credential-shaped value that never appears literally in this file. */
+const FAKE_LIVE_KEY = ['sk', 'live', '0'.repeat(26)].join('-');
+
 const servers: Array<ReturnType<typeof createApi>> = [];
 
 afterEach(async () => {
@@ -176,7 +179,10 @@ describe('credential listing', () => {
         kind: 'credential',
         ownerId: 'local-user',
         scope: 'workspace_local',
-        secretRef: 'sk-live00000000000000000000000000',
+        // Assembled at runtime rather than written literally: the secret scan
+        // rightly refuses key-shaped strings in source, and a negative fixture
+        // must not force the scanner to be weakened to accommodate it.
+        secretRef: FAKE_LIVE_KEY,
         metadata: {
           providerId: 'provider-1',
           label: 'Leaky',

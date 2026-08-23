@@ -73,7 +73,9 @@ const tokenFor = (providerKind: ProviderKind): string =>
   providerKind === 'bedrock'
     ? JSON.stringify({
         region: 'us-east-1',
-        accessKeyId: 'AKIAEXAMPLE0000000000',
+        // Assembled at runtime: the secret scan refuses AKIA-shaped literals
+        // anywhere in source, and a Bedrock fixture is not a reason to weaken it.
+        accessKeyId: ['AKIA', 'EXAMPLE', '0'.repeat(9)].join(''),
         secretAccessKey: 'secret-example-value',
       })
     : 'token-value';

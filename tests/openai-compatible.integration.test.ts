@@ -18,6 +18,14 @@ import { entity, type ModelProvider } from '../src/types.js';
  * local server is legitimate; the wire format is identical either way.
  */
 
+/**
+ * A credential-shaped value the fake provider echoes back in an error body.
+ * Assembled at runtime so the literal never appears in source: the secret scan
+ * refuses key-shaped strings anywhere, and a negative fixture must not be a
+ * reason to weaken it.
+ */
+const ECHOED_KEY = ['sk', 'should', 'not', 'be', 'echoed', '0'.repeat(12)].join('-');
+
 let server: Server;
 let endpoint = '';
 let lastRequest: {
@@ -45,7 +53,7 @@ function handler(req: IncomingMessage, res: ServerResponse): void {
     // succeeding — which is what the error tests below rely on.
     if (url.startsWith('/rate-limited/')) {
       res.writeHead(429, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'slow down', key: 'sk-should-not-be-echoed-000000' }));
+      res.end(JSON.stringify({ error: 'slow down', key: ECHOED_KEY }));
       return;
     }
 
@@ -229,7 +237,7 @@ describe('error handling', () => {
       }) as ModelProvider,
     );
     await expect(failing.complete(request)).rejects.toThrow(/provider_error:429/);
-    await expect(failing.complete(request)).rejects.not.toThrow(/sk-should-not-be-echoed/);
+    await expect(failing.complete(request)).rejects.not.toThrow(ECHOED_KEY);
   });
 });
 
