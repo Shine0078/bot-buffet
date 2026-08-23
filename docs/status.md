@@ -70,6 +70,19 @@ startup. That is correct behaviour, but it forces a topology choice, and the
 options with their trade-offs are recorded in `docs/owner-gates.md`. The
 harness should not choose on the owner's behalf.
 
+### CI now carries the same evidence
+
+The published workflow requires the container sandbox suite rather than
+allowing it to skip, and its container job was upgraded from "the image boots"
+to "the image boots hardened": it starts the container read-only, with all
+capabilities dropped, `no-new-privileges`, and resource limits, then asserts
+non-root execution, that a write to `/etc` fails, that a write to `/data`
+succeeds, that `/healthz` and `/metrics` answer, that the audit chain reports
+valid, and that the project count is unchanged across a `docker restart`. Every
+one of those assertions was replayed against a live container before being
+committed, so the job is known to test behaviour rather than only to be valid
+YAML.
+
 ### Still not claimed
 
 A kernel-level container-escape audit by a security specialist, a microVM

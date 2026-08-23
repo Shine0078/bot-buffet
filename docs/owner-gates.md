@@ -20,6 +20,8 @@
 
 - Release owner: configure CI OIDC signing/attestation and artifact registry policy, deploy staging, perform restore and rollback drills, collect `/readyz` and smoke evidence, approve production.
 
+- **CI publication (closed 2026-08-23).** The workflow-scope problem that previously stopped `.github/workflows/ci.yml` reaching GitHub is resolved: the workflow is present on `origin/main` and runs format, lint, types, tests with coverage, dependency audit, secret scan, build, smoke, restore drill, provenance, SBOM, and a container job. `BOT_BUFFET_REQUIRE_DOCKER_TESTS=1` is set on the test step, so the container sandbox evidence is required rather than skipped. The container job now starts the image under the same hardening the sandbox evidence was gathered with and asserts non-root execution, a read-only root filesystem, a writable data volume, a valid audit chain, and durable state across a restart — previously it started the container unhardened and asserted only that `/readyz` answered, which a regression in the security posture would have passed. No owner action remains for CI publication itself; OIDC signing and attestation are still listed above.
+
 Until each owner supplies evidence, the status ledger must say “blocked” for that gate; local implementation work must continue without inventing provider or deployment success.
 
 ## Connector scope verification
