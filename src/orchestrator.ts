@@ -490,14 +490,23 @@ export class Orchestrator extends EventEmitter {
                 (value as Policy).enabled &&
                 ((value as Policy).scope === run.projectId || (value as Policy).scope === '*'),
             );
-            const decisionPolicy = decidePolicy(tool.definition.risk, run.projectId, call.name, [
-              ...storedPolicies,
-              ...agent.profile.approvalPolicy.requiredRisks.map((risk) => ({
-                action: '*',
-                effect: 'approval' as const,
-                risks: [risk],
-              })),
-            ]);
+            const decisionPolicy = decidePolicy(
+              tool.definition.risk,
+              run.projectId,
+              call.name,
+              [
+                ...storedPolicies,
+                ...agent.profile.approvalPolicy.requiredRisks.map((risk) => ({
+                  action: '*',
+                  effect: 'approval' as const,
+                  risks: [risk],
+                })),
+              ],
+              {
+                environmentId: run.environmentId,
+                path: typeof call.arguments.path === 'string' ? call.arguments.path : undefined,
+              },
+            );
             // Policy, mode, and the agent's own approval policy are combined in
             // one place, so no single source can silently override another.
             if (decisionPolicy.decision === 'denied') {

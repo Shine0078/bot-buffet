@@ -11,6 +11,7 @@
 - Pinned plugins can no longer be updated or deleted. Non-stdio MCP servers now require a credential id before invocation, still without inventing a live session.
 - Plugin `dependencies` are enforced: a missing or disabled dependency blocks invocation.
 - Stored `Policy` records now have create/enable API routes and are consulted at tool time. An enabled deny rule fails the run closed.
+- Policy rule `paths` and `environments` now filter matches instead of being stored and ignored.
 - Enabled schedules now fire through a bounded five-field cron matcher and `tickSchedules`. A due assigned task starts a run; the same UTC minute will not start a second one. Stored IANA timezones are honoured, and unknown zones fail closed.
 
 ## 0.2.0 — 2026-08-22

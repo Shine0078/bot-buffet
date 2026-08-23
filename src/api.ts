@@ -2402,6 +2402,10 @@ export function createApi(deps: ApiDeps) {
             effect: rule.effect,
             risks: Array.isArray(rule.risks) ? rule.risks : undefined,
             scopes: Array.isArray(rule.scopes) ? rule.scopes.map(String) : undefined,
+            paths: Array.isArray(rule.paths) ? rule.paths.map(String) : undefined,
+            environments: Array.isArray(rule.environments)
+              ? rule.environments.map(String)
+              : undefined,
           })),
           enabled: false,
         }) as Policy;

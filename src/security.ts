@@ -160,6 +160,7 @@ export function decidePolicy(
   scope: string,
   action: string,
   rules: (Policy | PolicyRule)[],
+  context: { path?: string; environmentId?: string } = {},
 ): Decision {
   const flat = rules.flatMap((item) => ('rules' in item ? item.rules : [item]));
   const matches = flat
@@ -170,6 +171,22 @@ export function decidePolicy(
     .filter(
       (rule) => !rule.scopes?.length || rule.scopes.includes(scope) || rule.scopes.includes('*'),
     )
+    .filter(
+      (rule) =>
+        !rule.environments?.length ||
+        (context.environmentId !== undefined && rule.environments.includes(context.environmentId)),
+    )
+    .filter((rule) => {
+      if (!rule.paths?.length) return true;
+      const path = context.path;
+      if (!path) return false;
+      return rule.paths.some(
+        (allowed) =>
+          path === allowed ||
+          path.startsWith(`${allowed.replace(/\\/g, '/')}/`) ||
+          path.startsWith(`${allowed}/`),
+      );
+    })
     // A rule's risks are a threshold: it applies when the action is at least that risky.
     // Comparing the other way made a "require approval for high risk" rule match safe actions.
     .filter((rule) => !rule.risks?.length || rule.risks.some((r) => rank[risk] >= rank[r]));

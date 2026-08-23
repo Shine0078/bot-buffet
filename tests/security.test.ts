@@ -61,6 +61,22 @@ describe('security boundaries', () => {
     expect(decidePolicy('high', 'p2', 'deploy', scoped).decision).toBe('denied');
   });
 
+  it('applies path and environment filters instead of ignoring them', () => {
+    const pathRule = [{ action: 'filesystem.write', effect: 'deny' as const, paths: ['secrets'] }];
+    expect(
+      decidePolicy('low', 'p1', 'filesystem.write', pathRule, { path: 'note.txt' }).decision,
+    ).toBe('allowed');
+    expect(
+      decidePolicy('low', 'p1', 'filesystem.write', pathRule, { path: 'secrets/key' }).decision,
+    ).toBe('denied');
+    const envRule = [{ action: '*', effect: 'deny' as const, environments: ['prod'] }];
+    expect(decidePolicy('high', 'p1', 'deploy', envRule, { environmentId: 'dev' }).decision).toBe(
+      'allowed',
+    );
+    expect(decidePolicy('high', 'p1', 'deploy', envRule, { environmentId: 'prod' }).decision).toBe(
+      'denied',
+    );
+  });
   it('preserves aggregate usage totals in cost reports', () => {
     expect(
       redactSecrets({
