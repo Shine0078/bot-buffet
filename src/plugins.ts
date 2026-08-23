@@ -41,6 +41,15 @@ export function invokePlugin(
   if (!plugin.permissions.length) {
     throw new Error(`plugin_permissions_empty:${input.pluginId}`);
   }
+  for (const dependencyId of plugin.dependencies) {
+    const dependency = plugins.find((candidate) => candidate.id === dependencyId);
+    if (!dependency || dependency.kind !== 'plugin') {
+      throw new Error(`plugin_dependency_missing:${dependencyId}`);
+    }
+    if (!dependency.enabled || !dependency.workspaceEnabled) {
+      throw new Error(`plugin_dependency_disabled:${dependencyId}`);
+    }
+  }
   if (plugin.network === 'open') {
     throw new Error(`plugin_network_open_forbidden:${input.pluginId}`);
   }

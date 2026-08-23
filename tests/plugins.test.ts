@@ -155,6 +155,27 @@ describe('plugin invocation authority', () => {
       }),
     ).toThrow(/plugin_permissions_empty/);
   });
+
+  it('refuses a plugin whose dependency is missing or disabled', () => {
+    const needed = plugin({
+      enabled: false,
+      workspaceEnabled: false,
+      permissions: ['github:repo'],
+    });
+    const dependent = plugin({ dependencies: [needed.id] });
+    expect(() =>
+      invokePlugin(agent([dependent.id]), [dependent, needed], {
+        pluginId: dependent.id,
+        tool: 'github.list_repositories',
+      }),
+    ).toThrow(/plugin_dependency_disabled/);
+    expect(() =>
+      invokePlugin(agent([dependent.id]), [dependent], {
+        pluginId: dependent.id,
+        tool: 'github.list_repositories',
+      }),
+    ).toThrow(/plugin_dependency_missing/);
+  });
 });
 
 describe('plugin.invoke builtin', () => {

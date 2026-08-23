@@ -9,6 +9,7 @@
 - Plugin `network: open` is refused at invocation, and `allowlist` requires connector hosts. Blocked plugins still cannot pretend they have live network access.
 - A plugin with an empty `permissions` list can no longer be invoked; absence of permissions is denial, not a wildcard.
 - Pinned plugins can no longer be updated or deleted. Non-stdio MCP servers now require a credential id before invocation, still without inventing a live session.
+- Plugin `dependencies` are enforced: a missing or disabled dependency blocks invocation.
 - Enabled schedules now fire through a bounded five-field cron matcher and `tickSchedules`. A due assigned task starts a run; the same UTC minute will not start a second one. Stored IANA timezones are honoured, and unknown zones fail closed.
 
 ## 0.2.0 — 2026-08-22
