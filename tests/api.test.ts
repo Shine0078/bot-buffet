@@ -1446,6 +1446,30 @@ describe('API boundary controls', () => {
     const callback = `http://127.0.0.1:${address.port}/api/v1/providers/${provider.id}/oauth/callback?error=access_denied&state=${encodeURIComponent(authorization.searchParams.get('state')!)}`;
     expect((await fetch(callback)).status).toBe(400);
     expect((await fetch(callback)).status).toBe(400);
+
+    const disabledProvider = await store.put({
+      ...provider,
+      enabled: false,
+      version: provider.version,
+    } as ModelProvider);
+    const disabledStart = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/providers/${disabledProvider.id}/oauth/start`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+    );
+    expect(disabledStart.status).toBe(400);
+    await expect(disabledStart.json()).resolves.toMatchObject({
+      code: 'request_failed',
+      message: 'provider_disabled',
+    });
+    const disabledTest = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/providers/${disabledProvider.id}/test`,
+      { method: 'POST' },
+    );
+    expect(disabledTest.status).toBe(400);
+    await expect(disabledTest.json()).resolves.toMatchObject({
+      code: 'request_failed',
+      message: 'provider_disabled',
+    });
   });
   it('runs scoped deterministic evaluations and persists evidence without outputs', async () => {
     const base = await start();

@@ -189,6 +189,10 @@ export function createApi(deps: ApiDeps) {
       throw new Error('forbidden_or_not_found');
     return (await authorization.require(actorId, value, action)) as T;
   };
+  const activeProvider = (provider: ModelProvider): ModelProvider => {
+    if (!provider.enabled) throw new Error('provider_disabled');
+    return provider;
+  };
   const subscribers = new Set<{
     res: ServerResponse;
     projectId?: string;
@@ -349,6 +353,7 @@ export function createApi(deps: ApiDeps) {
         const sessionActor = await deps.store.get<User>(session.actorId);
         if (sessionActor?.kind === 'user' && sessionActor.disabled)
           throw new Error('user_disabled');
+        activeProvider(provider);
         if (failure) throw new Error(`oauth_provider_denied:${failure.slice(0, 64)}`);
         if (!code || code.length > 4096) throw new Error('oauth_callback_invalid');
         const tokenEndpoint = new URL(provider.oauth.tokenEndpoint);
@@ -1644,11 +1649,13 @@ export function createApi(deps: ApiDeps) {
       const oauthStart = path.match(/^\/api\/v1\/providers\/([^/]+)\/oauth\/start$/);
       if (oauthStart && req.method === 'POST') {
         if (!deps.oauth) throw new Error('oauth_not_configured');
-        const provider = await required(
-          actorId,
-          await deps.store.get<ModelProvider>(oauthStart[1]!),
-          'write',
-          'model-provider',
+        const provider = activeProvider(
+          await required(
+            actorId,
+            await deps.store.get<ModelProvider>(oauthStart[1]!),
+            'write',
+            'model-provider',
+          ),
         );
         if (!provider.oauth) throw new Error('oauth_not_configured');
         const body = await parseBody(req);
@@ -1669,11 +1676,13 @@ export function createApi(deps: ApiDeps) {
       const deviceStart = path.match(/^\/api\/v1\/providers\/([^/]+)\/device\/start$/);
       if (deviceStart && req.method === 'POST') {
         if (!deps.device) throw new Error('device_authorization_not_configured');
-        const provider = await required(
-          actorId,
-          await deps.store.get<ModelProvider>(deviceStart[1]!),
-          'write',
-          'model-provider',
+        const provider = activeProvider(
+          await required(
+            actorId,
+            await deps.store.get<ModelProvider>(deviceStart[1]!),
+            'write',
+            'model-provider',
+          ),
         );
         const deviceEndpoint = provider.oauth?.deviceAuthorizationEndpoint;
         if (!provider.oauth || !deviceEndpoint)
@@ -1727,11 +1736,13 @@ export function createApi(deps: ApiDeps) {
       const devicePoll = path.match(/^\/api\/v1\/providers\/([^/]+)\/device\/poll$/);
       if (devicePoll && req.method === 'POST') {
         if (!deps.device) throw new Error('device_authorization_not_configured');
-        const provider = await required(
-          actorId,
-          await deps.store.get<ModelProvider>(devicePoll[1]!),
-          'write',
-          'model-provider',
+        const provider = activeProvider(
+          await required(
+            actorId,
+            await deps.store.get<ModelProvider>(devicePoll[1]!),
+            'write',
+            'model-provider',
+          ),
         );
         if (!provider.oauth) throw new Error('device_authorization_not_configured');
         const body = await parseBody(req);
@@ -1831,11 +1842,13 @@ export function createApi(deps: ApiDeps) {
       }
       const providerTest = path.match(/^\/api\/v1\/providers\/([^/]+)\/test$/);
       if (providerTest && req.method === 'POST') {
-        const provider = await required(
-          actorId,
-          await deps.store.get<ModelProvider>(providerTest[1]!),
-          'write',
-          'model-provider',
+        const provider = activeProvider(
+          await required(
+            actorId,
+            await deps.store.get<ModelProvider>(providerTest[1]!),
+            'write',
+            'model-provider',
+          ),
         );
         const health = await adapterFor(
           provider,

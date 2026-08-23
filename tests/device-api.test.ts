@@ -124,9 +124,27 @@ describe('device authorization API', () => {
     };
     expect(connectedPayload.credential.metadata.authType).toBe('device');
     const savedProvider = await store.get<ModelProvider>(provider.id);
-    const credential = await store.get<Credential>(savedProvider?.credentialId ?? '');
+    if (!savedProvider) throw new Error('provider_missing_after_device_auth');
+    const credential = await store.get<Credential>(savedProvider.credentialId ?? '');
     expect(credential?.metadata.authType).toBe('device');
     expect(JSON.stringify(credential)).not.toContain('device-access-token');
+
+    await store.put({
+      ...savedProvider,
+      enabled: false,
+      version: savedProvider.version,
+    } as ModelProvider);
+    fetchPinned.mockReset();
+    const disabledStart = await fetch(
+      `http://127.0.0.1:${address.port}/api/v1/providers/${provider.id}/device/start`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+    );
+    expect(disabledStart.status).toBe(400);
+    await expect(disabledStart.json()).resolves.toMatchObject({
+      code: 'request_failed',
+      message: 'provider_disabled',
+    });
+    expect(fetchPinned).not.toHaveBeenCalled();
   });
 
   it('returns a bounded slowdown response without exposing the provider error body', async () => {
