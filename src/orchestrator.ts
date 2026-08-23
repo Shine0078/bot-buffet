@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { JsonStateStore } from './store.js';
 import { dependencyError, evaluateDependencies } from './dependencies.js';
+import { derivePresence } from './presence.js';
 import {
   Agent,
   Alert,
@@ -92,6 +93,9 @@ export class Orchestrator extends EventEmitter {
       latencyMs: 0,
     }) as Run;
     await this.deps.store.insert(run);
+    // A queued run already claims the agent: the desk is spoken for before the
+    // first step executes, and an operator looking at it should see that.
+    await this.syncAgentPresence(run.agentId);
     await this.emitAudit(run, 'run.created', 'safe', 'executed', { taskId: input.task.id });
     return run;
   }
@@ -771,6 +775,48 @@ export class Orchestrator extends EventEmitter {
       version: latest.version,
     } as Run);
     this.emit('run', { type: `run.${saved.status}`, run: saved });
+    await this.syncAgentPresence(saved.agentId);
+  }
+
+  /**
+   * Keep the agent record in step with what its runs are doing.
+   *
+   * Agent.status, currentRunId, and currentTaskId were declared and never
+   * written, so an agent read as idle mid-run, while waiting on an approval
+   * nobody knew to give, and after failing. Presence is derived rather than
+   * assigned, and it hangs off updateRun so there is exactly one place a run
+   * state change can reach the agent -- assignment scattered across the
+   * lifecycle would only stay correct until the next transition was added.
+   *
+   * A failure to record presence must not fail the run. Presence is reporting;
+   * losing it costs visibility, while throwing here would turn a cosmetic
+   * problem into a lost run.
+   */
+  private async syncAgentPresence(agentId: string): Promise<void> {
+    try {
+      const agent = await this.deps.store.get<Agent>(agentId);
+      if (!agent) return;
+      const runs = await this.deps.store.list<Run>(
+        (item) => item.kind === 'run' && (item as Run).agentId === agentId,
+      );
+      const presence = derivePresence(runs);
+      if (
+        agent.status === presence.status &&
+        agent.currentRunId === presence.currentRunId &&
+        agent.currentTaskId === presence.currentTaskId
+      )
+        return;
+      await this.deps.store.put<Agent>({
+        ...agent,
+        status: presence.status,
+        currentRunId: presence.currentRunId,
+        currentTaskId: presence.currentTaskId,
+        updatedAt: now(),
+      });
+      this.emit('run', { type: 'agent.presence', agentId, presence });
+    } catch {
+      // Deliberately swallowed: see above.
+    }
   }
   private async requestApproval(
     run: Run,
@@ -824,33 +870,24 @@ export class Orchestrator extends EventEmitter {
   async command(command: RunCommand): Promise<Run | undefined> {
     const run = await this.deps.store.get<Run>(command.runId);
     if (!run) return undefined;
-    if (command.type === 'pause')
-      return this.deps.store.put({
-        ...run,
-        status: 'paused',
-        pausedAt: now(),
-        version: run.version,
-      } as Run);
+    if (command.type === 'pause') {
+      await this.updateRun(run, { status: 'paused', pausedAt: now() });
+      return this.deps.store.get<Run>(run.id);
+    }
     if (command.type === 'resume') {
-      await this.deps.store.put({
-        ...run,
-        status: 'queued',
-        pausedAt: undefined,
-        version: run.version,
-      } as Run);
+      await this.updateRun(run, { status: 'queued', pausedAt: undefined });
       void this.start(run.id);
       return this.deps.store.get<Run>(run.id);
     }
     if (command.type === 'cancel' || command.type === 'stop') {
       const controller = this.controllers.get(run.id);
       controller?.abort();
-      return this.deps.store.put({
-        ...run,
+      await this.updateRun(run, {
         cancelRequested: true,
         status: 'cancelled',
         finishedAt: now(),
-        version: run.version,
-      } as Run);
+      });
+      return this.deps.store.get<Run>(run.id);
     }
     if (command.type === 'fork') {
       const checkpoint = command.checkpointId
@@ -875,6 +912,7 @@ export class Orchestrator extends EventEmitter {
       };
       await this.deps.store.insert(fork);
       if (checkpoint) await this.deps.store.setRunState(fork.id, checkpoint.state);
+      await this.syncAgentPresence(fork.agentId);
       return fork;
     }
     if (command.type === 'rollback') {
@@ -885,13 +923,11 @@ export class Orchestrator extends EventEmitter {
           throw new Error('checkpoint_scope_mismatch');
       }
       if (checkpoint) await this.deps.store.setRunState(run.id, checkpoint.state);
-      return this.deps.store.put({
-        ...run,
+      await this.updateRun(run, {
         status: 'rolled_back',
         checkpointId: command.checkpointId,
-        updatedAt: now(),
-        version: run.version,
-      } as Run);
+      });
+      return this.deps.store.get<Run>(run.id);
     }
     return run;
   }
