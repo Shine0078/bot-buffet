@@ -561,7 +561,8 @@ export function createApi(deps: ApiDeps) {
           }) as ModelProvider;
           await deps.store.insert(provider);
           deps.registerProvider?.(provider);
-        } else await required(actorId, provider, 'write', 'model-provider');
+        } else
+          provider = activeProvider(await required(actorId, provider, 'write', 'model-provider'));
         const existing = (
           await deps.store.list<Model>(
             (x) => x.kind === 'model' && x.providerId === provider!.id && x.modelName === modelName,
@@ -660,7 +661,8 @@ export function createApi(deps: ApiDeps) {
             }) as ModelProvider;
             await deps.store.insert(provider);
             deps.registerProvider?.(provider);
-          } else await required(actorId, provider, 'write', 'model-provider');
+          } else
+            provider = activeProvider(await required(actorId, provider, 'write', 'model-provider'));
 
           const existing = (
             await deps.store.list<Model>(
@@ -1901,11 +1903,13 @@ export function createApi(deps: ApiDeps) {
         );
       if (path === '/api/v1/models' && req.method === 'POST') {
         const body = await parseBody(req);
-        const provider = await required(
-          actorId,
-          await deps.store.get<ModelProvider>(String(body.providerId)),
-          'write',
-          'model-provider',
+        const provider = activeProvider(
+          await required(
+            actorId,
+            await deps.store.get<ModelProvider>(String(body.providerId)),
+            'write',
+            'model-provider',
+          ),
         );
         const inputCostPerMillionCents = Number(body.inputCostPerMillionCents ?? 0);
         const outputCostPerMillionCents = Number(body.outputCostPerMillionCents ?? 0);

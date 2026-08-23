@@ -3,10 +3,10 @@
 ## Unreleased
 
 - **Provider lifecycle hardening:** provider deletion's durable `enabled:false`
-  state is now enforced by provider test, OAuth start/callback, and device
-  authorization start/poll routes. Disabled providers fail closed before any
-  adapter health check or outbound token exchange, with API and egress-call
-  regression coverage.
+  state is now enforced by provider test, model provisioning, OAuth
+  start/callback, and device authorization start/poll routes. Disabled
+  providers fail closed before any adapter health check, model registration,
+  or outbound token exchange, with API and egress-call regression coverage.
 
 - `outputFormat: markdown` is now a real runtime format: the system prompt instructs Markdown, providers still receive `text` unless JSON is requested, and verification fails unstructured Markdown.
 - Opening the Office UI as `file://` now shows a blocking banner and disables buttons instead of looking like a live, unresponsive office.

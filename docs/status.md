@@ -35,19 +35,20 @@ means verified on this machine; it does not mean verified in production.
 ## 2026-08-23 — disabled-provider lifecycle enforcement
 
 Provider deletion already revokes its vault secret and persists `enabled:false`.
-The API now applies the same admission check to provider test, OAuth start and
-callback, and device authorization start and poll. A disabled provider fails
-closed with `provider_disabled` before an adapter health request, outbound
-authorization request, or token exchange. Regression coverage proves the
-provider-test, OAuth-start, and device-start paths do not call the egress
-transport after disablement. This is local lifecycle evidence; live provider
-accounts remain an owner gate.
+The API now applies the same admission check to provider test, model
+provisioning, OAuth start and callback, and device authorization start and poll.
+A disabled provider fails closed with `provider_disabled` before an adapter
+health request, model registration, outbound authorization request, or token
+exchange. Regression coverage proves the provider-test, model-create,
+OAuth-start, and device-start paths do not call the egress transport after
+disablement. This is local lifecycle evidence; live provider accounts remain
+an owner gate.
 
-The final Codex Security diff scan `a523cd36-7659-4f78-934b-7ae1da548c51`
-reviewed the changed API and regression surfaces with complete coverage and
-reported zero reportable findings. The security TAC advisory connector was
-unavailable in this desktop session; that limitation does not alter the local
-diff result.
+The final provider lifecycle Codex Security diff scan
+`03e078d1-cabf-430b-9857-661f2acea718` reviewed the changed API and regression
+surfaces with complete coverage and reported zero reportable findings. The
+security TAC advisory connector was unavailable in this desktop session; that
+limitation does not alter the local diff result.
 
 ### What "not complete" means here
 

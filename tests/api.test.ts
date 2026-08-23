@@ -1470,6 +1470,16 @@ describe('API boundary controls', () => {
       code: 'request_failed',
       message: 'provider_disabled',
     });
+    const disabledModel = await fetch(`http://127.0.0.1:${address.port}/api/v1/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: disabledProvider.id, modelName: 'blocked-model' }),
+    });
+    expect(disabledModel.status).toBe(400);
+    await expect(disabledModel.json()).resolves.toMatchObject({
+      code: 'request_failed',
+      message: 'provider_disabled',
+    });
   });
   it('runs scoped deterministic evaluations and persists evidence without outputs', async () => {
     const base = await start();
