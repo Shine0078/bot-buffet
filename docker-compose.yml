@@ -2,13 +2,43 @@ services:
   bot-buffet:
     build: .
     ports: ['8787:8787']
-    env_file: [.env]
+    # Optional on purpose. `.env` is gitignored and absent on a fresh clone, and
+    # a required env_file made `docker compose up` and even `docker compose
+    # config` fail outright for every new user — the documented deployment path
+    # did not work at all. Settings can also come from the shell environment or
+    # `docker compose --env-file <path>`.
+    env_file:
+      - path: .env
+        required: false
     environment:
       BOT_BUFFET_DATA_DIR: /data
+      # Loopback inside a container makes the published port unreachable, so the
+      # container binds all interfaces; the operator chooses the host port above.
+      BOT_BUFFET_HOST: 0.0.0.0
     volumes: ['bot-buffet-data:/data']
     read_only: true
     tmpfs: [/tmp]
     security_opt: ['no-new-privileges:true']
     cap_drop: ['ALL']
+    # Match the posture the sandbox evidence was gathered under, so compose and
+    # the verified `docker run` invocation do not drift apart.
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1
+    restart: unless-stopped
+    # The image declares a HEALTHCHECK; making it explicit here means
+    # `docker compose ps` reports health and dependent services could wait on it.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 volumes:
   bot-buffet-data:
