@@ -176,6 +176,16 @@ describe('plugin invocation authority', () => {
       }),
     ).toThrow(/plugin_dependency_missing/);
   });
+
+  it('refuses a plugin that declares no retention', () => {
+    const unmarked = plugin({ retention: '   ' });
+    expect(() =>
+      invokePlugin(agent([unmarked.id]), [unmarked], {
+        pluginId: unmarked.id,
+        tool: 'github.list_repositories',
+      }),
+    ).toThrow(/plugin_retention_required/);
+  });
 });
 
 describe('plugin.invoke builtin', () => {

@@ -62,6 +62,9 @@ export function invokePlugin(
   if (plugin.network === 'allowlist' && (!connector || connector.allowedHosts.length === 0)) {
     throw new Error(`plugin_allowlist_empty:${input.pluginId}`);
   }
+  if (!plugin.retention.trim()) {
+    throw new Error(`plugin_retention_required:${input.pluginId}`);
+  }
   return {
     pluginId: plugin.id,
     pluginName: plugin.name,
