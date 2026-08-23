@@ -19,7 +19,7 @@ export interface PluginInvocationResult {
 const CONNECTOR_SOURCE = /^connector:([a-z0-9-]+)$/;
 
 export function invokePlugin(
-  agent: Pick<Agent, 'id' | 'profile'>,
+  agent: Pick<Agent, 'id' | 'projectId' | 'profile'>,
   plugins: readonly Plugin[],
   input: PluginInvocationInput,
 ): PluginInvocationResult {
@@ -31,6 +31,9 @@ export function invokePlugin(
   if (plugin.kind !== 'plugin') throw new Error(`plugin_not_found:${input.pluginId}`);
   if (!plugin.enabled || !plugin.workspaceEnabled) {
     throw new Error(`plugin_disabled:${input.pluginId}`);
+  }
+  if (plugin.projectIds.length > 0 && !plugin.projectIds.includes(agent.projectId)) {
+    throw new Error(`plugin_project_denied:${input.pluginId}`);
   }
   if (plugin.agentIds.length > 0 && !plugin.agentIds.includes(agent.id)) {
     throw new Error(`plugin_not_bound:${input.pluginId}`);

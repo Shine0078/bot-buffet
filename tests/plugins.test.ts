@@ -115,6 +115,16 @@ describe('plugin invocation authority', () => {
     expect(result.connectorId).toBe('github');
     expect(result.reason).toMatch(/no live credential/i);
   });
+
+  it('refuses a plugin bound to a different project', () => {
+    const other = plugin({ projectIds: ['other-project'] });
+    expect(() =>
+      invokePlugin(agent([other.id]), [other], {
+        pluginId: other.id,
+        tool: 'github.list_repositories',
+      }),
+    ).toThrow(/plugin_project_denied/);
+  });
 });
 
 describe('plugin.invoke builtin', () => {

@@ -5,6 +5,7 @@ import {
   MemoryItem,
   MemoryPolicy,
   Plugin,
+  MCPServer,
   ProjectFile,
   ToolDefinition,
   Agent,
@@ -12,6 +13,7 @@ import {
   JsonSchema,
 } from './types.js';
 import { invokePlugin } from './plugins.js';
+import { invokeMcpServer } from './mcp.js';
 import { canWriteMemory } from './memoryScope.js';
 import { conflictError, detectConflict, detectCreateConflict, hashContent } from './conflicts.js';
 import { createSandboxRuntime, SandboxRuntime } from './sandbox.js';
@@ -42,8 +44,9 @@ export interface ToolContext {
   environmentKeys?: string[];
   /** Plugin invocation is fail-closed unless the orchestrator supplies the agent
    *  and the currently installed plugin records. */
-  agent?: Pick<Agent, 'id' | 'profile'>;
+  agent?: Pick<Agent, 'id' | 'projectId' | 'profile'>;
   plugins?: readonly Plugin[];
+  mcpServers?: readonly MCPServer[];
   signal?: AbortSignal;
 }
 export interface RegisteredTool {
@@ -482,6 +485,41 @@ export function createBuiltinTools(
         context.signal,
       );
       return { path, size: info.size, isFile: info.isFile };
+    },
+  });
+  registry.register({
+    definition: toolBase(
+      'mcp.invoke',
+      'Invoke a registered MCP server tool after enablement, integrity, and export checks.',
+      'medium',
+      {
+        type: 'object',
+        properties: {
+          serverId: { type: 'string' },
+          tool: { type: 'string' },
+          arguments: { type: 'object' },
+        },
+        required: ['serverId', 'tool'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: {
+          serverId: { type: 'string' },
+          serverName: { type: 'string' },
+          tool: { type: 'string' },
+          status: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['serverId', 'serverName', 'tool', 'status', 'reason'],
+        additionalProperties: false,
+      },
+    ),
+    execute: async (input, context) => {
+      return invokeMcpServer(
+        context.mcpServers ?? [],
+        input as { serverId: string; tool: string; arguments?: Record<string, unknown> },
+      );
     },
   });
   registry.register({

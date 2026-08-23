@@ -9,6 +9,6 @@ The Office UI is not a standalone HTML file. It has to be served by the Bot Buff
 1. From `C:\\Users\\samue\\Documents\\GitHub\\Bot Buffet`, run `npm run dev`.
 2. Open http://127.0.0.1:8787.
 
-Do **not** open `ui/index.html` from Explorer or as `file://`. That path has no origin, so `/api/v1/bootstrap` never runs and every button looks dead. The Downloads copy of Munder Difflin is not this product.
+Do **not** open `ui/index.html` from Explorer or as `file://`. That path has no origin, so `/api/v1/bootstrap` never runs and every button looks dead. A leftover Downloads tree is not this product.
 
 A `file://` open now shows a blocking banner and disables the controls instead of failing silently.

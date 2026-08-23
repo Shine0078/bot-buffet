@@ -536,6 +536,7 @@ export class Orchestrator extends EventEmitter {
               ...context,
               agent,
               plugins: await this.deps.store.list((x) => x.kind === 'plugin'),
+              mcpServers: await this.deps.store.list((x) => x.kind === 'mcp-server'),
             });
             // Tool output is external data. Label it untrusted before it can re-enter model
             // context, and record any instruction-shaped payload it carries.
