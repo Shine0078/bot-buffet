@@ -137,6 +137,16 @@ by `tests/sandbox-docker.integration.test.ts`:
 `BOT_BUFFET_REQUIRE_DOCKER_TESTS=1` in CI turns a missing daemon into a failure,
 so this evidence cannot skip silently.
 
+### Live-engine recheck (2026-08-23)
+
+The required Docker integration suite was rerun on this workstation against
+Docker Desktop server 29.5.3 with `BOT_BUFFET_REQUIRE_DOCKER_TESTS=1`.
+All 16 tests passed in 20.59 seconds, including real container reads/writes,
+non-root execution, blocked networking, read-only filesystem boundaries,
+non-zero exit propagation, symlink/TOCTOU containment, and Docker-socket
+absence. This refreshes the local daemon evidence; it does not replace the
+external specialist kernel-escape audit or a production topology decision.
+
 ### Constraint found — still an owner decision
 
 The shipped image contains neither the Docker CLI nor a daemon socket, so
