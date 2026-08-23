@@ -9,6 +9,7 @@ import { createStore } from './store.js';
 import { createBuiltinTools } from './tools.js';
 import { CredentialVault } from './secrets.js';
 import { assertSandboxConfiguration } from './sandbox.js';
+import { withStartupDiagnostics } from './startup.js';
 import { DeviceSessionStore, PkceSessionStore } from './oauth.js';
 import { resolveWorkspaceDir } from './paths.js';
 import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
@@ -16,10 +17,14 @@ import { Model, ModelProvider, Organization, Project, Workspace, entity } from '
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = process.env.BOT_BUFFET_DATA_DIR ?? join(root, '.data');
 const workspaceDir = resolveWorkspaceDir(dataDir, process.env.BOT_BUFFET_WORKSPACE_DIR);
-assertSandboxConfiguration();
+// Configuration failures exit with an actionable message rather than a raw
+// stack trace: this is what a failed deployment shows the operator.
+withStartupDiagnostics(() => assertSandboxConfiguration());
 const store = createStore(dataDir);
 await store.load();
-const vault = new CredentialVault(join(dataDir, 'credentials.enc.json'));
+const vault = withStartupDiagnostics(
+  () => new CredentialVault(join(dataDir, 'credentials.enc.json')),
+);
 await vault.load();
 await mkdir(workspaceDir, { recursive: true });
 
