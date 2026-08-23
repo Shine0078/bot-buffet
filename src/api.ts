@@ -46,6 +46,8 @@ import {
 } from './types.js';
 import { Orchestrator } from './orchestrator.js';
 import { BOT_BUFFET_VERSION } from './version.js';
+import { parseCron } from './schedules.js';
+import { tickSchedules } from './scheduler.js';
 import {
   adapterFor,
   defaultCapabilities,
@@ -2662,6 +2664,9 @@ export function createApi(deps: ApiDeps) {
         } as MCPServer);
         return send(res, 200, saved);
       }
+      if (path === '/api/v1/schedules/tick' && req.method === 'POST') {
+        return send(res, 200, await tickSchedules(deps.store, deps.orchestrator));
+      }
       if (path === '/api/v1/schedules' && req.method === 'GET')
         return send(
           res,
@@ -2685,6 +2690,7 @@ export function createApi(deps: ApiDeps) {
         if (task.projectId !== project.id) throw new Error('schedule_project_mismatch');
         const cron = String(body.cron ?? '');
         if (cron.length > 128 || !cron.trim()) throw new Error('schedule_cron_invalid');
+        parseCron(cron);
         const schedule = entity({
           kind: 'schedule',
           ownerId: actorId,

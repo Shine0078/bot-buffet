@@ -17,6 +17,7 @@ import { assertSandboxConfiguration } from './sandbox.js';
 import { withStartupDiagnostics } from './startup.js';
 import { DeviceSessionStore, PkceSessionStore } from './oauth.js';
 import { resolveWorkspaceDir } from './paths.js';
+import { tickSchedules } from './scheduler.js';
 import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
@@ -244,4 +245,13 @@ server.listen(port, host, () =>
   console.log(`Samuel Abraham — Bot Buffet listening on http://${host}:${port}`),
 );
 
+const scheduleMs = Number(process.env.BOT_BUFFET_SCHEDULE_TICK_MS ?? 60_000);
+if (Number.isFinite(scheduleMs) && scheduleMs > 0) {
+  setInterval(
+    () => {
+      void tickSchedules(store, orchestrator).catch(() => undefined);
+    },
+    Math.max(15_000, scheduleMs),
+  );
+}
 export { store, orchestrator, server };
