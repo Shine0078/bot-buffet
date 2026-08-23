@@ -19,6 +19,8 @@ export interface VerificationInput {
   task: Task;
   /** Durable run state, which is where tool results and markers accumulate. */
   state: Record<string, unknown>;
+  /** True when policy.reviewerAgentId names an agent that actually exists. */
+  reviewerExists?: boolean;
 }
 
 export interface CheckResult {
@@ -112,6 +114,7 @@ export interface VerificationOutcome {
   /** Checks the policy named that do not exist. */
   unknownChecks: string[];
   missingReviewer: boolean;
+  unknownReviewer: boolean;
 }
 
 /**
@@ -141,8 +144,12 @@ export function verifyDeterministic(
   // An unknown check fails the run. Ignoring it would let a typo in a policy
   // silently reduce what gets verified while the run still reports success.
   const missingReviewer = policy.inferential.length > 0 && !policy.reviewerAgentId;
+  const unknownReviewer = Boolean(policy.reviewerAgentId) && input.reviewerExists === false;
   const passed =
-    unknownChecks.length === 0 && results.every((result) => result.passed) && !missingReviewer;
+    unknownChecks.length === 0 &&
+    results.every((result) => result.passed) &&
+    !missingReviewer &&
+    !unknownReviewer;
 
   return {
     passed,
@@ -150,5 +157,6 @@ export function verifyDeterministic(
     results,
     unknownChecks,
     missingReviewer,
+    unknownReviewer,
   };
 }

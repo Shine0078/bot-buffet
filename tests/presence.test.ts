@@ -243,4 +243,18 @@ describe('the orchestrator keeps the agent record in step', () => {
     expect((await store.get<Run>(created.id))?.status).toBe('completed');
     store.put = realPut;
   });
+
+  it('does not complete when inferential review names a missing agent', async () => {
+    const { store, orchestrator, project, agent, task } = await setup({ verifiable: true });
+    agent.profile.verificationPolicy = {
+      deterministic: [],
+      inferential: ['llm-judge'],
+      requireEvidence: false,
+      reviewerAgentId: 'missing-reviewer',
+    };
+    await store.put(agent);
+    const created = await orchestrator.createRun({ ownerId: 'u', project, agent, task });
+    await orchestrator.start(created.id);
+    expect((await store.get<Run>(created.id))?.status).not.toBe('completed');
+  });
 });

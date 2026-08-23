@@ -229,4 +229,13 @@ describe('inferential policy', () => {
     expect(result.missingReviewer).toBe(false);
     expect(result.passed).toBe(true);
   });
+
+  it('fails closed when the named reviewer does not exist', () => {
+    const result = verifyDeterministic(
+      policy({ inferential: ['llm-judge'], reviewerAgentId: 'missing-reviewer' }),
+      { task: task([]), state: { 'tool:fs.read': 'ok' }, reviewerExists: false },
+    );
+    expect(result.passed).toBe(false);
+    expect(result.unknownReviewer).toBe(true);
+  });
 });

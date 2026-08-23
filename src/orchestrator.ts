@@ -555,9 +555,14 @@ export class Orchestrator extends EventEmitter {
             this.emit('run', { type: 'tool.executed', runId, tool: call.name });
           }
         }
+        const reviewerId = agent.profile.verificationPolicy.reviewerAgentId;
+        const reviewerExists = reviewerId
+          ? Boolean(await this.deps.store.get<Agent>(reviewerId))
+          : undefined;
         const verification = verifyDeterministic(agent.profile.verificationPolicy, {
           task,
           state: nextState,
+          reviewerExists,
         });
         const verifyStep = entity({
           kind: 'run-step',
