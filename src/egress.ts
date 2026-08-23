@@ -108,9 +108,10 @@ export async function streamPinned(
   input: string | URL,
   init: RequestInit = {},
   allowLocal = false,
+  lookupFn?: DnsLookup,
 ): Promise<PinnedStreamResponse> {
   const target = new URL(input);
-  const { address } = await resolveSafeEndpoint(target.toString(), allowLocal);
+  const { address } = await resolveSafeEndpoint(target.toString(), allowLocal, lookupFn);
   const headers = new Headers(init.headers);
   const body =
     typeof init.body === 'string'
