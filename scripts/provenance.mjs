@@ -47,4 +47,12 @@ const provenance = {
   note: 'Unsigned local build manifest; use CI/OIDC attestation before production promotion.',
 };
 await writeFile(resolve('provenance.json'), JSON.stringify(provenance, null, 2), { mode: 0o600 });
+
+// Also emit the manifest in `sha256sum -c` format. The JSON is machine
+// readable but nothing standard consumes it, and the person checking a
+// downloaded artifact has `sha256sum` to hand, not this repository.
+const checksums = artifacts.map((artifact) => `${artifact.sha256}  ${artifact.path}`).join('\n');
+await writeFile(resolve('SHA256SUMS.txt'), `${checksums}\n`, { mode: 0o600 });
+
 console.log(`Wrote provenance for ${artifacts.length} artifacts at ${provenance.sourceRevision}`);
+console.log('Wrote SHA256SUMS.txt (verify with: sha256sum -c SHA256SUMS.txt)');

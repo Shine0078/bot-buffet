@@ -10,5 +10,6 @@ coverage/
 *.log
 sbom.cyclonedx.json
 provenance.json
+SHA256SUMS.txt
 results.sarif
 browser-out.log

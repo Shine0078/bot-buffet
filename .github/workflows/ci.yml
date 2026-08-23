@@ -31,6 +31,8 @@ jobs:
       - run: npm run smoke
       - run: npm run restore:drill
       - run: npm run provenance
+      # A manifest nobody checks is not evidence. Verify it in the same run.
+      - run: npm run provenance:verify
       - run: npm run sbom
       - uses: github/codeql-action/upload-sarif@0fa1882f994fbd81a47ab0804f93354f5ea40147
         if: always()

@@ -24,6 +24,7 @@
     "brand:scan": "node scripts/brand-scan.mjs",
     "sbom": "node scripts/sbom.mjs",
     "provenance": "node scripts/provenance.mjs",
+    "provenance:verify": "node scripts/provenance-verify.mjs",
     "backup": "node scripts/backup.mjs",
     "restore": "node scripts/restore.mjs",
     "smoke": "node scripts/smoke.mjs",
