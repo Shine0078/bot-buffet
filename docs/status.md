@@ -4,7 +4,7 @@ Updated 2026-08-23. This is the source of truth for implementation evidence.
 
 The verified `main` branch is synchronized with
 `https://github.com/Shine0078/bot-buffet` at commit
-`d707043d35541f129d411c69f4c8c42aaf3d62b9`. No uncommitted local changes are
+`5ad0d4332984f6fdcfcaa8087965c7fd46648367`. No uncommitted local changes are
 present.
 
 ## Subsystem completion, 2026-08-23
