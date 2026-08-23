@@ -15,8 +15,11 @@ export function buildSystemPrompt(profile: {
   skills: string[];
   outputFormat?: OutputFormat;
   changelog?: string[];
+  description?: string;
 }): string {
   const sections = [profile.systemInstructions];
+  const description = profile.description?.trim();
+  if (description) sections.push('Agent description: ' + description);
   if (profile.projectRules.length) {
     sections.push('Project rules:\n' + profile.projectRules.map((rule) => '- ' + rule).join('\n'));
   }

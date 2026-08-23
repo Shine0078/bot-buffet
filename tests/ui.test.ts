@@ -80,4 +80,7 @@ describe('Office UI accessibility contract', () => {
     expect(app).toContain('Profile change');
     expect(app).toContain('changelog');
   });
+  it('renders an agent description in the inspector when one exists', () => {
+    expect(app).toContain("esc(a.profile?.description || '')");
+  });
 });

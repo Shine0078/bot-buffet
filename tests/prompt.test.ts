@@ -13,6 +13,13 @@ describe('system prompt assembly', () => {
     expect(buildSystemPrompt(profile())).toBe('You maintain the billing service.');
   });
 
+  it('includes a profile description after the instructions', () => {
+    const prompt = buildSystemPrompt(profile({ description: 'Local billing operator' }));
+    expect(prompt).toContain('Agent description: Local billing operator');
+    expect(prompt.indexOf('You maintain the billing service.')).toBeLessThan(
+      prompt.indexOf('Agent description'),
+    );
+  });
   it('lists project rules as rules rather than running them together', () => {
     const prompt = buildSystemPrompt(
       profile({ projectRules: ['Never touch migrations', 'Prefer small commits'] }),
