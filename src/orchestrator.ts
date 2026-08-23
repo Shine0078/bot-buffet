@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { JsonStateStore } from './store.js';
+import { dependencyError, evaluateDependencies } from './dependencies.js';
 import {
   Agent,
   Alert,
@@ -66,6 +67,11 @@ export class Orchestrator extends EventEmitter {
     maxSteps?: number;
     parentRunId?: string;
   }): Promise<Run> {
+    // Dependencies are checked here rather than at start(), so a task that
+    // cannot legally run never becomes a queued run at all. Refusing later
+    // would leave a run record the operator has to notice and clean up, and
+    // would make the queue depth misreport how much work is actually runnable.
+    await this.assertDependenciesMet(input.task);
     const run = entity({
       kind: 'run',
       ownerId: input.ownerId,
@@ -88,6 +94,22 @@ export class Orchestrator extends EventEmitter {
     await this.deps.store.insert(run);
     await this.emitAudit(run, 'run.created', 'safe', 'executed', { taskId: input.task.id });
     return run;
+  }
+
+  /**
+   * Refuse a run whose task depends on work that is not finished.
+   *
+   * dependencyIds was validated on creation -- each id exists, same project --
+   * and then never consulted again, so the ordering guarantee the field
+   * advertises was never actually held. A task declared to depend on another
+   * ran the moment someone started it.
+   */
+  private async assertDependenciesMet(task: Task): Promise<void> {
+    if (!task.dependencyIds?.length) return;
+    const tasks = await this.deps.store.list<Task>((item) => item.kind === 'task');
+    const verdict = evaluateDependencies(task, new Map(tasks.map((item) => [item.id, item])));
+    if (verdict.runnable) return;
+    throw dependencyError(verdict);
   }
 
   async start(runId: string): Promise<void> {
