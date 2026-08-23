@@ -26,6 +26,15 @@ describe('cron matching', () => {
     expect(cronMatches('*/15 * * * *', new Date(Date.UTC(2026, 7, 23, 12, 30, 0)))).toBe(true);
   });
 
+  it('matches cron fields in the stored IANA timezone, not silently in UTC', () => {
+    const utcNoon = new Date(Date.UTC(2026, 7, 23, 12, 0, 0));
+    expect(cronMatches('0 8 * * *', utcNoon, 'America/Toronto')).toBe(true);
+    expect(cronMatches('0 12 * * *', utcNoon, 'America/Toronto')).toBe(false);
+    expect(() => cronMatches('0 12 * * *', utcNoon, 'Not/AZone')).toThrow(
+      /schedule_timezone_invalid/,
+    );
+  });
+
   it('ignores disabled schedules even when the expression matches', () => {
     const noon = new Date(Date.UTC(2026, 7, 23, 12, 0, 0));
     const enabled = entity({

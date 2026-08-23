@@ -6,7 +6,7 @@
 - Opening the Office UI as `file://` now shows a blocking banner and disables buttons instead of looking like a live, unresponsive office.
 - `allowedPluginIds` is enforced on `plugin.invoke`. Installed connectors still fail closed without a live credential.
 - Plugin `projectIds` now deny cross-project invocation, and registered MCP servers can be invoked through `mcp.invoke` only after enablement, export, and integrity checks. Live MCP execution remains unavailable without a verified runtime.
-- Enabled schedules now fire through a bounded five-field cron matcher and `tickSchedules`. A due assigned task starts a run; the same UTC minute will not start a second one. Live calendar/timezone expansion remains limited to UTC.
+- Enabled schedules now fire through a bounded five-field cron matcher and `tickSchedules`. A due assigned task starts a run; the same UTC minute will not start a second one. Stored IANA timezones are honoured, and unknown zones fail closed.
 
 ## 0.2.0 — 2026-08-22
 

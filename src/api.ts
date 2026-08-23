@@ -46,7 +46,7 @@ import {
 } from './types.js';
 import { Orchestrator } from './orchestrator.js';
 import { BOT_BUFFET_VERSION } from './version.js';
-import { parseCron } from './schedules.js';
+import { assertTimezone, parseCron } from './schedules.js';
 import { tickSchedules } from './scheduler.js';
 import {
   adapterFor,
@@ -2699,7 +2699,7 @@ export function createApi(deps: ApiDeps) {
           cron,
           taskId: task.id,
           enabled: false,
-          timezone: String(body.timezone ?? 'UTC'),
+          timezone: assertTimezone(String(body.timezone ?? 'UTC')),
         }) as Schedule;
         await deps.store.insert(schedule);
         return send(res, 201, schedule);
