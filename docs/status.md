@@ -44,11 +44,13 @@ OAuth-start, and device-start paths do not call the egress transport after
 disablement. This is local lifecycle evidence; live provider accounts remain
 an owner gate.
 
-The final provider-routing Codex Security diff scan
-`0f8fb0be-e5e9-45d7-a02d-01b58d6dbb37` reviewed the changed routing and
-regression surfaces with complete coverage and reported zero reportable findings. The
-security TAC advisory connector was unavailable in this desktop session; that
-limitation does not alter the local diff result.
+The provider-provisioning Codex Security diff scan
+`03e078d1-cabf-430b-9857-661f2acea718` reviewed the changed API and regression
+surfaces with complete coverage and reported zero reportable findings. The
+follow-up provider-routing diff scan
+`0f8fb0be-e5e9-45d7-a02d-01b58d6dbb37` likewise reported zero findings with
+complete coverage. The security TAC advisory connector was unavailable in this
+desktop session; that limitation does not alter the local diff results.
 
 Production routing now consults the durable provider health state as well as
 provider enablement: `offline` providers are excluded before selection, while
