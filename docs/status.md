@@ -2,6 +2,49 @@
 
 Updated 2026-08-23. This is the source of truth for implementation evidence.
 
+## Subsystem completion, 2026-08-23
+
+Measured against the specification's own list, with the evidence for each. "Local"
+means verified on this machine; it does not mean verified in production.
+
+| Subsystem                      | State                                      | Evidence                                                                                                                                                                                                                             |
+| ------------------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Multi-agent harness            | Complete locally                           | Handoff packets, output comparison, bounded parallel execution, per-agent concurrency admission, resource locks, and concurrent-edit conflict detection (`src/conflicts.ts`)                                                         |
+| Local/offline models           | **Complete locally**                       | Discovery, idempotent registration, offline routing guard, and a full agent run driven over real HTTP against an OpenAI-compatible endpoint (`tests/local-model-e2e.test.ts`)                                                        |
+| Authenticated online providers | Implemented, unproven                      | Native adapters for OpenAI-compatible, Anthropic, Gemini, Cohere, Azure OpenAI, Bedrock with wire/signature coverage; API-key, env-reference, PKCE, and device auth implemented. **No live account has been exercised** — owner gate |
+| Model routing                  | Complete locally                           | Scoped routes, cost ceilings, fallback chains, offline/private strategies, scope isolation                                                                                                                                           |
+| Sandboxing                     | **Verified against a live daemon**         | Non-root, no network, read-only root, EPERM on setuid, no Docker socket, escape and TOCTOU containment                                                                                                                               |
+| Memory                         | Complete locally                           | Namespace + run-identity scoping, approval before persistence, retention, agent-facing `memory.write`                                                                                                                                |
+| Permissions                    | Complete locally                           | RBAC, tenant isolation, scope checks, threshold policy semantics                                                                                                                                                                     |
+| Approvals                      | Complete locally                           | Expiry, CAS transitions, ranked mode/risk/policy decision, malformed decision treated as rejection                                                                                                                                   |
+| Office UI                      | Complete locally                           | Accessible table alternative, keyboard focus, WCAG2 A/AA via axe, structural escaping guard                                                                                                                                          |
+| Plugins                        | Complete locally                           | Lifecycle with integrity pinning, scoped activation, and the eight-connector catalog that grants no authority on install                                                                                                             |
+| Observability                  | Complete locally                           | OTLP run traces from durable steps, `/metrics`, usage/cost/alert endpoints                                                                                                                                                           |
+| Evaluations                    | Complete locally                           | Six graders, separated judge, golden baseline, audited release gate                                                                                                                                                                  |
+| CI/CD                          | Complete locally                           | Full pipeline published; container job asserts hardening; provenance verified in-run; rollback drill wired                                                                                                                           |
+| Deployment                     | **Container and compose verified locally** | Health through published port, non-root, hardened, restart-survivable. Staging/production remain owner gates                                                                                                                         |
+| Backups                        | Complete locally                           | Signed manifests, tamper rejection, destroy-and-restore drill                                                                                                                                                                        |
+| Rollback                       | **Complete locally**                       | `npm run rollback:drill`: bad release detected, actionable failure, service restored, state intact                                                                                                                                   |
+| Documentation                  | Complete for implemented surface           | 30 documents; every gate records its owner action                                                                                                                                                                                    |
+
+### What "not complete" means here
+
+Six things cannot be produced from this machine, and none of them is a coding
+task left undone:
+
+1. A live provider account, to exercise real authentication and usage paths.
+2. A staging and production environment.
+3. A real OIDC issuer with tenant memberships.
+4. Postgres, object storage, a queue, and a vector index.
+5. A public HTTPS endpoint for webhook receipt.
+6. A kernel-level container-escape audit by a security specialist.
+
+Each has its exact owner action in `docs/owner-gates.md`. The honest completion
+figure is unchanged in kind from previous assessments: everything that can be
+built and proven locally is built and proven; what remains needs credentials,
+infrastructure, or a specialist, and inventing evidence for any of it would make
+this ledger worthless.
+
 ## 2026-08-23 — container sandbox gate: evidence produced
 
 This gate could not previously be attempted because Docker Desktop on this
