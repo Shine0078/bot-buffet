@@ -42,7 +42,66 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - run: docker build --tag bot-buffet:${{ github.sha }} .
-      - run: docker run --detach --name bot-buffet -p 8787:8787 bot-buffet:${{ github.sha }}
-      - run: for i in {1..20}; do curl --fail http://127.0.0.1:8787/readyz && exit 0 || sleep 1; done; exit 1
+      # Run under the same posture the sandbox evidence was gathered with. The
+      # previous form started the container with no hardening at all, so CI
+      # proved only that the image boots — a regression that dropped the
+      # read-only root or ran as root would have passed unnoticed.
+      - name: Start the container hardened
+        run: |
+          docker run --detach --name bot-buffet \
+            --read-only --tmpfs /tmp \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --pids-limit 128 --memory 512m --cpus 1 \
+            --mount type=volume,source=bot-buffet-data,target=/data \
+            -p 8787:8787 bot-buffet:${{ github.sha }}
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8787/readyz && exit 0
+            sleep 1
+          done
+          echo "container never became ready"
+          exit 1
+      - name: Assert the hardening actually holds
+        run: |
+          set -euo pipefail
+          # Non-root. `id -u` is the claim that matters; the image USER could be
+          # overridden at any point without the Dockerfile changing.
+          uid=$(docker exec bot-buffet id -u)
+          test "$uid" != "0" || { echo "container is running as root"; exit 1; }
+          echo "runs as uid $uid"
+
+          # Read-only root filesystem: the write must fail.
+          if docker exec bot-buffet sh -c 'touch /etc/ci-probe' 2>/dev/null; then
+            echo "root filesystem is writable"; exit 1
+          fi
+          echo "root filesystem is read-only"
+
+          # The data volume is the one place writes are allowed.
+          docker exec bot-buffet sh -c 'touch /data/ci-probe && rm /data/ci-probe'
+          echo "data volume is writable"
+      - name: Assert the API answers and the audit chain verifies
+        run: |
+          set -euo pipefail
+          curl --fail --silent http://127.0.0.1:8787/healthz > /dev/null
+          curl --fail --silent http://127.0.0.1:8787/metrics > /dev/null
+          audit=$(curl --fail --silent -H 'x-bot-buffet-user: local-user' \
+            http://127.0.0.1:8787/api/v1/audit/verify)
+          echo "audit: $audit"
+          case "$audit" in *'"valid":true'*) ;; *) echo "audit chain invalid"; exit 1;; esac
+      - name: Assert state survives a restart
+        run: |
+          set -euo pipefail
+          before=$(curl --fail --silent -H 'x-bot-buffet-user: local-user' \
+            http://127.0.0.1:8787/api/v1/projects | grep -o '"kind":"project"' | wc -l)
+          docker restart bot-buffet
+          for i in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8787/readyz > /dev/null && break
+            sleep 1
+          done
+          after=$(curl --fail --silent -H 'x-bot-buffet-user: local-user' \
+            http://127.0.0.1:8787/api/v1/projects | grep -o '"kind":"project"' | wc -l)
+          echo "projects before=$before after=$after"
+          test "$before" = "$after" || { echo "state did not survive restart"; exit 1; }
       - if: always()
         run: docker logs bot-buffet
