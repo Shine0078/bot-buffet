@@ -26,7 +26,7 @@ Until each owner supplies evidence, the status ledger must say “blocked” for
 
 ## Connector scope verification
 
-Every connector except GitHub declares its OAuth or API scopes with
+GitHub, Figma, Asana, and Canva OAuth scopes were checked against current provider documentation and are marked verified. Cloudflare, SciSpace, Consensus, and Wolfram still declare unverified API-key scope strings because those providers do not publish matching OAuth scope names.
 `scopesVerified: false` in `src/connectors.ts`. Those strings are plausible but
 were not checked against the providers' current documentation, and a wrong
 scope string fails in one of two ways: it does not connect, or it grants more

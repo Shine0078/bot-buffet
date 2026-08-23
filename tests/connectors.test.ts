@@ -103,8 +103,16 @@ describe('connector catalog', () => {
     // connection time rather than trusted because it looks plausible.
     const github = findConnector('github');
     expect(github?.scopesVerified).toBe(true);
+    expect(findConnector('figma')?.scopesVerified).toBe(true);
+    expect(findConnector('asana')?.scopesVerified).toBe(true);
+    expect(findConnector('canva')?.scopesVerified).toBe(true);
     const unverified = connectorCatalog().filter((connector) => !connector.scopesVerified);
-    expect(unverified.length).toBeGreaterThan(0);
+    expect(unverified.map((c) => c.id).sort()).toEqual([
+      'cloudflare',
+      'consensus',
+      'scispace',
+      'wolfram',
+    ]);
   });
 
   it('gives each connector at least one tool with a risk and reversibility', () => {

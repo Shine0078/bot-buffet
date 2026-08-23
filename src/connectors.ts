@@ -137,8 +137,9 @@ const CATALOG: ConnectorDefinition[] = [
     authType: 'oauth2-pkce',
     documentationUrl: 'https://www.figma.com/developers/api',
     allowedHosts: ['api.figma.com'],
-    scopes: ['file_read'],
-    scopesVerified: false,
+    // Figma Connect OAuth: file_content:read is the current documented read scope; file_read is retired.
+    scopes: ['file_content:read'],
+    scopesVerified: true,
     maxRisk: 'safe',
     dataRetention: 'Token and component metadata cached per design sync; no file contents stored.',
     degradedBehavior:
@@ -159,8 +160,9 @@ const CATALOG: ConnectorDefinition[] = [
     authType: 'oauth2-pkce',
     documentationUrl: 'https://developers.asana.com/docs',
     allowedHosts: ['app.asana.com'],
+    // Asana Granular OAuth scopes, documented as tasks:read / tasks:write.
     scopes: ['tasks:read', 'tasks:write'],
-    scopesVerified: false,
+    scopesVerified: true,
     maxRisk: 'medium',
     dataRetention:
       'Task identifiers and status only. Task bodies are not copied into Bot Buffet memory without an explicit memory write.',
@@ -188,8 +190,9 @@ const CATALOG: ConnectorDefinition[] = [
     authType: 'oauth2-pkce',
     documentationUrl: 'https://www.canva.dev/docs/connect/',
     allowedHosts: ['api.canva.com'],
+    // Canva Connect OAuth: design:content:read is the documented read scope.
     scopes: ['design:content:read'],
-    scopesVerified: false,
+    scopesVerified: true,
     maxRisk: 'low',
     dataRetention:
       'Asset identifiers and export URLs only; exports are stored as project artifacts.',
