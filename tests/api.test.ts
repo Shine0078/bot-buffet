@@ -8,7 +8,16 @@ import { createApi } from '../src/api.js';
 import { CredentialVault } from '../src/secrets.js';
 import { createStore } from '../src/store.js';
 import { Orchestrator } from '../src/orchestrator.js';
-import { entity, Agent, Environment, ModelProvider, Project, Run, Task } from '../src/types.js';
+import {
+  entity,
+  Agent,
+  Environment,
+  ModelProvider,
+  Project,
+  Run,
+  Task,
+  User,
+} from '../src/types.js';
 import { PkceSessionStore } from '../src/oauth.js';
 
 const servers: Array<ReturnType<typeof createApi>> = [];
@@ -873,6 +882,79 @@ describe('API boundary controls', () => {
       headers: { 'x-bot-buffet-user': 'reader-1' },
     });
     expect(blocked.status).toBe(400);
+  });
+
+  it('provisions workspace users and applies compare-and-swap disablement at the request boundary', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-users-'));
+    const store = createStore(dir);
+    const workspace = entity({
+      kind: 'workspace',
+      ownerId: 'local-user',
+      scope: 'org',
+      organizationId: 'org',
+      name: 'Identity workspace',
+      slug: 'identity-workspace',
+      offlineMode: true,
+    });
+    await store.insert(workspace);
+    const server = createApi({
+      store,
+      orchestrator: new EventEmitter() as unknown as Orchestrator,
+      uiRoot: dir,
+      vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+    const base = `http://127.0.0.1:${address.port}`;
+    const createdResponse = await fetch(`${base}/api/v1/users`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        workspaceId: workspace.id,
+        userId: 'alice',
+        email: 'alice@example.test',
+        displayName: 'Alice',
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as User;
+    expect(created).toMatchObject({ id: 'alice', disabled: false, scope: workspace.id });
+    const listedResponse = await fetch(`${base}/api/v1/users?workspaceId=${workspace.id}`);
+    expect(listedResponse.status).toBe(200);
+    await expect(listedResponse.json()).resolves.toEqual([
+      expect.objectContaining({ id: 'alice' }),
+    ]);
+    const missingVersion = await fetch(`${base}/api/v1/users/alice/disable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(missingVersion.status).toBe(400);
+    const disabledResponse = await fetch(`${base}/api/v1/users/alice/disable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: created.version }),
+    });
+    expect(disabledResponse.status).toBe(200);
+    const disabled = (await disabledResponse.json()) as User;
+    expect(disabled.disabled).toBe(true);
+
+    // Development authentication is header-driven, so the disabled principal
+    // is checked without requiring an external identity provider.
+    const denied = await fetch(`${base}/api/v1/users?workspaceId=${workspace.id}`, {
+      headers: { 'x-bot-buffet-user': 'alice' },
+    });
+    expect(denied.status).toBe(400);
+    await expect(denied.json()).resolves.toMatchObject({ code: 'request_failed' });
+    const enabledResponse = await fetch(`${base}/api/v1/users/alice/enable`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: disabled.version }),
+    });
+    expect(enabledResponse.status).toBe(200);
+    await expect(enabledResponse.json()).resolves.toMatchObject({ id: 'alice', disabled: false });
   });
 
   it('creates scoped environments, agents, and tasks with safe defaults', async () => {

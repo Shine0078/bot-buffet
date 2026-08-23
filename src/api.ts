@@ -40,6 +40,7 @@ import {
   Source,
   Task,
   UsageRecord,
+  User,
   Webhook,
   Workflow,
   WorkflowEdge,
@@ -340,6 +341,14 @@ export function createApi(deps: ApiDeps) {
         const failure = url.searchParams.get('error');
         if (!state || state.length > 256) throw new Error('oauth_callback_invalid');
         const session = deps.oauth.consume(provider.id, state);
+        // OAuth callbacks arrive without the normal bearer/header path, so the
+        // consumed state is the only actor binding available here.  Re-check
+        // the durable identity before exchanging the code; otherwise a
+        // principal disabled while the browser was at the provider could still
+        // attach a fresh credential to the workspace.
+        const sessionActor = await deps.store.get<User>(session.actorId);
+        if (sessionActor?.kind === 'user' && sessionActor.disabled)
+          throw new Error('user_disabled');
         if (failure) throw new Error(`oauth_provider_denied:${failure.slice(0, 64)}`);
         if (!code || code.length > 4096) throw new Error('oauth_callback_invalid');
         const tokenEndpoint = new URL(provider.oauth.tokenEndpoint);
@@ -431,6 +440,14 @@ export function createApi(deps: ApiDeps) {
         }
         throw error;
       }
+      // A principal may be authenticated by an external issuer and still be
+      // administratively disabled in the control plane.  Authentication proves
+      // who the caller is; this local record is the second half of the
+      // lifecycle contract.  Keep the absent-record case permissive for
+      // development and for the period while an OIDC subject is being
+      // provisioned, but never let an explicitly disabled record through.
+      const actor = await deps.store.get<User>(actorId);
+      if (actor?.kind === 'user' && actor.disabled) throw new Error('user_disabled');
       const idempotencyHeader = String(req.headers['idempotency-key'] ?? '').trim();
       const idempotencyEligible = req.method === 'POST' && path === '/api/v1/runs';
       if (idempotencyEligible && idempotencyHeader) {
@@ -2385,6 +2402,93 @@ export function createApi(deps: ApiDeps) {
           acknowledged: true,
           version: alert.version,
         } as Alert);
+        return send(res, 200, saved);
+      }
+      if (path === '/api/v1/users' && req.method === 'GET') {
+        const workspaceId = url.searchParams.get('workspaceId') ?? 'workspace_local';
+        const workspace = await deps.store.get<Workspace>(workspaceId);
+        if (workspace) {
+          await required(actorId, workspace, 'admin', 'workspace');
+          return send(
+            res,
+            200,
+            await deps.store.list<User>(
+              (candidate) => candidate.kind === 'user' && candidate.scope === workspace.id,
+            ),
+          );
+        }
+        return send(
+          res,
+          200,
+          await visible(
+            actorId,
+            await deps.store.list<User>((candidate) => candidate.kind === 'user'),
+          ),
+        );
+      }
+      if (path === '/api/v1/users' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const workspaceId = String(body.workspaceId ?? body.scope ?? 'workspace_local').trim();
+        const workspace = await deps.store.get<Workspace>(workspaceId);
+        if (workspace) await required(actorId, workspace, 'admin', 'workspace');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('user_scope_required');
+        const email = String(body.email ?? '')
+          .trim()
+          .toLowerCase();
+        const displayName = String(body.displayName ?? '').trim();
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+          throw new Error('user_email_invalid');
+        if (!displayName) throw new Error('user_display_name_required');
+        const requestedId = String(body.userId ?? body.subjectId ?? body.id ?? '').trim();
+        if (requestedId && !/^[A-Za-z0-9._:@-]{1,256}$/.test(requestedId))
+          throw new Error('user_id_invalid');
+        if (process.env.BOT_BUFFET_AUTH_MODE === 'production' && !requestedId)
+          throw new Error('user_id_required');
+        const scope = workspace?.id ?? workspaceId;
+        const duplicate = await deps.store.list<User>(
+          (candidate) =>
+            candidate.kind === 'user' &&
+            candidate.scope === scope &&
+            String(candidate.email ?? '').toLowerCase() === email,
+        );
+        if (duplicate.length) throw new Error('user_email_exists');
+        const disabledInput = body.disabled;
+        if (disabledInput !== undefined && typeof disabledInput !== 'boolean')
+          throw new Error('user_disabled_invalid');
+        const created = entity({
+          kind: 'user',
+          ownerId: actorId,
+          scope,
+          email,
+          displayName: displayName.slice(0, 200),
+          disabled: disabledInput ?? false,
+        }) as User;
+        const user = requestedId ? ({ ...created, id: requestedId } as User) : created;
+        if (await deps.store.get(user.id)) throw new Error('user_exists');
+        await deps.store.insert(user);
+        return send(res, 201, user);
+      }
+      const userState = path.match(/^\/api\/v1\/users\/([^/]+)\/(disable|enable)$/);
+      if (userState && req.method === 'POST') {
+        const user = await required(
+          actorId,
+          await deps.store.get<User>(userState[1]!),
+          'read',
+          'user',
+        );
+        const workspace = await deps.store.get<Workspace>(user.scope);
+        if (workspace) await required(actorId, workspace, 'admin', 'workspace');
+        else await required(actorId, user, 'admin', 'user');
+        const body = await parseBody(req);
+        const version = Number(body.version);
+        if (!Number.isInteger(version) || version < 1) throw new Error('user_version_required');
+        const desired = userState[2] === 'disable';
+        if (user.disabled === desired) return send(res, 200, user);
+        const saved = await deps.store.putIfVersion(
+          { ...user, disabled: desired, version } as User,
+          version,
+        );
         return send(res, 200, saved);
       }
       if (path === '/api/v1/roles' && req.method === 'GET') {

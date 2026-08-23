@@ -24,6 +24,7 @@ import {
   ModelProvider,
   Organization,
   Project,
+  User,
   Workspace,
   entity,
 } from './types.js';
@@ -61,6 +62,21 @@ async function bootstrap(): Promise<void> {
     slug: 'bot-buffet',
     offlineMode: process.env.BOT_BUFFET_OFFLINE === 'true',
   }) as Workspace;
+  // Keep the local development principal in the same durable identity model
+  // used by production OIDC subjects.  The stable id is intentional: the
+  // development authenticator returns `local-user`, and disabling this record
+  // must therefore take effect at the API boundary.
+  const user = {
+    ...entity({
+      kind: 'user',
+      ownerId: 'local-user',
+      scope: workspace.id,
+      email: 'local@bot-buffet.local',
+      displayName: 'Local User',
+      disabled: false,
+    }),
+    id: 'local-user',
+  } as User;
   const membership = entity({
     kind: 'membership',
     ownerId: 'local-user',
@@ -193,6 +209,7 @@ async function bootstrap(): Promise<void> {
   });
   for (const value of [
     org,
+    user,
     workspace,
     membership,
     project,

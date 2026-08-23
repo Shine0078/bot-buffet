@@ -20,6 +20,8 @@
 - Stored `Permission` records can be created and listed through `/api/v1/permissions`. A deny rule now blocks the matching API action instead of remaining unevaluable metadata.
 - Workspace memberships are created at bootstrap and through `/api/v1/memberships`. A viewer membership cannot delete another owner's project.
 - Stored custom `Role` records can be created through `/api/v1/roles` and are consulted for membership authorization. A custom reader role can list a project but cannot delete it.
+- Workspace users can be provisioned and listed through `/api/v1/users`; disable/enable transitions require an optimistic version, and an authenticated principal backed by a disabled `User` record is rejected before any API route executes. The local bootstrap now seeds the stable `local-user` identity.
+- OAuth callbacks re-check the durable session actor after consuming state, so disabling a user while they are at the provider prevents a pending authorization code from attaching a new credential.
 - Enabled schedules now fire through a bounded five-field cron matcher and `tickSchedules`. A due assigned task starts a run; the same UTC minute will not start a second one. Stored IANA timezones are honoured, and unknown zones fail closed.
 
 ## 0.2.0 — 2026-08-22
