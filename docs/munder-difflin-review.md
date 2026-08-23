@@ -217,17 +217,27 @@ Not reviewable: CI workflows and the release pipeline, for the reason in §0.
 
 ## 5. Practices adopted into Bot Buffet
 
-| #   | Practice                                                                           | Source               | Applied as                       |
-| --- | ---------------------------------------------------------------------------------- | -------------------- | -------------------------------- |
-| 1   | Classify the machine before acting; never run a doomed command                     | `cliInstall.ts:36`   | `scripts/preflight.mjs`          |
-| 2   | Separate blockers from warnings so an optional tool is not a failed install        | `cliInstall.ts:29`   | `evaluateEnvironment`            |
-| 3   | Keep install decisions pure and platform-parameterised so every branch is testable | `cliInstall.ts:8`    | `tests/preflight.test.ts`        |
-| 4   | Refuse an artifact with no digest rather than warning                              | `nodeInstall.ts:250` | `planModelImport`                |
-| 5   | Verify against a digest published separately from the artifact listing             | `nodeInstall.ts:246` | `verifyArtifact`                 |
-| 6   | Bound every external probe with a timeout                                          | `nodeInstall.ts:227` | preflight probes, 5s             |
-| 7   | Enforce a Node floor rather than trusting `engines`                                | `nodeInstall.ts:45`  | preflight blocker                |
-| 8   | Sanitise the one user-derived value; keep commands constant                        | `cliInstall.ts:59`   | documented at the shim call site |
-| 9   | Record why an unsafe-looking construct is safe, at the call site                   | throughout           | preflight `probe`                |
+| #   | Practice                                                                           | Source               | Applied as                                                          |
+| --- | ---------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------- |
+| 1   | Classify the machine before acting; never run a doomed command                     | `cliInstall.ts:36`   | `scripts/preflight.mjs`                                             |
+| 2   | Separate blockers from warnings so an optional tool is not a failed install        | `cliInstall.ts:29`   | `evaluateEnvironment`                                               |
+| 3   | Keep install decisions pure and platform-parameterised so every branch is testable | `cliInstall.ts:8`    | `tests/preflight.test.ts`                                           |
+| 4   | Refuse an artifact with no digest rather than warning                              | `nodeInstall.ts:250` | `planModelImport`                                                   |
+| 5   | Verify against a digest published separately from the artifact listing             | `nodeInstall.ts:246` | `verifyArtifact`                                                    |
+| 6   | Bound every external probe with a timeout                                          | `nodeInstall.ts:227` | preflight probes, 5s                                                |
+| 7   | Enforce a Node floor rather than trusting `engines`                                | `nodeInstall.ts:45`  | preflight blocker                                                   |
+| 8   | Sanitise the one user-derived value; keep commands constant                        | `cliInstall.ts:59`   | documented at the shim call site                                    |
+| 9   | Record why an unsafe-looking construct is safe, at the call site                   | throughout           | preflight `probe`                                                   |
+| 10  | Publish checksums in a format standard tools can verify                            | `release.yml:80`     | `SHA256SUMS.txt` from `npm run provenance`                          |
+| 11  | Verify the manifest you generate, in the same run                                  | gap found here       | `npm run provenance:verify`, wired into CI                          |
+| 12  | Keep the CSP strict; use the dependency's CSP-safe build instead of relaxing it    | `OfficeFloor.tsx:4`  | Bot Buffet UI already ships `script-src 'self'`                     |
+| 13  | Let optional secrets degrade to a working build, so forks stay green               | `release.yml:70`     | Bot Buffet CI needs no secrets; SARIF upload is `continue-on-error` |
+| 14  | Scope a workflow trigger so its own commit cannot re-trigger it                    | `blog.yml:12`        | Noted; Bot Buffet CI makes no commits                               |
+
+Practice 11 is not something upstream does — it is the gap its release pipeline
+made visible. Upstream publishes checksums a downloader can verify; Bot Buffet
+was writing a provenance manifest that nothing verified. Comparing the two is
+what surfaced it.
 
 ## 6. Deliberately not adopted
 
@@ -243,16 +253,97 @@ Not reviewable: CI workflows and the release pipeline, for the reason in §0.
   `.data-smoke` at its root — though given §0, those are Bot Buffet's own
   leftovers, not Munder Difflin's.
 
-## 7. What this review could not establish
+## 7. CI/CD and release pipeline
+
+Four upstream workflows survive: `release.yml`, `blog.yml`, `wall-sync.yml`,
+and `contributor-role.yml`. The release pipeline is the substantial one and is
+well built.
+
+**Cross-platform matrix with `fail-fast: false`,** so one platform's failure
+does not cancel the others — sensible when each runner produces an independent
+installer.
+
+**A documented toolchain fix.** `node-gyp` (rebuilding native `node-pty`)
+imports `distutils`, removed in Python 3.12, so the workflow pins Python 3.11
+and installs `setuptools`. The reason is written in the file rather than left
+as a mystery pin.
+
+**OS-gated signing secrets.** `CSC_LINK` and the Apple credentials are set only
+on the macOS runner via `${{ matrix.os == 'macos-latest' && secrets.X || '' }}`.
+The comment records the failure that motivated it: if the Apple certificate
+reaches the Windows or Linux runners, electron-builder tries to sign those
+targets with it and the build hard-fails. This is the kind of detail that only
+gets written down after it has cost someone a release.
+
+**Secrets are optional and degrade to a working build.** With none set, every
+runner builds unsigned and stays green, so a fork can build the product. The
+analytics key is injected only for official builds; forks compile with an empty
+value and analytics no-op.
+
+**Published checksums.** Each runner emits `SHA256SUMS-<os>.txt` over the
+distributable artifacts only — not the blockmaps or `latest*.yml` — and the
+publish job merges them into one `SHA256SUMS.txt` attached to the release.
+
+**Pre-release semantics tied to the tag.** A tag with a suffix
+(`v0.4.4-rc.1`) publishes as a pre-release. The comment explains why this is
+"load-bearing, not cosmetic": the in-app updater polls `/releases/latest`, which
+excludes pre-releases, so a release candidate gets a public, shareable download
+page without offering itself to every installed copy. That is a genuinely
+thoughtful use of a platform behaviour.
+
+`blog.yml` scopes its trigger to `blog/**` so the commit it makes under
+`docs/blog` cannot re-trigger it — a small but real infinite-loop guard.
+`contributor-role.yml` declares `permissions: contents: read` at the workflow
+level, narrowing the default token.
+
+## 8. Renderer UI and accessibility
+
+121 TypeScript/TSX files under `src/renderer`.
+
+**No unsafe HTML sink.** There is no `dangerouslySetInnerHTML`, no `eval`, and
+the single `new Function` reference is a comment explaining its absence.
+
+**The CSP was kept strict rather than relaxed.** PixiJS uses `new Function()`
+internally, which `script-src 'self'` blocks. Rather than adding
+`unsafe-eval` to the policy, the renderer imports `pixi.js/unsafe-eval` — the
+vendor's CSP-compatible build, which replaces that code path. The import name
+reads like a weakening and is the opposite: the policy stays strict and the
+dependency adapts. This is the correct resolution and worth naming, because the
+tempting fix is one line in the CSP.
+
+**Accessibility is thin.** Only 19 of 121 renderer files carry any `aria-` or
+`role` attribute. For a canvas-rendered office floor that is expected in the
+scene layer, but it means the interface leans on the visual representation.
+Bot Buffet's own requirement for an accessible list/table alternative to the
+Office floor is the right response to the same problem, and is not something to
+copy from here.
+
+## 9. Testing surface
+
+38 test files under `test/`, of which 31 use `node:test` — the platform test
+runner, no framework dependency. The remainder are self-contained scripts
+declaring "no test framework" in their header.
+
+Coverage is concentrated where the hard problems are: `cli-install-ladder`,
+`hive-runtime-path`, `hive-roster-injection`, `expand-tilde`, `breaker`, and
+`commit-graph`. That matches the install-ladder design in §3 — the riskiest
+logic is the most heavily tested, and it is testable because it was kept free of
+Electron imports.
+
+## 10. What this review could not establish
 
 Recorded rather than guessed:
 
-- Dependency audit, lockfile review, and npm script review — the manifest and
-  lockfile were overwritten (§0).
-- CI and release pipeline review — `.github/workflows/ci.yml` was overwritten;
-  `blog.yml`, `release.yml`, `wall-sync.yml`, and `contributor-role.yml` survive
-  but describe only part of the pipeline.
-- Runtime behaviour — the application was never launched. No claim here rests on
-  observed execution.
-- The renderer UI and accessibility posture were not audited; only the CSP and
-  the preload contract were.
+Three gaps recorded in the first pass are now closed in §7, §8, and §9 above:
+the CI and release pipeline, the renderer UI and accessibility posture, and the
+testing surface. What remains genuinely unestablished:
+
+- **Dependency audit and lockfile review.** Still impossible. `package.json`
+  and the lockfile were overwritten (§0), and `node_modules/.package-lock.json`
+  contains Bot Buffet's install rather than the upstream one — checked, not
+  assumed. No dependency claim is made anywhere in this review.
+- **Runtime behaviour.** The application was never launched. Nothing here rests
+  on observed execution; every finding is from source, configuration, or
+  documentation.
+- **Accessibility beyond the static signal.** §8 counts `aria`/`role` usage; it
+  is not an audit. No screen-reader or keyboard-navigation testing was done.
