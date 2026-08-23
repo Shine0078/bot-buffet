@@ -1,0 +1,75 @@
+# Generated and vendored
+node_modules
+dist
+coverage
+package-lock.json
+.data
+.data-*
+workspace
+*.log
+
+# Upstream Electron/marketing material that lives untracked in this working
+# tree. It is not part of Bot Buffet and must never be staged, but
+# `prettier --check .` walks the whole directory, so without this the format
+# gate reports ~800 failures that no Bot Buffet change can fix and the gate
+# stops being usable here.
+.claude
+blog
+hive
+landing-remotion
+prototypes
+seo
+resources
+build
+test
+src/main
+src/preload
+src/renderer
+src/shared
+docs/blog
+docs/hires
+docs/design
+docs/media
+docs/index.html
+docs/llms.txt
+docs/llms-full.txt
+docs/harness-engineering-deck.html
+electron-builder.yml
+electron.vite.config.ts
+tsconfig.node.json
+tsconfig.web.json
+CHANGELOG.md
+DESIGN.md
+HIVE.md
+SPEC.md
+RELEASE.md
+MEMORY_GRAPH_SPEC.md
+TELEMETRY.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md
+LICENSE
+provenance.json
+results.sarif
+sbom.cyclonedx.json
+.github/FUNDING.yml
+.github/ISSUE_TEMPLATE
+.github/PULL_REQUEST_TEMPLATE.md
+.github/workflows/blog.yml
+.github/workflows/contributor-role.yml
+.github/workflows/release.yml
+.github/workflows/wall-sync.yml
+
+# Further untracked upstream material found by running the gate here.
+tools
+docs/r
+docs/research
+docs/message-queue.md
+docs/release-drops.md
+docs/privacy.html
+docs/terms.html
+docs/wall.html
+docs/wall-data.json
+scripts/wall-sync.mjs
+scripts/verify-keepalive-catchup.mjs
+scripts/verify-worker-gc.mjs
