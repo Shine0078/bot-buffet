@@ -72,6 +72,7 @@ const plugin = (overrides: Partial<Plugin> = {}): Plugin =>
     network: 'allowlist',
     retention: 'none',
     permissions: ['github:repo'],
+    integritySha256: 'a'.repeat(64),
     ...overrides,
   }) as Plugin;
 
@@ -185,6 +186,16 @@ describe('plugin invocation authority', () => {
         tool: 'github.list_repositories',
       }),
     ).toThrow(/plugin_retention_required/);
+  });
+
+  it('refuses a pinned plugin that has no integrity digest', () => {
+    const pinned = plugin({ pinned: true, integritySha256: undefined });
+    expect(() =>
+      invokePlugin(agent([pinned.id]), [pinned], {
+        pluginId: pinned.id,
+        tool: 'github.list_repositories',
+      }),
+    ).toThrow(/plugin_integrity_required/);
   });
 });
 

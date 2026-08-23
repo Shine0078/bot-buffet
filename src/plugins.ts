@@ -65,6 +65,12 @@ export function invokePlugin(
   if (!plugin.retention.trim()) {
     throw new Error(`plugin_retention_required:${input.pluginId}`);
   }
+  if (plugin.pinned) {
+    if (!plugin.integritySha256) throw new Error(`plugin_integrity_required:${input.pluginId}`);
+    if (!/^[a-f0-9]{64}$/i.test(plugin.integritySha256)) {
+      throw new Error(`plugin_integrity_invalid:${input.pluginId}`);
+    }
+  }
   return {
     pluginId: plugin.id,
     pluginName: plugin.name,
