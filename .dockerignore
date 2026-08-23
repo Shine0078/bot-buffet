@@ -1,6 +1,40 @@
 node_modules
 dist
 .data
+.data-*
 .git
 .env
 coverage
+workspace
+
+# Upstream Electron/marketing material that lives untracked in this working
+# tree. `COPY src ./src` would otherwise pull ~3.4 MB of src/main, src/renderer,
+# src/preload, and src/shared into the build context and ship it inside the
+# image. None of it is part of Bot Buffet.
+src/main
+src/preload
+src/renderer
+src/shared
+blog
+hive
+landing-remotion
+prototypes
+seo
+resources
+build
+test
+docs/blog
+docs/hires
+docs/design
+docs/media
+electron-builder.yml
+electron.vite.config.ts
+tsconfig.node.json
+tsconfig.web.json
+CHANGELOG.md
+DESIGN.md
+HIVE.md
+SPEC.md
+RELEASE.md
+MEMORY_GRAPH_SPEC.md
+TELEMETRY.md

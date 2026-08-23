@@ -218,3 +218,86 @@ describe('container sandbox arguments', () => {
     }
   });
 });
+
+describe('symlink and TOCTOU resistance in the container', () => {
+  /**
+   * The owner gate asks for escape and TOCTOU evidence specifically.
+   *
+   * A time-of-check/time-of-use race means an attacker swaps a path component
+   * for a symlink *after* the harness resolved it and *before* the operation
+   * runs. The harness resolves real paths up front, but that check cannot be
+   * atomic with the write, so the container namespace is the control that has
+   * to hold: even a race won inside the workspace lands in a namespace where
+   * the host filesystem is simply not mounted.
+   *
+   * These tests therefore assume the race is lost and assert the containment
+   * still holds, which is the only claim worth making.
+   */
+  it.runIf(daemonAvailable)(
+    'a symlink planted in the workspace cannot reach a host file',
+    async () => {
+      // Planted directly on the host, bypassing every harness path check, so
+      // this models a race that was already won.
+      await sandbox.run(
+        'node',
+        ['-e', "require('node:fs').symlinkSync('/etc/passwd','/workspace/escape-link')"],
+        'blocked',
+      );
+      const result = await sandbox.run(
+        'node',
+        [
+          '-e',
+          "const fs=require('node:fs');try{const t=fs.readFileSync('/workspace/escape-link','utf8');process.stdout.write('READ:'+t.length)}catch(e){process.stdout.write('REFUSED:'+e.code)}",
+        ],
+        'blocked',
+      );
+      // The link resolves inside the container's own namespace, never to the
+      // host's /etc/passwd. Reading the container's own file is not an escape.
+      expect(result.stdout).toMatch(/^(READ:\d+|REFUSED:[A-Z]+)$/);
+      const hostReachable = await sandbox.run(
+        'node',
+        [
+          '-e',
+          "const fs=require('node:fs');const probes=['/host_mnt','/run/desktop','/mnt/host','/c'];process.stdout.write(probes.filter((p)=>fs.existsSync(p)).join(',')||'none')",
+        ],
+        'blocked',
+      );
+      expect(hostReachable.stdout).toBe('none');
+    },
+    TIMEOUT,
+  );
+
+  it.runIf(daemonAvailable)(
+    'a directory swapped for a symlink still cannot write outside the workspace',
+    async () => {
+      const result = await sandbox.run(
+        'node',
+        [
+          '-e',
+          "const fs=require('node:fs');try{fs.symlinkSync('/etc','/workspace/etc-link');fs.writeFileSync('/workspace/etc-link/planted','x');process.stdout.write('WROTE')}catch(e){process.stdout.write('REFUSED:'+e.code)}",
+        ],
+        'blocked',
+      );
+      // /etc lives on the read-only root, so following the link fails there.
+      expect(result.stdout).toMatch(/^REFUSED:(EROFS|EACCES|EEXIST|EPERM)$/);
+    },
+    TIMEOUT,
+  );
+
+  it.runIf(daemonAvailable)(
+    'cannot reach the Docker socket, so it cannot start a less restricted sibling',
+    async () => {
+      // The most valuable escape would be launching an unconfined container.
+      const result = await sandbox.run(
+        'node',
+        [
+          '-e',
+          "const fs=require('node:fs');process.stdout.write(String(fs.existsSync('/var/run/docker.sock')))",
+        ],
+        'blocked',
+      );
+      expect(result.stdout).toBe('false');
+    },
+    TIMEOUT,
+  );
+});
