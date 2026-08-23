@@ -2590,6 +2590,7 @@ export function createApi(deps: ApiDeps) {
         );
         if (plugin.enabled || plugin.workspaceEnabled)
           throw new Error('plugin_update_requires_disabled');
+        if (plugin.pinned) throw new Error('plugin_pinned');
         const body = await parseBody(req);
         const integrity = body.integritySha256
           ? String(body.integritySha256)
@@ -2613,7 +2614,13 @@ export function createApi(deps: ApiDeps) {
       }
       const pluginDelete = path.match(/^\/api\/v1\/plugins\/([^/]+)$/);
       if (pluginDelete && req.method === 'DELETE') {
-        await required(actorId, await deps.store.get<Plugin>(pluginDelete[1]!), 'admin', 'plugin');
+        const plugin = await required(
+          actorId,
+          await deps.store.get<Plugin>(pluginDelete[1]!),
+          'admin',
+          'plugin',
+        );
+        if (plugin.pinned) throw new Error('plugin_pinned');
         await deps.store.delete(pluginDelete[1]!);
         return send(res, 204, { deleted: true });
       }

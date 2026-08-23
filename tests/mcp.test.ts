@@ -20,6 +20,7 @@ const server = (overrides: Partial<MCPServer> = {}): MCPServer =>
     enabled: true,
     toolNames: ['search'],
     integritySha256: digest,
+    credentialId: 'cred-1',
     ...overrides,
   }) as MCPServer;
 
@@ -50,6 +51,13 @@ describe('MCP invocation authority', () => {
     const result = invokeMcpServer([registered], { serverId: registered.id, tool: 'search' });
     expect(result.status).toBe('unavailable');
     expect(result.serverName).toBe('Docs');
+  });
+
+  it('refuses a non-stdio MCP server without a credential', () => {
+    const registered = server({ credentialId: undefined });
+    expect(() =>
+      invokeMcpServer([registered], { serverId: registered.id, tool: 'search' }),
+    ).toThrow(/mcp_credential_required/);
   });
 });
 

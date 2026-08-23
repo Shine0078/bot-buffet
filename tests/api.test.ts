@@ -1004,6 +1004,29 @@ describe('API boundary controls', () => {
     });
     expect(deletedResponse.status).toBe(204);
   });
+  it('refuses to update or delete a pinned plugin', async () => {
+    const base = await start();
+    const createdResponse = await fetch(`${base}/api/v1/plugins`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Pinned', source: 'local', pinned: true }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as { id: string; pinned: boolean };
+    expect(created.pinned).toBe(true);
+    const updatedResponse = await fetch(`${base}/api/v1/plugins/${created.id}/update`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ version: '1.1.0', integritySha256: 'a'.repeat(64) }),
+    });
+    expect(updatedResponse.status).toBe(400);
+    expect(await updatedResponse.json()).toMatchObject({ message: 'plugin_pinned' });
+    const deletedResponse = await fetch(`${base}/api/v1/plugins/${created.id}`, {
+      method: 'DELETE',
+    });
+    expect(deletedResponse.status).toBe(400);
+    expect(await deletedResponse.json()).toMatchObject({ message: 'plugin_pinned' });
+  });
   it('records an environment credential reference without persisting or accepting its secret', async () => {
     process.env.BOT_BUFFET_TEST_PROVIDER_TOKEN = 'env-secret-that-must-not-cross-the-api';
     const base = await start();

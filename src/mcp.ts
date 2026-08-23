@@ -30,6 +30,7 @@ export function invokeMcpServer(
   }
   if (server.transport !== 'stdio') {
     assertSafeEndpoint(server.endpoint);
+    if (!server.credentialId) throw new Error('mcp_credential_required:' + input.serverId);
   } else if (!server.endpoint.trim()) {
     throw new Error('mcp_endpoint_required');
   }

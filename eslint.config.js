@@ -32,6 +32,9 @@ export default [
       'scripts/wall-sync.mjs',
       'scripts/verify-keepalive-catchup.mjs',
       'scripts/verify-worker-gc.mjs',
+      'scripts/_*.cjs',
+      'scripts/_*.mjs',
+      'scripts/_*.json',
     ],
   },
   {
