@@ -1,7 +1,16 @@
 import { basename, relative, sep } from 'node:path';
 import { JsonStateStore } from './store.js';
-import { entity, MemoryItem, MemoryPolicy, ToolDefinition, ID, JsonSchema } from './types.js';
+import {
+  entity,
+  MemoryItem,
+  MemoryPolicy,
+  ProjectFile,
+  ToolDefinition,
+  ID,
+  JsonSchema,
+} from './types.js';
 import { canWriteMemory } from './memoryScope.js';
+import { conflictError, detectConflict, detectCreateConflict, hashContent } from './conflicts.js';
 import { createSandboxRuntime, SandboxRuntime } from './sandbox.js';
 import {
   assertWorkspacePath,
@@ -161,6 +170,45 @@ export function createBuiltinTools(
     }
     return runtime;
   };
+  /**
+   * Compare what the writer claims to be replacing against the registry record
+   * and the bytes actually on disk. Reads through the sandbox so a container
+   * runtime sees the same file the write will land on.
+   */
+  const detectWriteConflict = async (
+    relativePath: string,
+    data: { path: string; baseSha256?: string; expectNew?: boolean },
+    context: ToolContext,
+  ) => {
+    let actualSha256: string | undefined;
+    try {
+      actualSha256 = hashContent(
+        await sandbox(context.workspaceRoot).readFile(relativePath, context.signal),
+      );
+    } catch {
+      // Absent is a legitimate state, not an error: creating a file is a write.
+      actualSha256 = undefined;
+    }
+
+    if (data.expectNew) return detectCreateConflict(data.path, actualSha256);
+
+    const record = (
+      await store.list<ProjectFile>(
+        (value) =>
+          value.kind === 'file' &&
+          (value as ProjectFile).projectId === context.projectId &&
+          (value as ProjectFile).path === relativePath,
+      )
+    )[0];
+
+    return detectConflict({
+      path: data.path,
+      baseSha256: data.baseSha256,
+      recordedSha256: record?.sha256,
+      actualSha256,
+    });
+  };
+
   const pathAllowed = (root: string, resolved: string, paths: string[]): boolean =>
     paths.some((allowed) => {
       const base = assertWorkspacePath(root, allowed);
@@ -311,7 +359,18 @@ export function createBuiltinTools(
       'medium',
       {
         type: 'object',
-        properties: { path: { type: 'string' }, content: { type: 'string' } },
+        properties: {
+          path: { type: 'string' },
+          content: { type: 'string' },
+          // Optional read-modify-write guard: the writer states the SHA-256 it
+          // believes it is replacing, and the harness refuses if reality has
+          // moved on. A lock alone cannot catch this, because it is released
+          // between the writer's read and its write.
+          baseSha256: { type: 'string' },
+          // "I expect to create this file" — a different claim from making
+          // none, and it catches two agents creating the same file.
+          expectNew: { type: 'boolean' },
+        },
         required: ['path', 'content'],
         additionalProperties: false,
       },
@@ -323,7 +382,12 @@ export function createBuiltinTools(
       },
     ),
     execute: async (input, context) => {
-      const data = input as { path: string; content: string };
+      const data = input as {
+        path: string;
+        content: string;
+        baseSha256?: string;
+        expectNew?: boolean;
+      };
       const resolved = await assertWorkspaceRealPath(context.workspaceRoot, data.path, true);
       if (!pathAllowed(context.workspaceRoot, resolved, context.allowedPaths))
         throw new Error('filesystem_write_denied:path_not_allowed');
@@ -335,6 +399,29 @@ export function createBuiltinTools(
       if (!(await store.lock(lockName, context.runId, 30_000)))
         throw new Error('filesystem_write_denied:resource_locked');
       try {
+        // Checked inside the lock: the whole point is that a stale base must be
+        // caught between another writer's commit and this one's.
+        const conflict = await detectWriteConflict(relativePath, data, context);
+        if (conflict) {
+          await store.audit({
+            kind: 'audit-event',
+            ownerId: context.actorId,
+            scope: context.projectId,
+            actorId: context.actorId,
+            action: 'filesystem.write_conflict',
+            resourceType: 'file',
+            resourceId: `path:${data.path}`,
+            risk: 'medium',
+            decision: 'denied',
+            metadata: {
+              runId: context.runId,
+              path: data.path,
+              kind: conflict.kind,
+              detail: conflict.detail,
+            },
+          });
+          throw conflictError(conflict);
+        }
         await sandbox(context.workspaceRoot).writeFile(relativePath, data.content, context.signal);
         await store.audit({
           kind: 'audit-event',
