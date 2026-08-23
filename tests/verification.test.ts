@@ -210,3 +210,23 @@ describe('combined policies', () => {
     expect(result.results.filter((entry) => entry.passed)).toHaveLength(2);
   });
 });
+
+describe('inferential policy', () => {
+  it('fails closed when inferential checks are named without a reviewer', () => {
+    const result = verifyDeterministic(policy({ inferential: ['llm-judge'] }), {
+      task: task([]),
+      state: { 'tool:fs.read': 'ok' },
+    });
+    expect(result.passed).toBe(false);
+    expect(result.missingReviewer).toBe(true);
+  });
+
+  it('does not fail an empty inferential list', () => {
+    const result = verifyDeterministic(policy({ deterministic: ['tool-used'] }), {
+      task: task([]),
+      state: { 'tool:fs.read': 'ok' },
+    });
+    expect(result.missingReviewer).toBe(false);
+    expect(result.passed).toBe(true);
+  });
+});

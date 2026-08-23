@@ -111,6 +111,7 @@ export interface VerificationOutcome {
   results: CheckResult[];
   /** Checks the policy named that do not exist. */
   unknownChecks: string[];
+  missingReviewer: boolean;
 }
 
 /**
@@ -139,12 +140,15 @@ export function verifyDeterministic(
 
   // An unknown check fails the run. Ignoring it would let a typo in a policy
   // silently reduce what gets verified while the run still reports success.
-  const passed = unknownChecks.length === 0 && results.every((result) => result.passed);
+  const missingReviewer = policy.inferential.length > 0 && !policy.reviewerAgentId;
+  const passed =
+    unknownChecks.length === 0 && results.every((result) => result.passed) && !missingReviewer;
 
   return {
     passed,
     evidence: results.flatMap((result) => result.evidence),
     results,
     unknownChecks,
+    missingReviewer,
   };
 }
