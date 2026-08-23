@@ -1252,3 +1252,25 @@ export async function discoverLocalEndpoints(): Promise<LocalDiscoveryResult[]> 
 }
 
 export const defaultCapabilities = (): CapabilitySet => ({ ...capabilityDefaults });
+
+/**
+ * The bootstrap provider is an in-process mock, identifiable by its port-zero
+ * loopback endpoint: nothing can listen on port 0, so the address cannot
+ * collide with a real local runtime.
+ *
+ * This exists so the mock is a narrow, checkable case. Treating every `local`
+ * model as a mock made registering a real Ollama or LM Studio endpoint inert —
+ * the run returned canned text and never contacted the runtime.
+ */
+export const isBootstrapMockProvider = (provider: ModelProvider): boolean => {
+  if (!provider.endpoint) return false;
+  try {
+    const url = new URL(provider.endpoint);
+    return (
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]') &&
+      url.port === '0'
+    );
+  } catch {
+    return false;
+  }
+};

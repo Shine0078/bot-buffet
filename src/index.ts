@@ -2,7 +2,12 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApi } from './api.js';
-import { adapterFor, MockLocalAdapter, resolveProviderToken } from './providers.js';
+import {
+  adapterFor,
+  isBootstrapMockProvider,
+  MockLocalAdapter,
+  resolveProviderToken,
+} from './providers.js';
 import { ModelRouter } from './router.js';
 import { Orchestrator } from './orchestrator.js';
 import { createStore } from './store.js';
@@ -193,9 +198,20 @@ const orchestrator = new Orchestrator({
   tools,
   workspaceRoot: (project) => join(workspaceDir, project.id),
   adapters: (model) => {
-    if (model.local) return new MockLocalAdapter(model.modelName);
     const provider = providers.get(model.providerId);
     if (!provider) throw new Error('provider_not_found');
+    // Only the bootstrap provider is a mock, and it is identifiable by its
+    // port-zero loopback endpoint — nothing can actually listen there.
+    //
+    // This previously returned the mock for *every* local model, which made the
+    // whole local-model feature inert: registering a real Ollama or LM Studio
+    // endpoint through /api/v1/local-models/register and running an agent
+    // against it silently returned canned text and never contacted the runtime.
+    // Local-first is the product's premise, so the mock has to be the narrow
+    // case rather than the default.
+    if (model.local && isBootstrapMockProvider(provider)) {
+      return new MockLocalAdapter(model.modelName);
+    }
     return adapterFor(provider, resolveProviderToken(provider, vault.getSync(provider.id)));
   },
 });
