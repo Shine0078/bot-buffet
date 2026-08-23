@@ -38,11 +38,17 @@ export function invokePlugin(
   if (plugin.agentIds.length > 0 && !plugin.agentIds.includes(agent.id)) {
     throw new Error(`plugin_not_bound:${input.pluginId}`);
   }
+  if (plugin.network === 'open') {
+    throw new Error(`plugin_network_open_forbidden:${input.pluginId}`);
+  }
   const match = plugin.source.match(CONNECTOR_SOURCE);
   const connector = match ? findConnector(match[1]!) : undefined;
   const tool = connector?.tools.find((entry) => entry.name === input.tool);
   if (connector && !tool) {
     throw new Error(`plugin_tool_unknown:${input.tool}`);
+  }
+  if (plugin.network === 'allowlist' && (!connector || connector.allowedHosts.length === 0)) {
+    throw new Error(`plugin_allowlist_empty:${input.pluginId}`);
   }
   return {
     pluginId: plugin.id,

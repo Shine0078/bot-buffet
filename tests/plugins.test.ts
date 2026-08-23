@@ -125,6 +125,26 @@ describe('plugin invocation authority', () => {
       }),
     ).toThrow(/plugin_project_denied/);
   });
+
+  it('refuses open network mode instead of treating it as allowlisted', () => {
+    const opened = plugin({ network: 'open' });
+    expect(() =>
+      invokePlugin(agent([opened.id]), [opened], {
+        pluginId: opened.id,
+        tool: 'github.list_repositories',
+      }),
+    ).toThrow(/plugin_network_open_forbidden/);
+  });
+
+  it('refuses an allowlisted plugin that has no connector hosts', () => {
+    const empty = plugin({ source: 'custom:local', network: 'allowlist' });
+    expect(() =>
+      invokePlugin(agent([empty.id]), [empty], {
+        pluginId: empty.id,
+        tool: 'custom.tool',
+      }),
+    ).toThrow(/plugin_allowlist_empty/);
+  });
 });
 
 describe('plugin.invoke builtin', () => {
