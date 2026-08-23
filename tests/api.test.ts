@@ -722,6 +722,52 @@ describe('API boundary controls', () => {
     ]);
   });
 
+  it('creates a stored deny permission that blocks a later write', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-perm-api-'));
+    const store = createStore(dir);
+    const project = entity({
+      kind: 'project',
+      ownerId: 'local-user',
+      scope: 'workspace_local',
+      workspaceId: 'workspace_local',
+      name: 'Denied project',
+      slug: 'denied-project',
+      archived: false,
+    });
+    await store.insert(project);
+    const server = createApi({
+      store,
+      orchestrator: new EventEmitter() as unknown as Orchestrator,
+      uiRoot: dir,
+      vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+    const base = `http://127.0.0.1:${address.port}`;
+    const created = await fetch(`${base}/api/v1/permissions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        scope: project.id,
+        subjectId: 'local-user',
+        resource: `project:${project.id}`,
+        actions: ['admin'],
+        effect: 'deny',
+      }),
+    });
+    expect(created.status).toBe(201);
+    const listed = await fetch(`${base}/api/v1/permissions`);
+    expect(listed.status).toBe(200);
+    const body = (await listed.json()) as Array<{ effect: string; resource: string }>;
+    expect(
+      body.some((item) => item.effect === 'deny' && item.resource === `project:${project.id}`),
+    ).toBe(true);
+    const blocked = await fetch(`${base}/api/v1/projects/${project.id}`, { method: 'DELETE' });
+    expect(blocked.status).toBe(400);
+  });
+
   it('creates scoped environments, agents, and tasks with safe defaults', async () => {
     const base = await start();
     const projectResponse = await fetch(`${base}/api/v1/projects`, {

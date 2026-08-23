@@ -25,6 +25,7 @@ import {
   Model,
   ModelRoute,
   ModelProvider,
+  Permission,
   Plugin,
   Policy,
   PolicyRule,
@@ -111,7 +112,6 @@ const MAX_BODY_BYTES = 2_000_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 120;
 const WEBHOOK_DELIVERY_TIMEOUT_MS = 10_000;
-const requestBuckets = new Map<string, { startedAt: number; count: number }>();
 const parseBody = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
   const declaredLength = Number(req.headers['content-length'] ?? 0);
   if (declaredLength > MAX_BODY_BYTES) throw new Error('request_body_too_large');
@@ -162,6 +162,7 @@ const parseOAuthConfig = (value: unknown): OAuthProviderConfig | undefined => {
 };
 
 export function createApi(deps: ApiDeps) {
+  const requestBuckets = new Map<string, { startedAt: number; count: number }>();
   const authorization = new AuthorizationService(deps.store);
   // Verified model weights live beside the durable state rather than in the
   // repository, so an import cannot land on a read-only container root.
@@ -2383,6 +2384,50 @@ export function createApi(deps: ApiDeps) {
           version: alert.version,
         } as Alert);
         return send(res, 200, saved);
+      }
+      if (path === '/api/v1/permissions' && req.method === 'GET') {
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Permission>((x) => x.kind === 'permission')),
+        );
+      }
+      if (path === '/api/v1/permissions' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const scope = String(body.scope ?? body.projectId ?? '');
+        const scopeEntity = await deps.store.get(scope);
+        if (scopeEntity) await required(actorId, scopeEntity, 'admin');
+        else if (process.env.BOT_BUFFET_AUTH_MODE === 'production')
+          throw new Error('permission_scope_required');
+        const effect = String(body.effect ?? 'allow');
+        if (!['allow', 'deny'].includes(effect)) throw new Error('permission_effect_invalid');
+        const subjectId = String(body.subjectId ?? '').trim();
+        const resource = String(body.resource ?? '').trim();
+        const actions = Array.isArray(body.actions) ? body.actions.map(String).filter(Boolean) : [];
+        if (!subjectId) throw new Error('permission_subject_required');
+        if (!resource) throw new Error('permission_resource_required');
+        if (!actions.length) throw new Error('permission_actions_required');
+        const conditions =
+          body.conditions && typeof body.conditions === 'object' && !Array.isArray(body.conditions)
+            ? Object.fromEntries(
+                Object.entries(body.conditions as Record<string, unknown>).map(([key, value]) => [
+                  String(key).slice(0, 64),
+                  String(value).slice(0, 256),
+                ]),
+              )
+            : undefined;
+        const permission = entity({
+          kind: 'permission',
+          ownerId: actorId,
+          scope: scope || actorId,
+          subjectId,
+          resource: resource.slice(0, 256),
+          actions: actions.slice(0, 16),
+          effect: effect as 'allow' | 'deny',
+          conditions,
+        }) as Permission;
+        await deps.store.insert(permission);
+        return send(res, 201, permission);
       }
       if (path === '/api/v1/policies' && req.method === 'GET') {
         return send(
