@@ -26,6 +26,8 @@ import {
   ModelRoute,
   ModelProvider,
   Plugin,
+  Policy,
+  PolicyRule,
   Project,
   ProjectFile,
   Risk,
@@ -2366,6 +2368,60 @@ export function createApi(deps: ApiDeps) {
           200,
           await visible(actorId, await deps.store.list<Alert>((x) => x.kind === 'alert')),
         );
+      }
+      if (path === '/api/v1/policies' && req.method === 'GET') {
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Policy>((x) => x.kind === 'policy')),
+        );
+      }
+      if (path === '/api/v1/policies' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const project = await required(
+          actorId,
+          await deps.store.get<Project>(String(body.projectId ?? body.scope)),
+          'admin',
+          'project',
+        );
+        const rules = Array.isArray(body.rules) ? (body.rules as PolicyRule[]) : [];
+        if (!rules.length) throw new Error('policy_rules_required');
+        for (const rule of rules) {
+          if (!['allow', 'deny', 'approval'].includes(String(rule.effect))) {
+            throw new Error('policy_rule_effect_invalid');
+          }
+          if (!String(rule.action ?? '').trim()) throw new Error('policy_rule_action_required');
+        }
+        const policy = entity({
+          kind: 'policy',
+          ownerId: actorId,
+          scope: project.id,
+          name: String(body.name ?? 'Policy'),
+          rules: rules.map((rule) => ({
+            action: String(rule.action),
+            effect: rule.effect,
+            risks: Array.isArray(rule.risks) ? rule.risks : undefined,
+            scopes: Array.isArray(rule.scopes) ? rule.scopes.map(String) : undefined,
+          })),
+          enabled: false,
+        }) as Policy;
+        await deps.store.insert(policy);
+        return send(res, 201, policy);
+      }
+      const policyMatch = path.match(/^\/api\/v1\/policies\/([^/]+)\/(enable|disable)$/);
+      if (policyMatch && req.method === 'POST') {
+        const policy = await required(
+          actorId,
+          await deps.store.get<Policy>(policyMatch[1]!),
+          'admin',
+          'policy',
+        );
+        const saved = await deps.store.put({
+          ...policy,
+          enabled: policyMatch[2] === 'enable',
+          version: policy.version,
+        } as Policy);
+        return send(res, 200, saved);
       }
       if (path === '/api/v1/memory' && req.method === 'GET') {
         const namespace = url.searchParams.get('namespace');

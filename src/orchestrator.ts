@@ -14,6 +14,7 @@ import {
   MemoryItem,
   Model,
   ModelRoute,
+  Policy,
   Project,
   Run,
   RunStep,
@@ -483,18 +484,25 @@ export class Orchestrator extends EventEmitter {
               });
               throw new Error(`${modeDecision.code}:${call.name}`);
             }
-            const decisionPolicy = decidePolicy(
-              tool.definition.risk,
-              run.projectId,
-              call.name,
-              agent.profile.approvalPolicy.requiredRisks.map((risk) => ({
+            const storedPolicies = await this.deps.store.list<Policy>(
+              (value) =>
+                value.kind === 'policy' &&
+                (value as Policy).enabled &&
+                ((value as Policy).scope === run.projectId || (value as Policy).scope === '*'),
+            );
+            const decisionPolicy = decidePolicy(tool.definition.risk, run.projectId, call.name, [
+              ...storedPolicies,
+              ...agent.profile.approvalPolicy.requiredRisks.map((risk) => ({
                 action: '*',
                 effect: 'approval' as const,
                 risks: [risk],
               })),
-            );
+            ]);
             // Policy, mode, and the agent's own approval policy are combined in
             // one place, so no single source can silently override another.
+            if (decisionPolicy.decision === 'denied') {
+              throw new Error(`policy_denied:${call.name}`);
+            }
             const approval = requiresApproval({
               policyDecision: decisionPolicy.decision,
               modeRequiresApproval: modeDecision.requiresApproval,

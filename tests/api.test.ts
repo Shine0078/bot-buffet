@@ -1004,6 +1004,32 @@ describe('API boundary controls', () => {
     });
     expect(deletedResponse.status).toBe(204);
   });
+  it('creates a disabled project policy and enables it', async () => {
+    const base = await start();
+    const projectResponse = await fetch(`${base}/api/v1/projects`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Policy project' }),
+    });
+    const project = (await projectResponse.json()) as { id: string };
+    const createdResponse = await fetch(`${base}/api/v1/policies`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: project.id,
+        name: 'Deny writes',
+        rules: [{ action: 'filesystem.write', effect: 'deny' }],
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as { id: string; enabled: boolean };
+    expect(created.enabled).toBe(false);
+    const enabledResponse = await fetch(`${base}/api/v1/policies/${created.id}/enable`, {
+      method: 'POST',
+    });
+    expect(enabledResponse.status).toBe(200);
+    expect(await enabledResponse.json()).toMatchObject({ enabled: true });
+  });
   it('refuses to update or delete a pinned plugin', async () => {
     const base = await start();
     const createdResponse = await fetch(`${base}/api/v1/plugins`, {
