@@ -105,5 +105,11 @@ jobs:
             http://127.0.0.1:8787/api/v1/projects | grep -o '"kind":"project"' | wc -l)
           echo "projects before=$before after=$after"
           test "$before" = "$after" || { echo "state did not survive restart"; exit 1; }
+      # Prove a bad release is detected and recoverable, not just that a good
+      # one boots. Runs in the container job because it needs a daemon.
+      - name: Rollback drill
+        run: npm ci && npm run rollback:drill
+        env:
+          BOT_BUFFET_REQUIRE_DOCKER_TESTS: '1'
       - if: always()
         run: docker logs bot-buffet
