@@ -7,6 +7,9 @@
   start/callback, and device authorization start/poll routes. Disabled
   providers fail closed before any adapter health check, model registration,
   or outbound token exchange, with API and egress-call regression coverage.
+- **Health-aware routing:** production model selection now reads durable
+  provider health and excludes providers marked `offline` before attempting a
+  run; `unknown` remains eligible for first-use probing.
 
 - `outputFormat: markdown` is now a real runtime format: the system prompt instructs Markdown, providers still receive `text` unless JSON is requested, and verification fails unstructured Markdown.
 - Opening the Office UI as `file://` now shows a blocking banner and disables buttons instead of looking like a live, unresponsive office.

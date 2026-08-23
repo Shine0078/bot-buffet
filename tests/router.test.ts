@@ -48,6 +48,15 @@ describe('model routing', () => {
       router.choose({ contextTokens: 100, privacy: 'private', offline: true }),
     ).rejects.toThrow('routing:no_eligible_models');
   });
+  it('does not select a model whose provider health is offline', async () => {
+    const router = new ModelRouter(
+      async () => [model('offline', true)],
+      async () => false,
+    );
+    await expect(
+      router.choose({ contextTokens: 100, privacy: 'private', offline: true }),
+    ).rejects.toThrow('routing:all_providers_unhealthy');
+  });
   it('limits automatic selection to authorized model scopes', async () => {
     const router = new ModelRouter(async () => [
       { ...model('other', true), scope: 'other-project' },

@@ -12,7 +12,7 @@ means verified on this machine; it does not mean verified in production.
 | Multi-agent harness            | Complete locally                           | Handoff packets, output comparison, bounded parallel execution, per-agent concurrency admission, resource locks, and concurrent-edit conflict detection (`src/conflicts.ts`)                                                                |
 | Local/offline models           | **Complete locally**                       | Discovery, idempotent registration, offline routing guard, and a full agent run driven over real HTTP against an OpenAI-compatible endpoint (`tests/local-model-e2e.test.ts`)                                                               |
 | Authenticated online providers | Implemented, unproven                      | Native adapters for OpenAI-compatible, Anthropic, Gemini, Cohere, Azure OpenAI, Bedrock with wire/signature coverage; API-key, env-reference, PKCE, and device auth implemented. **No live account has been exercised** — owner gate        |
-| Model routing                  | Complete locally                           | Scoped routes, cost ceilings, fallback chains, offline/private strategies, scope isolation, and provider-enabled admission before selection                                                                                                 |
+| Model routing                  | Complete locally                           | Scoped routes, cost ceilings, fallback chains, offline/private strategies, scope isolation, provider-enabled admission, and durable offline-health exclusion before selection                                                               |
 | Sandboxing                     | **Verified against a live daemon**         | Non-root, no network, read-only root, EPERM on setuid, no Docker socket, escape and TOCTOU containment                                                                                                                                      |
 | Memory                         | Complete locally                           | Namespace + run-identity scoping, approval before persistence, retention, agent-facing `memory.write`                                                                                                                                       |
 | Permissions                    | Complete locally                           | RBAC, tenant isolation, scope checks, threshold policy semantics, workspace user provisioning, CAS disablement, request-boundary disabled-principal enforcement, OAuth callback actor re-check, and disabled-provider lifecycle enforcement |
@@ -44,11 +44,15 @@ OAuth-start, and device-start paths do not call the egress transport after
 disablement. This is local lifecycle evidence; live provider accounts remain
 an owner gate.
 
-The final provider lifecycle Codex Security diff scan
-`03e078d1-cabf-430b-9857-661f2acea718` reviewed the changed API and regression
-surfaces with complete coverage and reported zero reportable findings. The
+The final provider-routing Codex Security diff scan
+`0f8fb0be-e5e9-45d7-a02d-01b58d6dbb37` reviewed the changed routing and
+regression surfaces with complete coverage and reported zero reportable findings. The
 security TAC advisory connector was unavailable in this desktop session; that
 limitation does not alter the local diff result.
+
+Production routing now consults the durable provider health state as well as
+provider enablement: `offline` providers are excluded before selection, while
+new providers with `unknown` health remain eligible for their first probe.
 
 ### What "not complete" means here
 

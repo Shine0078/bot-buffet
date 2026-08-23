@@ -228,7 +228,11 @@ const oauth = new PkceSessionStore();
 const device = new DeviceSessionStore();
 const router = new ModelRouter(
   async () => store.list<Model>((x) => x.kind === 'model'),
-  async () => true,
+  async (modelId) => {
+    const model = await store.get<Model>(modelId);
+    const provider = model ? await store.get<ModelProvider>(model.providerId) : undefined;
+    return Boolean(provider && provider.health !== 'offline');
+  },
   async (model) => (await store.get<ModelProvider>(model.providerId))?.enabled === true,
 );
 const providers = new Map(
