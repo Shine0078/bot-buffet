@@ -73,6 +73,7 @@ const approvalFor = (
     payload: { path: 'notes.md' },
     status: 'pending',
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    delegates: [],
     ...overrides,
   }) as ApprovalRequest;
 
@@ -129,6 +130,30 @@ describe('deciding an approval', () => {
     const blocked = await store.get<Run>(run.id);
     expect(blocked?.status).toBe('blocked');
     expect(blocked?.error).toBe('approval_rejected');
+  });
+
+  it('refuses a decision from someone who is not a listed delegate', async () => {
+    const { base, store, run, project } = await start();
+    const approval = approvalFor(run, project.id, { delegates: ['reviewer-1'] });
+    await store.insert(approval);
+    await store.insert(
+      entity({
+        kind: 'membership',
+        ownerId: 'local-user',
+        scope: project.workspaceId,
+        userId: 'coworker',
+        workspaceId: project.workspaceId,
+        role: 'reviewer',
+      }),
+    );
+    const response = await fetch(base + '/api/v1/approvals/' + approval.id, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-bot-buffet-user': 'coworker' },
+      body: JSON.stringify({ approved: true }),
+    });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    await expect(response.json()).resolves.toMatchObject({ message: 'approval_delegate_required' });
+    expect((await store.get<ApprovalRequest>(approval.id))?.status).toBe('pending');
   });
 
   it('treats a missing approved flag as a rejection rather than an approval', async () => {

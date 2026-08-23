@@ -422,6 +422,7 @@ export interface ApprovalRequest extends BaseEntity {
   decidedBy?: ID;
   decidedAt?: ISODate;
   reason?: string;
+  delegates: ID[];
 }
 export interface Checkpoint extends BaseEntity {
   kind: 'checkpoint';

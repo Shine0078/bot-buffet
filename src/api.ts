@@ -3233,6 +3233,12 @@ export function createApi(deps: ApiDeps) {
         );
         if (approval.status !== 'pending' || Date.parse(approval.expiresAt) <= Date.now())
           throw new Error('approval_not_pending_or_expired');
+        if (
+          (approval.delegates ?? []).length &&
+          actorId !== approval.ownerId &&
+          !(approval.delegates ?? []).includes(actorId)
+        )
+          throw new Error('approval_delegate_required');
         const body = await parseBody(req);
         const status = body.approved ? ('approved' as const) : ('rejected' as const);
         const run = await required(

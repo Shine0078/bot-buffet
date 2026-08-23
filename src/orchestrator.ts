@@ -837,6 +837,8 @@ export class Orchestrator extends EventEmitter {
       status: 'pending' as const,
       requestedAt: now(),
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+      delegates:
+        (await this.deps.store.get<Agent>(run.agentId))?.profile.approvalPolicy.delegates ?? [],
     }) as ApprovalRequest;
     await this.deps.store.insert(request);
     await this.emitAudit(run, 'approval.requested', risk, 'approval-required', {
