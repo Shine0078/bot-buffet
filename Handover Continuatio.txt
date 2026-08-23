@@ -1,0 +1,172 @@
+# Bot Buffet — Handover Continuation Prompt
+
+You are taking over Samuel Abraham’s **Bot Buffet** project.
+
+## Repository
+
+* Working tree: `C:\Users\samue\Documents\GitHub\Bot Buffet`
+* GitHub repository: `https://github.com/Shine0078/bot-buffet`
+* Published baseline: `main` at commit `6142798`
+* Baseline status: 193 commits, 671 tests passing across 68 files
+* At handover: nothing is unpushed
+
+Read and follow these files first:
+
+```text
+docs/status.md
+docs/owner-gates.md
+```
+
+Treat the repository’s ledger and actual source code as authoritative. Do not rely on summaries, hook output, assumptions, or stale documentation.
+
+## Operating command
+
+Do not stop, pause, ask whether to continue, or provide a plan without implementing it. Continue working until all locally achievable work is complete.
+
+Follow this loop continuously:
+
+```text
+INSPECT → PLAN → IMPLEMENT → TEST → SECURITY REVIEW → VERIFY → DOCUMENT → COMMIT → CONTINUE
+```
+
+Fix every issue at its source. Never weaken, skip, delete, rewrite, or disable tests to obtain a passing result.
+
+## Immediate priority: finish the presence work
+
+The following changes are currently uncommitted:
+
+```text
+src/presence.ts
+tests/presence.test.ts
+src/orchestrator.ts
+```
+
+Finish this work first.
+
+Presence must be derived from an agent’s runs and integrated with `updateRun`. Do not add fake state that can drift. `Agent.status`, `currentRunId`, and `currentTaskId` must accurately reflect active runs, waiting-for-approval states, paused runs, completed runs, and failed runs.
+
+Resolve the remaining presence-test failures at their real source:
+
+1. **Agent release test**
+
+   The fixture run legitimately ends in `paused` because verification fails and the profile’s escalation policy pauses the run. Either:
+
+   * assert the correct `paused` state; or
+   * create a valid completion fixture using `acceptanceCriteria: []` and `requireEvidence: false`.
+
+2. **Deleted-agent test**
+
+   Deleting the agent correctly causes the run to fail with `run_context_missing`. Do not use agent deletion to test swallowed presence-write errors. Instead, create a controlled fixture where the presence write itself fails, then verify that the run continues safely as intended.
+
+3. **Model fixture failure**
+
+   If the test fails with `model_not_found`, inspect the fixture and router path. The model referenced by `preferredModelId` must be inserted into the test store or replaced with a valid fixture model. Do not hide, bypass, or weaken model resolution.
+
+After fixing the tests:
+
+```bash
+MSYS_NO_PATHCONV=1 BOT_BUFFET_REQUIRE_DOCKER_TESTS=1 npm run verify
+MSYS_NO_PATHCONV=1 BOT_BUFFET_REQUIRE_DOCKER_TESTS=1 npm run security:scan
+npm audit --audit-level=high
+```
+
+Inspect the final diff and confirm that all intended files are tracked.
+
+## Previously solved controls — preserve and verify
+
+Do not regress these fixes:
+
+1. Secret-scan fixtures no longer contain credential-shaped literals. Runtime assembly is used, and assertions verify exact values. Never loosen the scanner.
+2. `accessPolicy` is enforced for every entity. Private visibility and per-entity roles must produce real authorization decisions.
+3. Entities without a recorded policy retain their previous access behavior.
+4. `Permission` records are evaluated through `evaluatePermissions`, including conditions and deny-over-allow logic. Deny rules also apply to owners.
+5. Task `dependencyIds` are enforced during `createRun`, including cycle detection, dangling references, and unreachable-status handling.
+
+Search for fields, controls, and configuration that are declared, written, or stored but never read or enforced. Every security or authorization field must lead to a real decision.
+
+## Remaining local work
+
+Complete all feasible work that can be performed locally, including:
+
+* Finish and commit the presence implementation and tests.
+* Increase the commit count from 193 toward the requested 250+ only through legitimate, meaningful, atomic commits.
+* Resolve the sandbox topology decision. The shipped image has no Docker CLI or daemon socket, while production configuration correctly fails closed when Docker mode is required.
+* Complete DNS-rebinding validation for the pinned provider socket transport.
+* Re-audit online-provider integrations. Adapters, PKCE, device authentication, SigV4, and wire coverage exist, but live provider accounts remain unproven.
+* Review installation, verification, security, documentation, backup, rollback, and deployment-readiness paths.
+* Update `docs/status.md` and `docs/owner-gates.md` so they accurately reflect the verified state.
+* Run the complete test, security, audit, and installation checks before claiming progress.
+
+## Owner-gated work
+
+Do not simulate, fabricate, or claim completion for these items:
+
+1. A real provider account and live provider-account integration tests.
+2. Staging and production environments and deployments.
+3. A real production OIDC issuer with tenant memberships.
+4. Production Postgres, object storage, queue, and vector-index infrastructure.
+5. A public HTTPS webhook receiver.
+6. A specialist kernel-level container-escape audit.
+7. CI OIDC signing and artifact attestation.
+8. Artifact-registry policy.
+9. Replacement of the `.env.example` master-key placeholder with real KMS material.
+10. Optional live connectors requiring external accounts or approvals.
+
+When blocked by an owner gate, document the exact requirement, evidence needed, responsible owner, and next action. Continue all remaining local work.
+
+## Files and areas that must never be staged or committed
+
+Do not stage or commit leftover or unrelated files from:
+
+```text
+src/main
+src/renderer
+src/preload
+src/shared
+blog
+hive
+landing-remotion
+docs/blog
+docs/hires
+electron-builder.yml
+CHANGELOG.md
+DESIGN.md
+HIVE.md
+seo
+prototypes
+resources
+test
+```
+
+Before every commit:
+
+```bash
+git status --short
+git diff --stat
+git diff --cached --stat
+```
+
+Preserve unrelated user changes. Never use broad staging commands that could include excluded files.
+
+## Non-negotiable rules
+
+* Keep the product name: **Samuel Abraham — Bot Buffet**.
+* Do not rebrand it as Munder Difflin, Electron, Blog, Hive, or anything else.
+* Never expose API keys, tokens, cookies, credentials, or private source data.
+* Never invent provider, Docker, staging, production, backup, rollback, deployment, or security-audit success.
+* Never fabricate commits or create meaningless changes solely to increase the count.
+* Never weaken security controls or tests.
+* Do not claim completion until implementation, tests, security checks, installation verification, deployment verification, backups, rollback, documentation, and owner-gated requirements are genuinely addressed.
+* If an external requirement is blocked, document it precisely and continue working on everything else.
+
+Begin by inspecting the real repository state:
+
+```bash
+cd "C:\Users\samue\Documents\GitHub\Bot Buffet"
+git status --short
+git log --oneline -10
+git diff
+git ls-files --others --exclude-standard
+```
+
+Then finish the presence work, repair the fixture/model-resolution issue, run all gates, document the verified state, create legitimate atomic commits, and continue through the remaining locally achievable work.
