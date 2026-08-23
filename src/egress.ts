@@ -1,6 +1,6 @@
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { resolveSafeEndpoint } from './security.js';
+import { resolveSafeEndpoint, type DnsLookup } from './security.js';
 
 const MAX_RESPONSE_BYTES = 10_000_000;
 
@@ -26,9 +26,10 @@ export async function fetchPinned(
   input: string | URL,
   init: RequestInit = {},
   allowLocal = false,
+  lookupFn?: DnsLookup,
 ): Promise<Response> {
   const target = new URL(input);
-  const { address } = await resolveSafeEndpoint(target.toString(), allowLocal);
+  const { address } = await resolveSafeEndpoint(target.toString(), allowLocal, lookupFn);
   const headers = new Headers(init.headers);
   const body =
     typeof init.body === 'string'

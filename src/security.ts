@@ -347,14 +347,17 @@ export function assertSafeEndpoint(endpoint: string, allowLocal = false): URL {
   return parsed;
 }
 
+export type DnsLookup = (hostname: string) => Promise<Array<{ address: string }>>;
+
 export async function resolveSafeEndpoint(
   endpoint: string,
   allowLocal = false,
+  lookupFn: DnsLookup = (hostname) => lookup(hostname, { all: true, verbatim: true }),
 ): Promise<{ url: URL; address: string }> {
   const parsed = assertSafeEndpoint(endpoint, allowLocal);
   let addresses: Array<{ address: string }>;
   try {
-    addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
+    addresses = await lookupFn(parsed.hostname);
   } catch {
     throw new Error('endpoint_rejected:dns_lookup_failed');
   }

@@ -56,4 +56,27 @@ describe('pinned provider egress', () => {
     expect(response.status).toBe(200);
     expect(body).toBe('data: first\ndata: second\n');
   });
+  it('stays on the preflight address after DNS rebinds', async () => {
+    const safe = createServer((_req, res) => {
+      res.end('safe');
+    });
+    servers.push(safe);
+    await new Promise((resolve) => safe.listen(0, '127.0.0.1', () => resolve(undefined)));
+    const safeAddr = safe.address();
+    if (!safeAddr || typeof safeAddr === 'string') throw new Error('server_address_missing');
+    let lookups = 0;
+    const lookupFn = async () => {
+      lookups += 1;
+      return [{ address: lookups === 1 ? '127.0.0.1' : '8.8.8.8' }];
+    };
+    const response = await fetchPinned(
+      'http://localhost:' + safeAddr.port + '/pin',
+      {},
+      true,
+      lookupFn,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('safe');
+    expect(lookups).toBe(1);
+  });
 });
