@@ -18,7 +18,15 @@ import { withStartupDiagnostics } from './startup.js';
 import { DeviceSessionStore, PkceSessionStore } from './oauth.js';
 import { resolveWorkspaceDir } from './paths.js';
 import { tickSchedules } from './scheduler.js';
-import { Model, ModelProvider, Organization, Project, Workspace, entity } from './types.js';
+import {
+  Membership,
+  Model,
+  ModelProvider,
+  Organization,
+  Project,
+  Workspace,
+  entity,
+} from './types.js';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dataDir = process.env.BOT_BUFFET_DATA_DIR ?? join(root, '.data');
@@ -53,6 +61,14 @@ async function bootstrap(): Promise<void> {
     slug: 'bot-buffet',
     offlineMode: process.env.BOT_BUFFET_OFFLINE === 'true',
   }) as Workspace;
+  const membership = entity({
+    kind: 'membership',
+    ownerId: 'local-user',
+    scope: workspace.id,
+    userId: 'local-user',
+    workspaceId: workspace.id,
+    role: 'owner',
+  }) as Membership;
   const project = entity({
     kind: 'project',
     ownerId: 'local-user',
@@ -175,7 +191,17 @@ async function bootstrap(): Promise<void> {
     dependencyIds: [],
     labels: ['onboarding'],
   });
-  for (const value of [org, workspace, project, environment, provider, model, agent, task])
+  for (const value of [
+    org,
+    workspace,
+    membership,
+    project,
+    environment,
+    provider,
+    model,
+    agent,
+    task,
+  ])
     await store.insert(value);
 }
 

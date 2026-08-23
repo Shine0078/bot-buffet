@@ -768,6 +768,55 @@ describe('API boundary controls', () => {
     expect(blocked.status).toBe(400);
   });
 
+  it('creates a workspace membership that limits a non-owner', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-member-'));
+    const store = createStore(dir);
+    const workspace = entity({
+      kind: 'workspace',
+      ownerId: 'local-user',
+      scope: 'org',
+      organizationId: 'org',
+      name: 'Shared',
+      slug: 'shared',
+      offlineMode: false,
+    });
+    const project = entity({
+      kind: 'project',
+      ownerId: 'alice',
+      scope: workspace.id,
+      workspaceId: workspace.id,
+      name: 'Shared project',
+      slug: 'shared-project',
+      archived: false,
+    });
+    await store.insert(workspace);
+    await store.insert(project);
+    const server = createApi({
+      store,
+      orchestrator: new EventEmitter() as unknown as Orchestrator,
+      uiRoot: dir,
+      vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+    const base = `http://127.0.0.1:${address.port}`;
+    const created = await fetch(`${base}/api/v1/memberships`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspaceId: workspace.id, userId: 'viewer-1', role: 'viewer' }),
+    });
+    expect(created.status).toBe(201);
+    const listed = await fetch(`${base}/api/v1/memberships`);
+    expect(listed.status).toBe(200);
+    const blocked = await fetch(`${base}/api/v1/projects/${project.id}`, {
+      method: 'DELETE',
+      headers: { 'x-bot-buffet-user': 'viewer-1' },
+    });
+    expect(blocked.status).toBe(400);
+  });
+
   it('creates scoped environments, agents, and tasks with safe defaults', async () => {
     const base = await start();
     const projectResponse = await fetch(`${base}/api/v1/projects`, {

@@ -20,6 +20,7 @@ import {
   EvaluationCase,
   EvaluationDataset,
   EvaluationRun,
+  Membership,
   MemoryItem,
   MCPServer,
   Model,
@@ -2384,6 +2385,44 @@ export function createApi(deps: ApiDeps) {
           version: alert.version,
         } as Alert);
         return send(res, 200, saved);
+      }
+      if (path === '/api/v1/memberships' && req.method === 'GET') {
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Membership>((x) => x.kind === 'membership')),
+        );
+      }
+      if (path === '/api/v1/memberships' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const workspace = await required(
+          actorId,
+          await deps.store.get<Workspace>(String(body.workspaceId)),
+          'admin',
+          'workspace',
+        );
+        const userId = String(body.userId ?? '').trim();
+        const role = String(body.role ?? 'viewer');
+        if (!userId) throw new Error('membership_user_required');
+        if (!['owner', 'admin', 'operator', 'reviewer', 'developer', 'viewer'].includes(role))
+          throw new Error('membership_role_invalid');
+        const existing = await deps.store.list<Membership>(
+          (item) =>
+            item.kind === 'membership' &&
+            (item as Membership).workspaceId === workspace.id &&
+            (item as Membership).userId === userId,
+        );
+        if (existing.length) throw new Error('membership_exists');
+        const membership = entity({
+          kind: 'membership',
+          ownerId: actorId,
+          scope: workspace.id,
+          userId,
+          workspaceId: workspace.id,
+          role: role as Membership['role'],
+        }) as Membership;
+        await deps.store.insert(membership);
+        return send(res, 201, membership);
       }
       if (path === '/api/v1/permissions' && req.method === 'GET') {
         return send(
