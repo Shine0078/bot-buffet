@@ -5,6 +5,7 @@ import {
   Membership,
   Permission,
   Project,
+  Role,
   RoleName,
 } from './types.js';
 import { evaluatePermissions, type PermissionContext } from './security.js';
@@ -89,10 +90,15 @@ export class AuthorizationService {
     if (!memberships.length) return false;
     const workspaceId = await this.workspaceFor(value);
     if (!workspaceId) return false;
-    return memberships.some(
-      (membership) =>
-        membership.workspaceId === workspaceId && roleAllows[membership.role].includes(action),
+    const customRoles = await this.store.list<Role>(
+      (item) => item.kind === 'role' && (item as Role).scope === workspaceId,
     );
+    return memberships.some((membership) => {
+      if (membership.workspaceId !== workspaceId) return false;
+      if (isRoleName(membership.role)) return roleAllows[membership.role].includes(action);
+      const custom = customRoles.find((role) => role.name === membership.role);
+      return Boolean(custom?.permissions.includes(action) || custom?.permissions.includes('*'));
+    });
   }
 
   /**

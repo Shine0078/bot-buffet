@@ -97,7 +97,7 @@ export interface Membership extends BaseEntity {
   kind: 'membership';
   userId: ID;
   workspaceId: ID;
-  role: RoleName;
+  role: RoleName | string;
 }
 export interface Role extends BaseEntity {
   kind: 'role';

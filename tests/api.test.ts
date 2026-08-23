@@ -817,6 +817,64 @@ describe('API boundary controls', () => {
     expect(blocked.status).toBe(400);
   });
 
+  it('assigns a stored custom role and honours its permissions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'bot-buffet-role-'));
+    const store = createStore(dir);
+    const workspace = entity({
+      kind: 'workspace',
+      ownerId: 'local-user',
+      scope: 'org',
+      organizationId: 'org',
+      name: 'Shared',
+      slug: 'shared',
+      offlineMode: false,
+    });
+    const project = entity({
+      kind: 'project',
+      ownerId: 'alice',
+      scope: workspace.id,
+      workspaceId: workspace.id,
+      name: 'Shared project',
+      slug: 'shared-project',
+      archived: false,
+    });
+    await store.insert(workspace);
+    await store.insert(project);
+    const server = createApi({
+      store,
+      orchestrator: new EventEmitter() as unknown as Orchestrator,
+      uiRoot: dir,
+      vault: new CredentialVault(join(dir, 'credentials.enc.json'), 'test'),
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_missing');
+    const base = `http://127.0.0.1:${address.port}`;
+    const roleResponse = await fetch(`${base}/api/v1/roles`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspaceId: workspace.id, name: 'reader', permissions: ['read'] }),
+    });
+    expect(roleResponse.status).toBe(201);
+    const memberResponse = await fetch(`${base}/api/v1/memberships`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspaceId: workspace.id, userId: 'reader-1', role: 'reader' }),
+    });
+    expect(memberResponse.status).toBe(201);
+    const readable = await fetch(`${base}/api/v1/projects`, {
+      headers: { 'x-bot-buffet-user': 'reader-1' },
+    });
+    expect(readable.status).toBe(200);
+    expect(await readable.json()).toEqual([expect.objectContaining({ id: project.id })]);
+    const blocked = await fetch(`${base}/api/v1/projects/${project.id}`, {
+      method: 'DELETE',
+      headers: { 'x-bot-buffet-user': 'reader-1' },
+    });
+    expect(blocked.status).toBe(400);
+  });
+
   it('creates scoped environments, agents, and tasks with safe defaults', async () => {
     const base = await start();
     const projectResponse = await fetch(`${base}/api/v1/projects`, {

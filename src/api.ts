@@ -22,6 +22,7 @@ import {
   EvaluationRun,
   Membership,
   MemoryItem,
+  Role,
   MCPServer,
   Model,
   ModelRoute,
@@ -2386,6 +2387,43 @@ export function createApi(deps: ApiDeps) {
         } as Alert);
         return send(res, 200, saved);
       }
+      if (path === '/api/v1/roles' && req.method === 'GET') {
+        return send(
+          res,
+          200,
+          await visible(actorId, await deps.store.list<Role>((x) => x.kind === 'role')),
+        );
+      }
+      if (path === '/api/v1/roles' && req.method === 'POST') {
+        const body = await parseBody(req);
+        const workspace = await required(
+          actorId,
+          await deps.store.get<Workspace>(String(body.workspaceId)),
+          'admin',
+          'workspace',
+        );
+        const name = String(body.name ?? '').trim();
+        const permissions = Array.isArray(body.permissions)
+          ? body.permissions.map(String).filter(Boolean)
+          : [];
+        if (!name) throw new Error('role_name_required');
+        if (['owner', 'admin', 'operator', 'reviewer', 'developer', 'viewer'].includes(name))
+          throw new Error('role_name_reserved');
+        if (!permissions.length) throw new Error('role_permissions_required');
+        const allowed = new Set(['read', 'write', 'run', 'approve', 'admin', '*']);
+        if (permissions.some((permission) => !allowed.has(permission)))
+          throw new Error('role_permissions_invalid');
+        const role = entity({
+          kind: 'role',
+          ownerId: actorId,
+          scope: workspace.id,
+          name,
+          permissions,
+          system: false,
+        }) as Role;
+        await deps.store.insert(role);
+        return send(res, 201, role);
+      }
       if (path === '/api/v1/memberships' && req.method === 'GET') {
         return send(
           res,
@@ -2404,8 +2442,23 @@ export function createApi(deps: ApiDeps) {
         const userId = String(body.userId ?? '').trim();
         const role = String(body.role ?? 'viewer');
         if (!userId) throw new Error('membership_user_required');
-        if (!['owner', 'admin', 'operator', 'reviewer', 'developer', 'viewer'].includes(role))
-          throw new Error('membership_role_invalid');
+        const knownRole = [
+          'owner',
+          'admin',
+          'operator',
+          'reviewer',
+          'developer',
+          'viewer',
+        ].includes(role);
+        if (!knownRole) {
+          const custom = await deps.store.list<Role>(
+            (item) =>
+              item.kind === 'role' &&
+              (item as Role).scope === workspace.id &&
+              (item as Role).name === role,
+          );
+          if (!custom.length) throw new Error('membership_role_invalid');
+        }
         const existing = await deps.store.list<Membership>(
           (item) =>
             item.kind === 'membership' &&
