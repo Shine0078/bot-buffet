@@ -1,4 +1,13 @@
-import { AccessPolicy, BaseEntity, Entity, Membership, Project, RoleName } from './types.js';
+import {
+  AccessPolicy,
+  BaseEntity,
+  Entity,
+  Membership,
+  Permission,
+  Project,
+  RoleName,
+} from './types.js';
+import { evaluatePermissions, type PermissionContext } from './security.js';
 import { JsonStateStore } from './store.js';
 
 export type Action = 'read' | 'write' | 'run' | 'approve' | 'admin';
@@ -49,6 +58,15 @@ export class AuthorizationService {
   constructor(private readonly store: JsonStateStore) {}
 
   async can(actorId: string, value: BaseEntity, action: Action): Promise<boolean> {
+    // Stored Permission entities are consulted before anything else, because an
+    // explicit deny has to be able to carve an exception out of ownership
+    // itself. An owner-first check would make "deny write on the production
+    // environment" unenforceable against the person most able to cause damage.
+    // This mirrors how every comparable policy engine resolves it.
+    const decision = await this.permissionDecision(actorId, value, action);
+    if (decision === 'deny') return false;
+    if (decision === 'allow') return true;
+
     if (value.ownerId === actorId) return true;
 
     const policy = effectivePolicy(value);
@@ -75,6 +93,49 @@ export class AuthorizationService {
       (membership) =>
         membership.workspaceId === workspaceId && roleAllows[membership.role].includes(action),
     );
+  }
+
+  /**
+   * Fine-grained permissions layered under the coarse role model.
+   *
+   * The Permission entity was defined, exported, included in the entity union
+   * -- and evaluated nowhere, by nothing. The one function that could read it
+   * had no callers. This gives it the enforcement path it always implied, and
+   * in particular makes deny expressible: the role model alone has no way to
+   * say "everything this role allows, except this".
+   *
+   * "unspecified" falls through to the role model rather than refusing, so
+   * installing no permissions at all leaves behaviour exactly as it was.
+   */
+  private async permissionDecision(
+    actorId: string,
+    value: BaseEntity,
+    action: Action,
+  ): Promise<'allow' | 'deny' | 'unspecified'> {
+    const permissions = await this.store.list<Permission>(
+      (item) => item.kind === 'permission' && (item as Permission).subjectId === actorId,
+    );
+    if (!permissions.length) return 'unspecified';
+    const candidate = value as Entity & { projectId?: string; workspaceId?: string };
+    const context: PermissionContext = {
+      scope: value.scope,
+      ownerId: value.ownerId,
+      projectId: candidate.projectId,
+      workspaceId: candidate.workspaceId,
+    };
+    const kind = (value as Entity).kind;
+    // Both forms are offered so a permission can name a whole kind or one
+    // record; resource matching treats the first as a prefix of the second.
+    for (const resource of [`${kind}:${value.id}`, kind]) {
+      const outcome = evaluatePermissions(permissions, {
+        subjectId: actorId,
+        action,
+        resource,
+        context,
+      });
+      if (outcome !== 'unspecified') return outcome;
+    }
+    return 'unspecified';
   }
 
   /**

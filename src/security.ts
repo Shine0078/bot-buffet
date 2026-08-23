@@ -183,18 +183,90 @@ export function decidePolicy(
   };
 }
 
+/** The context a permission's conditions are matched against. */
+export type PermissionContext = Record<string, string | undefined>;
+
+export type PermissionDecision = 'allow' | 'deny' | 'unspecified';
+
+export interface PermissionQuery {
+  subjectId: string;
+  action: string;
+  resource: string;
+  context?: PermissionContext;
+}
+
+const actionMatches = (permission: Permission, action: string): boolean =>
+  permission.actions.includes('*') || permission.actions.includes(action);
+
+/**
+ * Resource matching is exact, wildcard, or segment-prefix: a permission on
+ * `run` covers `run:abc`, but a permission on `run:abc` covers only that one.
+ *
+ * The prefix comparison deliberately requires the `:` separator. Without it a
+ * permission on `project` would also match a resource named `project-secrets`,
+ * which is a different resource that merely starts with the same letters.
+ */
+const resourceMatches = (permission: Permission, resource: string): boolean =>
+  permission.resource === '*' ||
+  permission.resource === resource ||
+  resource.startsWith(`${permission.resource}:`);
+
+/**
+ * Every condition must hold for the permission to apply.
+ *
+ * This is the half that was missing. `conditions` was declared, accepted, and
+ * stored, and the check ignored it -- so a permission written to apply only
+ * within one project applied everywhere, and the rule was strictly broader than
+ * it read. A condition key absent from the context does not match: an
+ * unevaluatable condition must narrow, never widen, or a caller that forgets to
+ * pass context silently receives the unconditioned grant.
+ */
+const conditionsMatch = (permission: Permission, context: PermissionContext): boolean =>
+  Object.entries(permission.conditions ?? {}).every(([key, expected]) => context[key] === expected);
+
+const applies = (permission: Permission, query: PermissionQuery): boolean =>
+  permission.subjectId === query.subjectId &&
+  actionMatches(permission, query.action) &&
+  resourceMatches(permission, query.resource) &&
+  conditionsMatch(permission, query.context ?? {});
+
+/**
+ * Evaluate a set of permissions.
+ *
+ * Explicit deny wins over allow, following the same rule as every other policy
+ * engine here and in the industry generally: a deny is the only way to carve an
+ * exception out of a broad grant, and it is worthless if an unrelated allow can
+ * cancel it. `unspecified` means no permission addressed the question at all,
+ * which the caller resolves against its own default -- it is not the same
+ * answer as `deny`, and collapsing the two would make it impossible to tell a
+ * deliberate refusal from silence.
+ */
+export function evaluatePermissions(
+  permissions: readonly Permission[],
+  query: PermissionQuery,
+): PermissionDecision {
+  const relevant = permissions.filter((permission) => applies(permission, query));
+  if (relevant.some((permission) => permission.effect === 'deny')) return 'deny';
+  if (relevant.some((permission) => permission.effect === 'allow')) return 'allow';
+  return 'unspecified';
+}
+
+/** Single-permission convenience. Conditions are honoured here too. */
 export function hasPermission(
   permission: Permission | undefined,
   action: string,
   resource: string,
+  context: PermissionContext = {},
 ): boolean {
-  if (!permission || permission.effect !== 'allow') return false;
-  const actionAllowed = permission.actions.includes('*') || permission.actions.includes(action);
-  const resourceAllowed =
-    permission.resource === '*' ||
-    permission.resource === resource ||
-    resource.startsWith(`${permission.resource}:`);
-  return actionAllowed && resourceAllowed;
+  if (!permission) return false;
+  return (
+    evaluatePermissions([permission], {
+      subjectId: permission.subjectId,
+      action,
+      resource,
+      context,
+    }) === 'allow'
+  );
 }
 
 export function assertOffline(offline: boolean, local: boolean): void {
